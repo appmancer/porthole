@@ -30,9 +30,10 @@
     ASL A        ; × 8
     CLC
     ADC col_counter
-    TAX
+    PHA
+    TAY
     ; Get the high nibble (left tile)
-    LDA screen_tilemap, X
+    LDA (tilemap_ptr), Y
     AND #&F0
     LSR A
     LSR A
@@ -48,7 +49,9 @@
     INC screen_ptr+1
 .tilemap_col_loop_no_carry
     ; Get the low nibble (right tile)
-    LDA screen_tilemap, X
+    PLA
+    TAY
+    LDA (tilemap_ptr), Y
     AND #&0F
 .render_right_tile
     JSR render_large_block  ; Render the right tile 

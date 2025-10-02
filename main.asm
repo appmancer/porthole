@@ -22,6 +22,10 @@ ORG &5000
     DEX
     BNE delay_loop
     
+    ; Initialize current_room to 1 (room2)
+    LDA #0
+    STA current_room
+    
     ; Clear screen first
     LDA #12
     JSR OSWRCH
@@ -45,8 +49,26 @@ ORG &5000
     LDA #12
     JSR OSWRCH
 
+    LDA #<(room1)
+    STA tilemap_ptr
+    LDA #>(room1)
+    STA tilemap_ptr+1
+
     JSR render_tilemap
     
+    ; Wait for keypress
+    JSR OSRDCH
+
+    LDA #<(room2)
+    STA tilemap_ptr
+    LDA #>(room2)
+    STA tilemap_ptr+1
+
+    JSR render_tilemap
+
+    ; Wait for keypress
+    JSR OSRDCH
+
     ; Return
     RTS
 
