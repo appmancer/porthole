@@ -30,8 +30,8 @@
     ASL A        ; × 8
     CLC
     ADC col_counter
-    PHA
-    TAY
+    STA tile_index
+    LDY tile_index
     ; Get the high nibble (left tile)
     LDA (tilemap_ptr), Y
     AND #&F0
@@ -49,8 +49,7 @@
     INC screen_ptr+1
 .tilemap_col_loop_no_carry
     ; Get the low nibble (right tile)
-    PLA
-    TAY
+    LDY tile_index
     LDA (tilemap_ptr), Y
     AND #&0F
 .render_right_tile
@@ -89,12 +88,13 @@
     PHA
     ; restore A
     LDA tile
-    ; Input: A = block type (0-3)
-    ; Uses zero page temp variables
-    ; Each large block is 8x16 pixels (2x2 character cells)
-    ; Each character cell is 4x8 pixels (1 byte per row)
-    ; the sprite we want is in the accumulator
-    JSR calc_sprite_data_location
+    ; Input: A = block type (0-based index for sprite table)
+    ASL A
+    TAX
+    LDA sprite_table,X
+    STA sprite_ptr
+    LDA sprite_table+1,X
+    STA sprite_ptr+1
 
     JSR plot_wide_sprite
     ; move screen_ptr down 8 rows (256 bytes)
@@ -153,39 +153,5 @@
     
     RTS
 
-; Sprites are in contiguous memory from .sprite_data. A is the sprite index (1-based). 
-; We want to the memory location of Sprite A into sprite_ptr
-.calc_sprite_data_location
-    ; subtract 1 to get 0-based index
-    SEC
-    SBC #1
-    
-    ; 16-bit multiply by 32 using shifts
-    ; Start with A in low byte, 0 in high byte
-    STA temp        ; Store low byte temporarily
-    LDA #0          ; Clear high byte
-    STA temp_y      ; Use temp_y for high byte
-    
-    ; Now do 5 16-bit left shifts (multiply by 32)
-    ASL temp        ; Shift low byte left
-    ROL temp_y      ; Rotate carry into high byte
-    ASL temp        ; × 4
-    ROL temp_y           
-    ASL temp        ; × 8
-    ROL temp_y           
-    ASL temp        ; × 16
-    ROL temp_y           
-    ASL temp        ; × 32
-    ROL temp_y           
-    
-    ; Now temp = low byte of offset, temp_y = high byte of offset
-    ; Add to sprite_data base address
-    CLC
-    LDA temp
-    ADC #<sprite_data
-    STA sprite_ptr
-    LDA temp_y
-    ADC #>sprite_data
-    STA sprite_ptr+1
-    RTS
+; Sprite pointer table lookup is now used for sprite selection.
     

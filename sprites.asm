@@ -1,3 +1,16 @@
+.sprites_table
+EQUW largebrick        ; &1
+EQUW smallbrick        ; &2
+EQUW boulder_left      ; &3
+EQUW boulder_right     ; &4
+EQUW corner_top_left   ; &5
+EQUW side_wall         ; &6
+EQUW corner_bottom_left; &7
+EQUW floor             ; &8
+EQUW ceiling           ; &9
+EQUW metalplate        ; &A
+EQUW corner_bottom_right;&B
+EQUW corner_top_right   ;&C
 
 ; Wide 8x16 sprite data 
 .sprite_data

@@ -9,8 +9,12 @@ ORG &70
 .tile           SKIP 1    ; the next tile to draw
 .row_counter    SKIP 1    ; Row counter for loops
 .col_counter    SKIP 1    ; Column counter for loops
+
+.tile_index     SKIP 1    ; Temporary tile index for rendering
 .current_room   SKIP 1    ; Current room number (0=room1, 1=room2)
 .tilemap_ptr    SKIP 2    ; Pointer to current room's tilemap data
+
+; total zero page bytes: 13
 
 ORG &5000             
 
@@ -74,9 +78,9 @@ ORG &5000
 
 .end_main
 
-INCLUDE "render.asm"
 INCLUDE "sprites.asm"
 INCLUDE "tilemap.asm"
+INCLUDE "render.asm"
 
 .end
 
