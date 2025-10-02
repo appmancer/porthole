@@ -1,0 +1,72 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build BBC Micro Game",
+            "type": "shell",
+            "command": "build.sh",
+            "args": [
+                "-i",
+                "main.asm",
+                "-o",
+                "bf6502.ssd",
+                "-title",
+                "BF6502",
+                "-boot",
+                "BF6502",
+                "-do",
+                "bf6502.ssd",
+                "-v"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "BeebVSC Build Target 'main.ssd'",
+            "type": "shell",
+            "problemMatcher": {
+                "owner": "6502",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceRoot}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "severity": 3,
+                    "message": 4
+                }
+            },
+            "command": "BeebAsm",
+            "args": [
+                "-v",
+                "-i",
+                "main.asm",
+                "-do",
+                "main.ssd",
+                "-boot",
+                "main"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "BeebVSC Test Target",
+            "type": "shell",
+            "command": "b2",
+            "args": [
+                "main.ssd"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            }
+        }
+    ]
+}

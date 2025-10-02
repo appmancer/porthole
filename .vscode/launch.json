@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run in JSBeeb",
+            "type": "beebvsc",
+            "request": "launch",
+            "program": "${workspaceFolder}/bf6502.ssd",
+            "stopOnEntry": false
+        }
+    ]
+}
