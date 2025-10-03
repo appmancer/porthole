@@ -40,7 +40,7 @@ EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, 
 EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F
 .corner_bottom_left; &7
 EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &BE, &5F, &BE, &7D, &BE, &7D, &F5, &F5
-EQUB &AF, &5F, &BE, &7D, &BE, &7A, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5
+EQUB &AF, &5F, &BE, &7D, &BE, &7A, &FA, &F5, &FA, &D7, &FA, &F5, &FA, &F5, &FA, &F5
 .floor ; &8
 EQUB &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5
 EQUB &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5
@@ -64,5 +64,5 @@ EQUB &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F, &AF, &5F, &AF, &5F, &AF, 
 EQUB &77, &CF, &8F, &9E, &AC, &BC, &BC, &BC, &88, &CC, &4C, &CC, &88, &88, &88, &88
 EQUB &FD, &8F, &8F, &AD, &AD, &AD, &AD, &AD, &88, &88, &88, &88, &88, &88, &88, &88
 EQUB &AD, &8F, &8F, &8F, &FF, &57, &57, &57, &88, &88, &88, &88, &88, &88, &00, &00
-EQUB &57, &57, &57, &57, &57, &47, &47, &77, &00, &00, &00, &00, &00, &88, &88, &88
+EQUB &57, &57, &57, &57, &57, &47, &47, &77, &00, &00, &00, &00, &88, &88, &88, &88
 

@@ -266,28 +266,67 @@
     LDA character_mask_table+1,X
     STA mask_ptr+1
 
+    ; Plot first character row (top half)
     JSR plot_sprite_with_mask
-    ; move screen_ptr down 8 rows (256 bytes)
-    LDA screen_ptr+1
-    CLC
-    ADC #1
-    STA screen_ptr+1    
-    ; move sprite_ptr to next sprite (bottom half of large block)
+    ; move screen_ptr down 8 scanlines (256 bytes)
+    INC screen_ptr+1
+    ; move sprite_ptr to next sprite data (next 16 bytes)
     LDA sprite_ptr
     CLC
     ADC #16
     STA sprite_ptr
-    BCC char_next_half
+    BCC sprite_row2_ok
     INC sprite_ptr+1
-    ; move mask_ptr to next mask (bottom half of large block)
+.sprite_row2_ok
+    ; move mask_ptr to next mask data (next 16 bytes)
     LDA mask_ptr
     CLC
     ADC #16
     STA mask_ptr
-    BCC char_next_half
+    BCC char_row2
     INC mask_ptr+1
-.char_next_half  
-    ; now plot the second row of the block
+.char_row2  
+    ; Plot second character row
+    JSR plot_sprite_with_mask
+    ; move screen_ptr down 8 scanlines (256 bytes)
+    INC screen_ptr+1
+    ; move sprite_ptr to next sprite data (next 16 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #16
+    STA sprite_ptr
+    BCC sprite_row3_ok
+    INC sprite_ptr+1
+.sprite_row3_ok
+    ; move mask_ptr to next mask data (next 16 bytes)
+    LDA mask_ptr
+    CLC
+    ADC #16
+    STA mask_ptr
+    BCC char_row3
+    INC mask_ptr+1
+.char_row3  
+    ; Plot third character row
+    JSR plot_sprite_with_mask
+    ; move screen_ptr down 8 scanlines (256 bytes)
+    INC screen_ptr+1
+    ; move sprite_ptr to next sprite data (next 16 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #16
+    STA sprite_ptr
+    BCC sprite_row4_ok
+    INC sprite_ptr+1
+.sprite_row4_ok
+    ; move mask_ptr to next mask data (next 16 bytes)
+    LDA mask_ptr
+    CLC
+    ADC #16
+    STA mask_ptr
+    BCC char_row4
+    INC mask_ptr+1
+.char_row4  
+    ; Plot fourth character row (bottom - legs!)
     JSR plot_sprite_with_mask
 
     ; restore screen_ptr
@@ -318,7 +357,7 @@
     STA (screen_ptr),Y      ; Write result to screen
     
     INY
-    CPY #32                 ; 32 bytes total (16 sprite + 16 sprite continued)
+    CPY #16                 ; 16 bytes for one half of character sprite
     BNE mask_sprite_byte_loop
     
     RTS
