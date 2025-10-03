@@ -12,8 +12,11 @@ EQUW ceiling           ; &9
 EQUW metalplate        ; &A
 EQUW corner_bottom_right;&B
 EQUW corner_top_right   ;&C
-EQUW chell_top         ; &D
-EQUW chell_bottom      ; &E
+
+; Character sprite table - separate from room tiles
+.character_sprite_table
+EQUW chell_standing    ; &0: Chell standing animation
+; Add more character sprites here as needed
 
 ; Wide 8x16 sprite data 
 .sprite_data
@@ -54,13 +57,12 @@ EQUB &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &AF, &5F, &AF, &D7, &EB, &F5, &EB, 
 EQUB &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F
 EQUB &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F
 
-.charaacter_sprites
+.character_sprites
 ; Each character is 8x16 pixels (2 wide sprites)
+.chell_standing
 .chell
-.chell_top
 EQUB &77, &CF, &8F, &9E, &AC, &BC, &BC, &BC, &88, &CC, &4C, &CC, &88, &88, &88, &88
 EQUB &FD, &8F, &8F, &AD, &AD, &AD, &AD, &AD, &88, &88, &88, &88, &88, &88, &88, &88
-.chell_bottom
 EQUB &AD, &8F, &8F, &8F, &FF, &57, &57, &57, &88, &88, &88, &88, &88, &88, &00, &00
 EQUB &57, &57, &57, &57, &57, &47, &47, &77, &00, &00, &00, &00, &00, &88, &88, &88
 

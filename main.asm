@@ -13,9 +13,10 @@ ORG &70
 .tile_index     SKIP 1    ; Temporary tile index for rendering
 .current_room   SKIP 1    ; Current room number (0=room1, 1=room2)
 .tilemap_ptr    SKIP 2    ; Pointer to current room's tilemap data
-.chell_ptr    SKIP 2    ; Pointer to character sprite data --- IGNORE ---
+.chell_ptr      SKIP 2    ; Pointer to character sprite data --- IGNORE ---
+.mask_ptr       SKIP 2    ; Pointer to current mask data
 
-; total zero page bytes: 13
+; total zero page bytes: 17
 
 ORG &5000             
 
@@ -89,17 +90,13 @@ ORG &5000
     LDA chell_ptr+1
     STA screen_ptr+1
 
-    LDA #<chell
+    LDA #<chell_standing
     STA sprite_ptr
-    LDA #>chell
+    LDA #>chell_standing
     STA sprite_ptr+1
 
-    LDA #&0D
-    JSR render_masked_large_block
-    INC screen_ptr+1
-    INC screen_ptr+1
-    LDA #&0E
-    JSR render_masked_large_block
+    LDA #0              ; Use character sprite index 0 (chell_standing)
+    JSR render_character_sprite
 
 
     RTS
@@ -107,6 +104,7 @@ ORG &5000
 .end_main
 
 INCLUDE "sprites.asm"
+INCLUDE "masks.asm"
 INCLUDE "tilemap.asm"
 INCLUDE "render.asm"
 

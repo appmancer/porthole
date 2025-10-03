@@ -241,5 +241,87 @@
     
     RTS
 
+; Render character sprite with mask - uses character_sprite_table and character_mask_table
+.render_character_sprite
+    ; preserve A
+    STA tile
+    ; preserve screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr +1
+    PHA
+    ; restore A
+    LDA tile
+    ; Input: A = character sprite index (0-based index for character_sprite_table)
+    ASL A
+    TAX
+    LDA character_sprite_table,X
+    STA sprite_ptr
+    LDA character_sprite_table+1,X
+    STA sprite_ptr+1
+    
+    ; Set up mask pointer from character_mask_table
+    LDA character_mask_table,X
+    STA mask_ptr
+    LDA character_mask_table+1,X
+    STA mask_ptr+1
+
+    JSR plot_sprite_with_mask
+    ; move screen_ptr down 8 rows (256 bytes)
+    LDA screen_ptr+1
+    CLC
+    ADC #1
+    STA screen_ptr+1    
+    ; move sprite_ptr to next sprite (bottom half of large block)
+    LDA sprite_ptr
+    CLC
+    ADC #16
+    STA sprite_ptr
+    BCC char_next_half
+    INC sprite_ptr+1
+    ; move mask_ptr to next mask (bottom half of large block)
+    LDA mask_ptr
+    CLC
+    ADC #16
+    STA mask_ptr
+    BCC char_next_half
+    INC mask_ptr+1
+.char_next_half  
+    ; now plot the second row of the block
+    JSR plot_sprite_with_mask
+
+    ; restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    
+    RTS
+
+    RTS
+
+; Render character sprite with mask - uses character_sprite_table and character_mask_table
+
+; plots a 16-byte sprite with separate mask data (00=transparent, 11=opaque per pixel)
+; Requires: sprite_ptr = sprite data, mask_ptr = mask data, screen_ptr = screen location
+.plot_sprite_with_mask
+    LDY #0
+.mask_sprite_byte_loop
+    LDA (mask_ptr),Y        ; Load mask byte
+    AND (sprite_ptr),Y      ; Keep sprite pixels where mask bits are set
+    STA temp                ; Store masked sprite data
+    
+    LDA (mask_ptr),Y        ; Reload mask byte
+    EOR #&FF                ; Invert mask (00->FF, 11->EE, etc)
+    AND (screen_ptr),Y      ; Keep screen pixels where inverted mask bits are set
+    ORA temp                ; Combine masked sprite + masked screen
+    STA (screen_ptr),Y      ; Write result to screen
+    
+    INY
+    CPY #32                 ; 32 bytes total (16 sprite + 16 sprite continued)
+    BNE mask_sprite_byte_loop
+    
+    RTS
+
 ; Sprite pointer table lookup is now used for sprite selection.
     
