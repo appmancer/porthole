@@ -13,6 +13,7 @@ ORG &70
 .tile_index     SKIP 1    ; Temporary tile index for rendering
 .current_room   SKIP 1    ; Current room number (0=room1, 1=room2)
 .tilemap_ptr    SKIP 2    ; Pointer to current room's tilemap data
+.chell_ptr    SKIP 2    ; Pointer to character sprite data --- IGNORE ---
 
 ; total zero page bytes: 13
 
@@ -73,12 +74,19 @@ ORG &5000
     ; Wait for keypress
     JSR OSRDCH
 
-
+    LDA #<(&6320)
+    STA chell_ptr
+    LDA #>(&6320)
+    STA chell_ptr+1
+    ; animate the character
+    .start_animation
     ; Plot 2x4 character sprite 'chell' so its bottom is at (8,13)
     ; Top-left should be at (8,10)
-    LDA #<(&62A0)
+
+
+    LDA chell_ptr
     STA screen_ptr
-    LDA #>(&62A0)
+    LDA chell_ptr+1
     STA screen_ptr+1
 
     LDA #<chell
@@ -92,7 +100,8 @@ ORG &5000
     INC screen_ptr+1
     LDA #&0E
     JSR render_masked_large_block
-    ; Return
+
+
     RTS
 
 .end_main
