@@ -39,8 +39,8 @@ EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AA, &5D, &AE, &5D, &AE, &5F, &AE, 
 EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F
 EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F
 .corner_bottom_left; &7
-EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &BE, &5F, &BE, &7D, &BE, &7D, &F5, &F5
-EQUB &AF, &5F, &BE, &7D, &BE, &7A, &FA, &F5, &FA, &D7, &FA, &F5, &FA, &F5, &FA, &F5
+EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F,    &AE, &5F, &AE, &5D, &AE, &5D, &AA, &55
+EQUB &AF, &5F, &AE, &5D, &AE, &5D, &AA, &55,    &AA, &55, &AA, &55, &AA, &55, &AA, &55
 .floor ; &8
 EQUB &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5
 EQUB &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5
