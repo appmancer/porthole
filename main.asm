@@ -73,6 +73,25 @@ ORG &5000
     ; Wait for keypress
     JSR OSRDCH
 
+
+    ; Plot 2x4 character sprite 'chell' so its bottom is at (8,13)
+    ; Top-left should be at (8,10)
+    LDA #<(&62A0)
+    STA screen_ptr
+    LDA #>(&62A0)
+    STA screen_ptr+1
+
+    LDA #<chell
+    STA sprite_ptr
+    LDA #>chell
+    STA sprite_ptr+1
+
+    LDA #&0D
+    JSR render_masked_large_block
+    INC screen_ptr+1
+    INC screen_ptr+1
+    LDA #&0E
+    JSR render_masked_large_block
     ; Return
     RTS
 
