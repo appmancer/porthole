@@ -13,10 +13,11 @@ ORG &70
 .tile_index     SKIP 1    ; Temporary tile index for rendering
 .current_room   SKIP 1    ; Current room number (0=room1, 1=room2)
 .tilemap_ptr    SKIP 2    ; Pointer to current room's tilemap data
-.chell_ptr      SKIP 2    ; Pointer to character sprite data --- IGNORE ---
 .mask_ptr       SKIP 2    ; Pointer to current mask data
+.char_x         SKIP 1    ; Character X position in tile coordinates (0-15)
+.char_y         SKIP 1    ; Character Y position in tile coordinates (0-15)
 
-; total zero page bytes: 17
+; total zero page bytes: 18
 
 ORG &5000             
 
@@ -60,10 +61,10 @@ ORG &5000
     LDA #>(room1)
     STA tilemap_ptr+1
 
-    JSR render_tilemap
+    ;JSR render_tilemap
     
     ; Wait for keypress
-    JSR OSRDCH
+    ;JSR OSRDCH
 
     LDA #<(room2)
     STA tilemap_ptr
@@ -75,30 +76,151 @@ ORG &5000
     ; Wait for keypress
     JSR OSRDCH
 
-    LDA #<(&6320)
-    STA chell_ptr
-    LDA #>(&6320)
-    STA chell_ptr+1
-    ; animate the character
-    .start_animation
-    ; Plot 2x4 character sprite 'chell' so its bottom is at (8,13)
-    ; Top-left should be at (8,10)
+    ; Initialize character position (tile coordinates)
+    LDA #4              ; Start at tile column 4 (middle-left of screen)
+    STA char_x
+    LDA #11             ; Start at tile row 10 (lower portion of screen)
+    STA char_y
 
-
-    LDA chell_ptr
-    STA screen_ptr
-    LDA chell_ptr+1
-    STA screen_ptr+1
-
-    LDA #<chell_standing
-    STA sprite_ptr
-    LDA #>chell_standing
-    STA sprite_ptr+1
-
-    LDA #0              ; Use character sprite index 0 (chell_standing)
+    ; Draw character sprite using position coordinates
+    JSR calc_char_screen_position
+    
+    ; Render standing character sprite (frame 0)
+    LDA #0
     JSR render_character_sprite
 
+    ; Wait for keypress, then redraw background
+    JSR OSRDCH
+    
+    ; Redraw background at current character position
+    JSR calc_char_screen_position
+    JSR redraw_background_area
 
+    ; Wait for final keypress
+    JSR OSRDCH
+
+; Convert char_x, char_y tile coordinates to screen_ptr
+; Input: char_x (0-15), char_y (0-15)
+; Output: screen_ptr points to top-left of character position
+.calc_char_screen_position
+    ; screen_ptr = &5800 + (char_y * 256) + (char_x * 16)
+    ; Each tile row = 256 bytes, each tile column = 16 bytes (2 bytes × 8 pixel rows)
+    
+    ; Start with base screen address
+    LDA #<(&5800)
+    STA screen_ptr
+    LDA #>(&5800)
+    STA screen_ptr+1
+    
+    ; Add Y offset: char_y * 256 (add to high byte)
+    LDA screen_ptr+1
+    CLC
+    ADC char_y
+    STA screen_ptr+1
+    
+    ; Add X offset: char_x * 16
+    LDA char_x
+    ASL A           ; * 2
+    ASL A           ; * 4
+    ASL A           ; * 8
+    ASL A           ; * 16
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC char_pos_no_carry
+    INC screen_ptr+1
+.char_pos_no_carry
+    
+    RTS
+
+; Redraw a 1×4 character area with background tiles
+; Input: screen_ptr points to top-left of area to redraw
+.redraw_background_area
+    ; Save screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+    
+    ; Character sprite is 1 tile wide × 4 tiles tall
+    ; Need to redraw 4 tiles vertically with correct tilemap data
+    
+    ; First tile (char_y + 0)
+    LDA char_y
+    JSR get_tilemap_tile
+    JSR render_large_block
+    INC screen_ptr+1
+    
+    ; Second tile (char_y + 1)
+    LDA char_y
+    CLC
+    ADC #1
+    JSR get_tilemap_tile
+    JSR render_large_block
+    INC screen_ptr+1
+    
+    ; Third tile (char_y + 2)
+    LDA char_y
+    CLC
+    ADC #2
+    JSR get_tilemap_tile
+    JSR render_large_block
+    INC screen_ptr+1
+    
+    ; Fourth tile (char_y + 3)
+    LDA char_y
+    CLC
+    ADC #3
+    JSR get_tilemap_tile
+    JSR render_large_block
+    
+    ; Restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    
+    RTS
+
+; Get tile from tilemap at coordinates char_x, A=tilemap_y
+; Input: A = tilemap_y coordinate, char_x = x coordinate  
+; Output: A = tile number
+.get_tilemap_tile
+    ; Calculate tilemap index: tilemap_y * 8 + (char_x / 2)
+    ASL A           ; * 2
+    ASL A           ; * 4
+    ASL A           ; * 8 (tilemap_y * 8)
+    STA tile_index  ; Store base index
+    
+    ; Add char_x / 2
+    LDA char_x
+    LSR A           ; Divide by 2
+    CLC
+    ADC tile_index
+    TAY             ; Y now contains the tilemap byte index
+    
+    ; Read the tilemap byte
+    LDA (tilemap_ptr), Y
+    
+    ; Extract the correct nibble based on char_x odd/even
+    ; Note: In packed nibbles, left tile = high nibble, right tile = low nibble
+    LDX char_x
+    TXA
+    AND #1          ; Check if char_x is odd
+    BNE get_right_nibble
+    
+    ; char_x is even - use left nibble (high 4 bits)
+    LDA (tilemap_ptr), Y
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    RTS
+    
+.get_right_nibble
+    ; char_x is odd - use right nibble (low 4 bits)
+    LDA (tilemap_ptr), Y
+    AND #&0F
     RTS
 
 .end_main

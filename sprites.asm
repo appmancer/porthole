@@ -16,6 +16,7 @@ EQUW corner_top_right   ;&C
 ; Character sprite table - separate from room tiles
 .character_sprite_table
 EQUW chell_standing    ; &0: Chell standing animation
+EQUW chell_moving_right_1 ; &1: Chell moving right animation frame 1
 ; Add more character sprites here as needed
 
 ; Wide 8x16 sprite data 
@@ -39,11 +40,11 @@ EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AA, &5D, &AE, &5D, &AE, &5F, &AE, 
 EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F
 EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F
 .corner_bottom_left; &7
-EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F,    &AE, &5F, &AE, &5D, &AE, &5D, &AA, &55
-EQUB &AF, &5F, &AE, &5D, &AE, &5D, &AA, &55,    &AA, &55, &AA, &55, &AA, &55, &AA, &55
+EQUB &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F,    &AE, &5E, &AC, &5C, &AC, &58, &A8, &50
+EQUB &AF, &5E, &AE, &5C, &AC, &58, &A0, &50,    &A0, &50, &A0, &50, &A0, &50, &A0, &50
 .floor ; &8
-EQUB &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5
-EQUB &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5
+EQUB &A0, &50, &A0, &50, &A0, &50, &A0, &50,    &A0, &50, &A0, &50, &A0, &50, &A0, &50
+EQUB &A0, &50, &A0, &50, &A0, &50, &A0, &50,    &A0, &50, &A0, &50, &A0, &50, &A0, &50
 .ceiling ; &9
 EQUB &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55
 EQUB &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55
@@ -60,9 +61,13 @@ EQUB &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F, &AF, &5F, &AF, &5F, &AF, 
 .character_sprites
 ; Each character is 8x16 pixels (2 wide sprites)
 .chell_standing
-.chell
-EQUB &77, &CF, &8F, &9E, &AC, &BC, &BC, &BC, &88, &CC, &4C, &CC, &88, &88, &88, &88
-EQUB &FD, &8F, &8F, &AD, &AD, &AD, &AD, &AD, &88, &88, &88, &88, &88, &88, &88, &88
-EQUB &AD, &8F, &8F, &8F, &FF, &57, &57, &57, &88, &88, &88, &88, &88, &88, &00, &00
-EQUB &57, &57, &57, &57, &57, &47, &47, &77, &00, &00, &00, &00, &88, &88, &88, &88
+EQUB &77, &CF, &8F, &9E, &AC, &BC, &BC, &BC,   &88, &CC, &4C, &CC, &88, &88, &88, &88
+EQUB &75, &8F, &8F, &AD, &AD, &AD, &AD, &AD,   &00, &88, &88, &88, &88, &88, &88, &88
+EQUB &AD, &8F, &8F, &8F, &FF, &57, &57, &57,   &88, &88, &88, &88, &88, &88, &00, &00
+EQUB &57, &57, &57, &57, &57, &47, &47, &77,   &00, &00, &00, &00, &88, &88, &88, &88
 
+.chell_moving_right_1
+EQUB &11, &21, &23, &23, &23, &23, &23, &23,    &88, &3F, &1F, &7B, &A2, &E2, &E2, &E2
+EQUB &33, &23, &23, &23, &23, &76, &56, &AD,    &E6, &2E, &2E, &A6, &A6, &3D, &6E, &C4
+EQUB &47, &47, &47, &47, &33, &23, &23, &47,    &4C, &4C, &4C, &4C, &CC, &AE, &AE, &AE
+EQUB &57, &57, &AE, &AE, &AE, &57, &57, &77,    &AE, &57, &57, &57, &57, &57, &22, &00
