@@ -72,19 +72,8 @@ ORG &1900
     LDA #11             ; Start at tile row 10 (lower portion of screen)
     STA char_y
 
-    ; Draw character sprite using position coordinates
-    JSR calc_char_screen_position
-    
-    ; Render standing character sprite (frame 0)
-    LDA #0
-    JSR render_character_sprite
-
-    ; Wait for keypress, then redraw background
-    JSR OSRDCH
-    
-    ; Redraw background at current character position
-    JSR calc_char_screen_position
-    JSR redraw_background_area
+    ; Demo pixel-aligned sprite cycling
+    JSR pixel_aligned_demo
 
     ; Wait for final keypress
     JSR OSRDCH
@@ -255,6 +244,65 @@ ORG &1900
     RTS
 
 .end_main
+
+; Demo function to cycle through pixel-aligned sprites
+.pixel_aligned_demo
+    ; Show Chell sprite 0
+    JSR calc_char_screen_position
+    LDA #0
+    JSR render_character_sprite
+    JSR short_delay
+    
+    ; Redraw background
+    ;JSR calc_char_screen_position
+    JSR redraw_background_area
+    ;JSR short_delay
+    
+    ; Show Chell sprite 1 (1 pixel shift)
+    ;JSR calc_char_screen_position
+    LDA #1
+    JSR render_character_sprite
+    JSR short_delay
+    
+    ; Redraw background
+    ;JSR calc_char_screen_position
+    JSR redraw_background_area
+    ;JSR short_delay
+    
+    ; Show Chell sprite 2 (2 pixel shift)
+    ;JSR calc_char_screen_position
+    LDA #2
+    JSR render_character_sprite
+    JSR short_delay
+    
+    ; Redraw background
+    ;JSR calc_char_screen_position
+    JSR redraw_background_area
+    ;JSR short_delay
+    
+    ; Show Chell sprite 3 (3 pixel shift)
+    ;JSR calc_char_screen_position
+    LDA #3
+    JSR render_character_sprite
+    ;JSR short_delay
+    
+    ; Redraw background
+    ;JSR calc_char_screen_position
+    ;JSR redraw_background_area
+    
+    RTS
+
+; Short delay routine
+.short_delay
+    LDY #&FF        ; Delay counter
+.delay_loop_inner
+    LDX #&FF        ; Inner loop
+.delay_loop_very_inner
+    DEX
+    BNE delay_loop_very_inner
+    DEY
+    BNE delay_loop_inner
+    RTS
 
 INCLUDE "sprites.asm"
 INCLUDE "masks.asm"
