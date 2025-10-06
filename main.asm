@@ -57,6 +57,7 @@ ORG &5000
     JSR OSWRCH
 
     ; Set tilemap_ptr based on current_room
+    LDA #1
     JSR set_room_tilemap
 
     ; Render the current room  
@@ -131,37 +132,82 @@ ORG &5000
     LDA screen_ptr+1
     PHA
     
-    ; Character sprite is 1 tile wide × 4 tiles tall
-    ; Need to redraw 4 tiles vertically with correct tilemap data
+    ; Character sprite is 1 tile wide × 4 character rows tall
+    ; If char_y is even (aligned to tile top): spans 2 tiles
+    ; If char_y is odd (not aligned): spans 3 tiles
     
-    ; First tile (char_y + 0)
+    ; Calculate the first tile row that contains char_y
     LDA char_y
-    JSR get_tilemap_tile
-    JSR render_large_block
+    LSR A               ; Divide by 2: char_y / 2 = first_tile_y
+    STA temp_y          ; Store the first tile row
+    
+    ; Calculate screen position for start of this tile row
+    ; Reset screen_ptr to tile-aligned position
+    LDA #<(&5800)
+    STA screen_ptr
+    LDA #>(&5800)
+    STA screen_ptr+1
+    
+    ; Add tile row offset: tile_row * 512 bytes (each tile = 2 char rows)
+    LDA temp_y
+    BEQ add_x_offset    ; Skip if tile row 0
+.tile_offset_loop
+    INC screen_ptr+1    ; Add 256 bytes  
+    INC screen_ptr+1    ; Add 256 bytes = 512 total per tile row
+    DEC temp_y
+    BNE tile_offset_loop
+    
+.add_x_offset
+    ; Add X offset for character column  
+    LDA char_x
+    ASL A               ; * 2
+    ASL A               ; * 4
+    ASL A               ; * 8
+    ASL A               ; * 16
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC first_tile
     INC screen_ptr+1
     
-    ; Second tile (char_y + 1)
+.first_tile
+    ; First tile - get tile from tilemap
     LDA char_y
-    CLC
-    ADC #1
+    LSR A               ; Convert to tile coordinate
     JSR get_tilemap_tile
     JSR render_large_block
+    
+    ; Move down to next tile (512 bytes = 2 character rows)
+    INC screen_ptr+1
     INC screen_ptr+1
     
-    ; Third tile (char_y + 2)
+    ; Second tile - next tile row down
     LDA char_y
+    LSR A               ; Convert to tile coordinate
     CLC
-    ADC #2
+    ADC #1              ; Next tile row: tile_y + 1
     JSR get_tilemap_tile
     JSR render_large_block
+    
+    ; Check if char_y is aligned to tile top (even)
+    ; If char_y is odd, we need a third tile
+    LDA char_y
+    AND #&01            ; Check if odd
+    BEQ restore_screen_ptr  ; If even (aligned), we're done
+    
+    ; Need third tile (char_y was odd)
+    INC screen_ptr+1    ; Move down another 512 bytes
     INC screen_ptr+1
     
-    ; Fourth tile (char_y + 3)
+    ; Third tile
     LDA char_y
+    LSR A               ; Convert to tile coordinate
     CLC
-    ADC #3
+    ADC #2              ; Third tile row: tile_y + 2
     JSR get_tilemap_tile
     JSR render_large_block
+    
+.restore_screen_ptr
     
     ; Restore screen_ptr
     PLA
