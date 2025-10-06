@@ -186,41 +186,21 @@ ORG &5000
 ; Input: A = tilemap_y coordinate, char_x = x coordinate  
 ; Output: A = tile number
 .get_tilemap_tile
-    ; Calculate tilemap index: tilemap_y * 8 + (char_x / 2)
-    ASL A           ; * 2
-    ASL A           ; * 4
-    ASL A           ; * 8 (tilemap_y * 8)
+    ; Calculate tilemap index: tilemap_y * 16 + char_x (8-bit format)
+    ASL A           ; × 2
+    ASL A           ; × 4
+    ASL A           ; × 8
+    ASL A           ; × 16 (tilemap_y * 16)
     STA tile_index  ; Store base index
     
-    ; Add char_x / 2
+    ; Add char_x (no division needed for 8-bit format)
     LDA char_x
-    LSR A           ; Divide by 2
     CLC
     ADC tile_index
     TAY             ; Y now contains the tilemap byte index
     
-    ; Read the tilemap byte
+    ; Read tile directly (no nibble extraction needed!)
     LDA (tilemap_ptr), Y
-    
-    ; Extract the correct nibble based on char_x odd/even
-    ; Note: In packed nibbles, left tile = high nibble, right tile = low nibble
-    LDX char_x
-    TXA
-    AND #1          ; Check if char_x is odd
-    BNE get_right_nibble
-    
-    ; char_x is even - use left nibble (high 4 bits)
-    LDA (tilemap_ptr), Y
-    LSR A
-    LSR A
-    LSR A
-    LSR A
-    RTS
-    
-.get_right_nibble
-    ; char_x is odd - use right nibble (low 4 bits)
-    LDA (tilemap_ptr), Y
-    AND #&0F
     RTS
 
 .end_main
