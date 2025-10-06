@@ -260,6 +260,7 @@ INCLUDE "sprites.asm"
 INCLUDE "masks.asm"
 INCLUDE "tilemap.asm"
 INCLUDE "render.asm"
+INCLUDE "lookup_tables.asm"
 
 .end
 

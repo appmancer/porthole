@@ -24,11 +24,8 @@
     
 .tilemap_col_loop
     ; Calculate tilemap index: row_counter * 16 + col_counter  
-    LDA &77                 ; row_counter
-    ASL A                   ; × 2
-    ASL A                   ; × 4
-    ASL A                   ; × 8
-    ASL A                   ; × 16
+    LDY &77                 ; row_counter as index
+    LDA times16_table,Y     ; Get row_counter * 16 (2 cycles vs 8 for 4 ASLs)
     CLC
     ADC &78                 ; + col_counter
     TAY
