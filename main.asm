@@ -16,8 +16,9 @@ ORG &70
 .mask_ptr       SKIP 2    ; Pointer to current mask data
 .char_x         SKIP 1    ; Character X position in tile coordinates (0-15)
 .char_y         SKIP 1    ; Character Y position in tile coordinates (0-15)
+.temp_char_x    SKIP 1    ; Temporary storage for original char_x position
 
-; total zero page bytes: 18
+; total zero page bytes: 19
 
 ORG &1900             
 
@@ -245,49 +246,68 @@ ORG &1900
 
 .end_main
 
-; Demo function to cycle through pixel-aligned sprites
+; Demo function to cycle through 8 frames of smooth movement
+; Frames 0-3: pixel shifts 0-3 at current position
+; Frames 4-7: move to next char position, pixel shifts 0-3
 .pixel_aligned_demo
-    ; Show Chell sprite 0
+    ; Frame 0: sprite 0 at current position
     JSR calc_char_screen_position
     LDA #0
     JSR render_character_sprite
     JSR short_delay
-    
-    ; Redraw background
-    ;JSR calc_char_screen_position
     JSR redraw_background_area
-    ;JSR short_delay
     
-    ; Show Chell sprite 1 (1 pixel shift)
-    ;JSR calc_char_screen_position
+    ; Frame 1: sprite 1 (1 pixel shift) at current position
     LDA #1
     JSR render_character_sprite
     JSR short_delay
-    
-    ; Redraw background
-    ;JSR calc_char_screen_position
     JSR redraw_background_area
-    ;JSR short_delay
     
-    ; Show Chell sprite 2 (2 pixel shift)
-    ;JSR calc_char_screen_position
+    ; Frame 2: sprite 2 (2 pixel shift) at current position
     LDA #2
     JSR render_character_sprite
     JSR short_delay
-    
-    ; Redraw background
-    ;JSR calc_char_screen_position
     JSR redraw_background_area
-    ;JSR short_delay
     
-    ; Show Chell sprite 3 (3 pixel shift)
-    ;JSR calc_char_screen_position
+    ; Frame 3: sprite 3 (3 pixel shift) at current position
     LDA #3
     JSR render_character_sprite
-    ;JSR short_delay
+    JSR short_delay
     
-    ; Redraw background
-    ;JSR calc_char_screen_position
+    JSR OSRDCH
+    JSR redraw_background_area
+    
+    ; Frame 4: Move to next character position, sprite 0
+    ; Move by 8 bytes (4 pixels) for half-character precision
+    ; This gives us 1-pixel precision over 8 frames total
+    LDA screen_ptr
+    CLC
+    ADC #8              ; Move right by half character cell (8 bytes = 4 pixels)
+    STA screen_ptr
+    BCC pixel_demo_no_carry
+    INC screen_ptr+1
+.pixel_demo_no_carry
+    LDA #0
+    JSR render_character_sprite
+    JSR short_delay
+    JSR redraw_background_area
+    
+    ; Frame 5: sprite 1 (1 pixel shift) at new position
+    LDA #1
+    JSR render_character_sprite
+    JSR short_delay
+    JSR redraw_background_area
+    
+    ; Frame 6: sprite 2 (2 pixel shift) at new position
+    LDA #2
+    JSR render_character_sprite
+    JSR short_delay
+    JSR redraw_background_area
+    
+    ; Frame 7: sprite 3 (3 pixel shift) at new position
+    LDA #3
+    JSR render_character_sprite
+    JSR short_delay
     ;JSR redraw_background_area
     
     RTS
