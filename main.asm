@@ -30,7 +30,7 @@ ORG &5000
     BNE delay_loop
     
     ; Initialize current_room to 1 (room2)
-    LDA #0
+    LDA #1
     STA current_room
     
     ; Clear screen first
@@ -56,21 +56,10 @@ ORG &5000
     LDA #12
     JSR OSWRCH
 
-    LDA #<(room1)
-    STA tilemap_ptr
-    LDA #>(room1)
-    STA tilemap_ptr+1
+    ; Set tilemap_ptr based on current_room
+    JSR set_room_tilemap
 
-    ;JSR render_tilemap
-    
-    ; Wait for keypress
-    ;JSR OSRDCH
-
-    LDA #<(room2)
-    STA tilemap_ptr
-    LDA #>(room2)
-    STA tilemap_ptr+1
-
+    ; Render the current room  
     JSR render_tilemap
 
     ; Wait for keypress
@@ -179,6 +168,22 @@ ORG &5000
     STA screen_ptr+1
     PLA
     STA screen_ptr
+    
+    RTS
+
+; Set tilemap_ptr based on current_room variable
+; Uses room_pointers table to get correct room data
+.set_room_tilemap
+    ; Calculate room_pointers index: current_room * 2 (16-bit pointers)
+    LDA current_room
+    ASL A                   ; × 2 for 16-bit pointer
+    TAX
+    
+    ; Load room pointer from room_pointers table
+    LDA room_pointers,X
+    STA tilemap_ptr
+    LDA room_pointers+1,X
+    STA tilemap_ptr+1
     
     RTS
 
