@@ -19,7 +19,7 @@ ORG &70
 
 ; total zero page bytes: 18
 
-ORG &5000             
+ORG &1900             
 
 .start
     ; MODE 5 is already set by the BASIC loader program

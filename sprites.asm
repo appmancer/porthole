@@ -16,6 +16,9 @@ EQUW corner_top_right   ;&C
 ; Character sprite table - separate from room tiles
 .character_sprite_table
 EQUW chell_standing    ; &0: Chell standing animation
+EQUW chell_standing_shift1
+EQUW chell_standing_shift2
+EQUW chell_standing_shift3
 EQUW chell_moving_right_1 ; &1: Chell moving right animation frame 1
 ; Add more character sprites here as needed
 
@@ -65,6 +68,27 @@ EQUB &77, &CF, &8F, &9E, &AC, &BC, &BC, &BC,   &88, &CC, &4C, &CC, &88, &88, &88
 EQUB &75, &8F, &8F, &AD, &AD, &AD, &AD, &AD,   &00, &88, &88, &88, &88, &88, &88, &88
 EQUB &AD, &8F, &8F, &8F, &FF, &57, &57, &57,   &88, &88, &88, &88, &88, &88, &00, &00
 EQUB &57, &57, &57, &57, &57, &47, &47, &77,   &00, &00, &00, &00, &88, &88, &88, &88
+
+; Chell standing shifted 1 pixel right
+.chell_standing_shift1
+EQUB &33, &67, &47, &E7, &47, &47, &47, &47,    &CC, &6E, &2E, &E6, &44, &C4, &C4, &C4
+EQUB &32, &47, &47, &56, &56, &56, &56, &56,    &88, &4C, &4C, &4C, &4C, &4C, &4C, &4C
+EQUB &56, &47, &47, &47, &77, &23, &23, &23,    &4C, &4C, &4C, &4C, &CC, &CC, &88, &88
+EQUB &23, &23, &23, &23, &23, &23, &23, &33,    &88, &88, &88, &88, &CC, &4C, &4C, &CC
+
+; Chell standing shifted 2 pixels right
+.chell_standing_shift2
+EQUB &11, &22, &23, &23, &23, &23, &23, &23,    &EE, &3F, &1F, &78, &A2, &E2, &E2, &E2
+EQUB &11, &22, &23, &23, &23, &23, &23, &23,    &C4, &2E, &2E, &A6, &A6, &A6, &A6, &A6
+EQUB &23, &23, &23, &23, &23, &11, &11, &11,    &A6, &2E, &2E, &2E, &EE, &6E, &4C, &4C
+EQUB &11, &11, &11, &11, &11, &11, &11, &11,    &4C, &4C, &4C, &4C, &6E, &2E, &2E, &EE
+
+; Chell standing shifted 3 pixels right
+.chell_standing_shift3
+EQUB &77, &CF, &BF, &9E, &AC, &BC, &BC, &BC,    &88, &CC, &4C, &CC, &88, &88, &88, &88
+EQUB &75, &8F, &8F, &AD, &AD, &AD, &AD, &AD,    &00, &88, &88, &88, &88, &88, &88, &88
+EQUB &AD, &8F, &8F, &8F, &FF, &57, &57, &57,    &88, &88, &88, &88, &88, &88, &00, &00
+EQUB &57, &57, &57, &57, &57, &47, &47, &77,    &00, &00, &00, &00, &88, &88, &88, &88
 
 .chell_moving_right_1
 EQUB &11, &21, &23, &23, &23, &23, &23, &23,    &88, &3F, &1F, &7B, &A2, &E2, &E2, &E2
