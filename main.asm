@@ -16,8 +16,9 @@ ORG &70
 .mask_ptr       SKIP 2    ; Pointer to current mask data
 .char_x         SKIP 1    ; Character X position in tile coordinates (0-15)
 .char_y         SKIP 1    ; Character Y position in tile coordinates (0-15)
+.char_tile_pos  SKIP 1    ; Single tile position (char_y * 16 + char_x), shadows char_x/char_y
 
-; total zero page bytes: 20
+; total zero page bytes: 21
 
 ORG &1900             
 
@@ -71,6 +72,10 @@ ORG &1900
     STA char_x
     STA char_y
     ; each tile is 16x16 pixels, so char_x 2 = pixel x 32
+    
+    ; Initialize char_tile_pos as shadow of char_x/char_y: 4*16+4 = 68
+    LDA #68             ; char_y * 16 + char_x = 4 * 16 + 4 = 68
+    STA char_tile_pos
 
     LDA #<(&6040)  ; Start in the correct tile [4,4]
     STA screen_ptr
@@ -192,18 +197,8 @@ ORG &1900
 ; Input: A = tilemap_y coordinate, char_x = x coordinate  
 ; Output: A = tile number
 .get_tilemap_tile
-    ; Calculate tilemap index: tilemap_y * 16 + char_x (8-bit format)
-    ASL A           ; × 2
-    ASL A           ; × 4
-    ASL A           ; × 8
-    ASL A           ; × 16 (tilemap_y * 16)
-    STA tile_index  ; Store base index
-    
-    ; Add char_x (no division needed for 8-bit format)
-    LDA char_x
-    CLC
-    ADC tile_index
-    TAY             ; Y now contains the tilemap byte index
+    ; Use char_tile_pos directly instead of calculating tilemap_y * 16 + char_x
+    LDY char_tile_pos       ; char_tile_pos = char_y * 16 + char_x
     
     ; Read tile directly (no nibble extraction needed!)
     LDA (tilemap_ptr), Y
