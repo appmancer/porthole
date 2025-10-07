@@ -281,6 +281,7 @@ ORG &1900
 ; Frames 4-7: move to next char position, pixel shifts 0-3
 .pixel_aligned_demo
     ; Frame 0: sprite 0 at current position
+    LDA #0
     JSR render_character_sprite
     JSR short_delay
     JSR redraw_background_area
@@ -302,13 +303,14 @@ ORG &1900
     JSR render_character_sprite
     JSR short_delay
     
-    JSR OSRDCH
-    JSR redraw_background_area
-    
-    ; Frame 4: Move to next character position, sprite 0
+    ; Frame 4: Clean up old position, then move to next character position, sprite 0
     ; Move by 8 bytes (4 pixels) for half-character precision
     ; This gives us 1-pixel precision over 8 frames total
 .end_of_cycle
+    ; First clean up the old position before moving
+    JSR redraw_background_area
+    
+    ; Now move to next position
     LDA screen_ptr
     CLC
     ADC #8              ; Move right by half character cell (8 bytes = 4 pixels)
@@ -337,7 +339,6 @@ ORG &1900
     LDA #3
     JSR render_character_sprite
     JSR short_delay
-    ;JSR redraw_background_area
     
     ; Movement cycle complete - update tile position for next cycle
     INC char_tile_pos       ; Move to next tile position
