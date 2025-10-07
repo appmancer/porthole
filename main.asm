@@ -134,6 +134,7 @@ ORG &1900
     
 .first_tile
     ; First tile - get tile from tilemap
+    LDY char_tile_pos
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -142,10 +143,11 @@ ORG &1900
     INC screen_ptr+1
     
     ; Second tile - next tile row down
-    LDA char_y
-    LSR A               ; Convert to tile coordinate
+    LDY char_tile_pos
+    TYA
     CLC
-    ADC #1            
+    ADC #16             ; Add 16 for next tile row
+    TAY
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -160,10 +162,11 @@ ORG &1900
     INC screen_ptr+1
     
     ; Third tile
-    LDA char_y
-    LSR A               ; Convert to tile coordinate
+    LDY char_tile_pos
+    TYA
     CLC
-    ADC #2              ; Third tile row: tile_y + 2
+    ADC #32             ; Add 32 for two tile rows down
+    TAY
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -193,14 +196,11 @@ ORG &1900
     
     RTS
 
-; Get tile from tilemap at coordinates char_x, A=tilemap_y
-; Input: A = tilemap_y coordinate, char_x = x coordinate  
+; Get tile from tilemap at specified tile position
+; Input: Y = tile position (tilemap_y * 16 + tilemap_x)
 ; Output: A = tile number
 .get_tilemap_tile
-    ; Use char_tile_pos directly instead of calculating tilemap_y * 16 + char_x
-    LDY char_tile_pos       ; char_tile_pos = char_y * 16 + char_x
-    
-    ; Read tile directly (no nibble extraction needed!)
+    ; Read tile directly using the provided tile position
     LDA (tilemap_ptr), Y
     RTS
 
