@@ -98,39 +98,82 @@ ORG &1900
     PHA
     
     ; Character sprite is 1 tile wide × 4 character rows tall
-    ; If char_y is even (aligned to tile top): spans 2 tiles
-    ; If char_y is odd (not aligned): spans 3 tiles
+    ; Derive tile coordinates from actual input screen_ptr position
     
+    ; Calculate tile_y: (screen_ptr - &5800) / 512
+    ; First get offset from screen base
+    LDA screen_ptr
+    SEC
+    SBC #<(&5800)
+    STA temp           ; Low byte of offset
+    LDA screen_ptr+1
+    SBC #>(&5800)
+    STA temp_y         ; High byte of offset
     
-    ; Calculate screen position for start of this tile row
-    ; Reset screen_ptr to tile-aligned position
+    ; Now divide by 512: high byte of offset = tile_y (since 512 = &200)
+    LDA temp_y
+    LSR A              ; Divide high byte by 2 to get tile_y
+    STA temp_y         ; temp_y now contains tile_y
+    
+    ; Calculate tile_x: (offset within tile row) / 16
+    ; Get the low 8 bits + LSB of high byte for position within 512-byte row
+    LDA temp_y
+    AND #1             ; Get LSB of original high byte
+    BEQ calc_tile_x    ; If 0, use temp directly
+    
+    ; Add 256 to temp for the extra bit
+    LDA temp
+    CLC
+    ADC #0             ; temp already has the right value
+    STA temp
+    LDA #1
+    STA col_counter    ; Use col_counter as flag for +256
+    JMP do_tile_x_calc
+    
+.calc_tile_x
+    LDA #0
+    STA col_counter    ; Clear the +256 flag
+
+.do_tile_x_calc
+    ; Now divide temp by 16 to get tile_x
+    LDA temp
+    LSR A              ; Divide by 2
+    LSR A              ; Divide by 4
+    LSR A              ; Divide by 8
+    LSR A              ; Divide by 16
+    
+    ; Add 16 if we had the +256 flag
+    LDX col_counter
+    BEQ store_tile_x
+    CLC
+    ADC #16
+    
+.store_tile_x
+    STA col_counter    ; Store tile_x in col_counter
+    
+    ; Now recalculate tile-aligned screen_ptr
+    ; Start with screen base
     LDA #<(&5800)
     STA screen_ptr
     LDA #>(&5800)
     STA screen_ptr+1
     
-    ; Calculate tile_y from char_tile_pos: tile_y = char_tile_pos / 16
-    LDA char_tile_pos
-    LSR A               ; Divide by 2
-    LSR A               ; Divide by 4  
-    LSR A               ; Divide by 8
-    LSR A               ; Divide by 16 = tile_y
-    STA temp_y
-    BEQ add_x_offset    ; Skip if tile row 0
-.tile_offset_loop
-    INC screen_ptr+1    ; Add 256 bytes  
-    INC screen_ptr+1    ; Add 256 bytes = 512 total per tile row
-    DEC temp_y
-    BNE tile_offset_loop
+    ; Add tile_y * 512
+    LDX temp_y         ; tile_y
+    BEQ add_tile_x_offset
+.tile_y_loop
+    INC screen_ptr+1   ; Add 256
+    INC screen_ptr+1   ; Add 256 = 512 total
+    DEX
+    BNE tile_y_loop
     
-.add_x_offset
-    ; Calculate tile_x from char_tile_pos: tile_x = char_tile_pos AND 15
-    LDA char_tile_pos
-    AND #15             ; Keep only lower 4 bits = tile_x
-    ASL A               ; * 2
-    ASL A               ; * 4
-    ASL A               ; * 8
-    ASL A               ; * 16
+.add_tile_x_offset
+    ; Add tile_x * 16
+    LDA col_counter    ; tile_x
+    ASL A              ; * 2
+    ASL A              ; * 4
+    ASL A              ; * 8
+    ASL A              ; * 16
     CLC
     ADC screen_ptr
     STA screen_ptr
@@ -138,8 +181,15 @@ ORG &1900
     INC screen_ptr+1
     
 .first_tile
-    ; First tile - get tile from tilemap
-    LDY char_tile_pos
+    ; First tile - calculate linear position: tile_y * 16 + tile_x
+    LDA temp_y         ; tile_y
+    ASL A              ; * 2
+    ASL A              ; * 4
+    ASL A              ; * 8  
+    ASL A              ; * 16
+    CLC
+    ADC col_counter    ; + tile_x
+    TAY                ; Y = tile position for tilemap lookup
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -147,31 +197,46 @@ ORG &1900
     INC screen_ptr+1
     INC screen_ptr+1
     
-    ; Second tile - next tile row down
-    LDY char_tile_pos
-    TYA
+    ; Second tile - next tile row down (tile_y + 1)
+    LDA temp_y         ; tile_y
     CLC
-    ADC #16             ; Add 16 for next tile row
-    TAY
+    ADC #1             ; tile_y + 1
+    ASL A              ; * 2
+    ASL A              ; * 4
+    ASL A              ; * 8
+    ASL A              ; * 16
+    CLC
+    ADC col_counter    ; + tile_x
+    TAY                ; Y = tile position for tilemap lookup
     JSR get_tilemap_tile
     JSR render_large_block
     
-    ; Check if char_y is aligned to tile top (even)
-    ; If char_y is odd, we need a third tile
-    LDA char_y
-    AND #&01            ; Check if odd
-    BEQ restore_screen_ptr  ; If even (aligned), we're done
-    
-    ; Need third tile (char_y was odd)
+    ; Check if current screen_ptr is 512-byte aligned
+    ; First check: is low byte zero?
+    LDA screen_ptr
+    BNE need_third_tile     ; If low byte != 0, definitely need 3rd tile
+
+    ; Low byte is zero, now check if high byte is even (LSB = 0)
+    LDA screen_ptr+1
+    AND #&01                ; Check LSB of high byte
+    BEQ restore_screen_ptr  ; If even (512-byte aligned), only need 2 tiles
+
+.need_third_tile
+    ; Need third tile
     INC screen_ptr+1    ; Move down another 512 bytes
     INC screen_ptr+1
     
-    ; Third tile
-    LDY char_tile_pos
-    TYA
+    ; Third tile - two tile rows down (tile_y + 2)
+    LDA temp_y         ; tile_y
     CLC
-    ADC #32             ; Add 32 for two tile rows down
-    TAY
+    ADC #2             ; tile_y + 2
+    ASL A              ; * 2
+    ASL A              ; * 4
+    ASL A              ; * 8
+    ASL A              ; * 16
+    CLC
+    ADC col_counter    ; + tile_x
+    TAY                ; Y = tile position for tilemap lookup
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -205,12 +270,9 @@ ORG &1900
 ; Input: Y = tile position (tilemap_y * 16 + tilemap_x)
 ; Output: A = tile number
 .get_tilemap_tile
-    ; DIAGNOSTIC: Always return tile 3 to see background restoration pattern
-    LDA #&03
-    RTS
     ; Read tile directly using the provided tile position
-    ;LDA (tilemap_ptr), Y
-    ;RTS
+    LDA (tilemap_ptr), Y
+    RTS
 
 .end_main
 
