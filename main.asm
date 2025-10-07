@@ -277,9 +277,12 @@ ORG &1900
 .end_main
 
 ; Demo function to cycle through 8 frames of smooth movement
+; 8-frame pixel-aligned movement cycle
 ; Frames 0-3: pixel shifts 0-3 at current position
 ; Frames 4-7: move to next char position, pixel shifts 0-3
 .pixel_aligned_demo
+
+.animation_cycle
     ; Frame 0: sprite 0 at current position
     LDA #0
     JSR render_character_sprite
@@ -306,7 +309,6 @@ ORG &1900
     ; Frame 4: Clean up old position, then move to next character position, sprite 0
     ; Move by 8 bytes (4 pixels) for half-character precision
     ; This gives us 1-pixel precision over 8 frames total
-.end_of_cycle
     ; First clean up the old position before moving
     JSR redraw_background_area
     
@@ -318,37 +320,13 @@ ORG &1900
     BCC pixel_demo_no_carry
     INC screen_ptr+1
 .pixel_demo_no_carry
-    LDA #0
-    JSR render_character_sprite
-    JSR short_delay
-    JSR redraw_background_area
     
-    ; Frame 5: sprite 1 (1 pixel shift) at new position
-    LDA #1
-    JSR render_character_sprite
-    JSR short_delay
-    JSR redraw_background_area
-    
-    ; Frame 6: sprite 2 (2 pixel shift) at new position
-    LDA #2
-    JSR render_character_sprite
-    JSR short_delay
-    JSR redraw_background_area
-    
-    ; Frame 7: sprite 3 (3 pixel shift) at new position
-    LDA #3
-    JSR render_character_sprite
-    JSR short_delay
-    
-    ; Movement cycle complete - update tile position for next cycle
-    INC char_tile_pos       ; Move to next tile position
-    
-    JMP end_of_cycle
+    JMP animation_cycle     ; Loop all 8 frames
     RTS
 
 ; Short delay routine
 .short_delay
-    LDY #&FF        ; Delay counter
+    LDY #&50     ; Delay counter
 .delay_loop_inner
     LDX #&FF        ; Inner loop
 .delay_loop_very_inner
