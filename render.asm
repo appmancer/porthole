@@ -4,59 +4,59 @@
 .render_tilemap
     ; Set up initial pointers
     LDA #<(&5800)           ; Screen starts at &5800 in MODE 5
-    STA &71                 ; screen_ptr_lo 
+    STA screen_ptr                 ; screen_ptr_lo 
     LDA #>(&5800)
-    STA &72                 ; screen_ptr_hi
+    STA screen_ptr+1                 ; screen_ptr_hi
     
     LDA #<(sprite_data)     ; Set up sprite pointer 
-    STA &73                 ; sprite_ptr_lo
+    STA sprite_ptr                 ; sprite_ptr_lo
     LDA #>(sprite_data) 
-    STA &74                 ; sprite_ptr_hi
+    STA sprite_ptr                 ; sprite_ptr_hi
     
     ; Initialize row counter  
     LDA #0
-    STA &77                 ; row_counter
+    STA row_counter                 ; row_counter
 
 .tilemap_row_loop
     ; Initialize column counter
     LDA #0
-    STA &78                 ; col_counter
+    STA col_counter                 ; col_counter
     
 .tilemap_col_loop
     ; Calculate tilemap index: row_counter * 16 + col_counter  
-    LDY &77                 ; row_counter as index
+    LDY row_counter                 ; row_counter as index
     LDA times16_table,Y     ; Get row_counter * 16 (2 cycles vs 8 for 4 ASLs)
     CLC
     ADC &78                 ; + col_counter
     TAY
     
     ; Get tile value directly (8-bit format - no nibble extraction!)
-    LDA (&7B), Y            ; tilemap_ptr is in &7B/&7C
+    LDA (tilemap_ptr), Y            ; tilemap_ptr is in &7B/&7C
     JSR render_large_block
     
     ; Move screen pointer right by 16 bytes
-    LDA &71
-    CLC  
+    LDA screen_ptr
+    CLC
     ADC #16
-    STA &71
+    STA screen_ptr
     BCC tilemap_col_loop_no_carry
-    INC &72
-    
+    INC screen_ptr+1
+
 .tilemap_col_loop_no_carry    
     ; Next column
-    INC &78
-    LDA &78
+    INC col_counter
+    LDA col_counter
     CMP #16                 ; 16 columns total
     BNE tilemap_col_loop
     
 .tilemap_end_of_row
     ; Move to next screen row (add 256 bytes)
-    INC &72                 ; screen_ptr_hi++
-    
+    INC screen_ptr+1
+
     ; Next row
-    INC &77
-    LDA &77
-    CMP #16                 ; 16 rows total  
+    INC row_counter
+    LDA row_counter
+    CMP #16                 ; 16 rows total
     BEQ tilemap_done
     JMP tilemap_row_loop
     
@@ -65,39 +65,38 @@
 
 .render_large_block
     ; Store tile type
-    STA &76                 ; tile
-    
-    ; Preserve screen pointer  
-    LDA &71
+    STA tile
+    ; Preserve screen pointer
+    LDA screen_ptr
     PHA
-    LDA &72
+    LDA screen_ptr+1
     PHA
     
     ; Get sprite data pointer for this tile
-    LDA &76                 ; tile
+    LDA tile
     ASL A                   ; × 2 for 16-bit pointer
     TAX
     LDA sprite_table,X
-    STA &73                 ; sprite_ptr_lo
-    LDA sprite_table+1,X 
-    STA &74                 ; sprite_ptr_hi
-    
+    STA sprite_ptr                 ; sprite_ptr_lo
+    LDA sprite_table+1,X
+    STA sprite_ptr+1                 ; sprite_ptr_hi
+
     ; Plot first half (top 8 rows)
     JSR plot_wide_sprite
     
     ; Move screen pointer down 8 rows (256 bytes)
-    LDA &72
+    LDA screen_ptr+1
     CLC
     ADC #1
-    STA &72
+    STA screen_ptr+1
     
     ; Move sprite pointer to bottom half (+16 bytes)
-    LDA &73
+    LDA sprite_ptr
     CLC
     ADC #16
-    STA &73
+    STA sprite_ptr
     BCC next_half
-    INC &74
+    INC sprite_ptr+1
     
 .next_half
     ; Plot second half (bottom 8 rows)
@@ -105,47 +104,47 @@
     
     ; Restore screen pointer
     PLA
-    STA &72
-    PLA  
-    STA &71
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
     RTS
 
 ; Masked version of render_large_block - for sprites with transparent black pixels
 .render_masked_large_block
     ; Store tile type
-    STA &76                 ; tile
-    
+    STA tile
+
     ; Preserve screen pointer
-    LDA &71
+    LDA screen_ptr
     PHA
-    LDA &72
+    LDA screen_ptr+1
     PHA
     
     ; Get sprite data pointer for this tile
-    LDA &76                 ; tile
+    LDA tile                 ; tile
     ASL A                   ; × 2 for 16-bit pointer
     TAX
     LDA sprite_table,X
-    STA &73                 ; sprite_ptr_lo
+    STA sprite_ptr                 ; sprite_ptr_lo
     LDA sprite_table+1,X
-    STA &74                 ; sprite_ptr_hi
-    
+    STA sprite_ptr+1                 ; sprite_ptr_hi
+
     ; Plot first half (top 8 rows) with masking
     JSR plot_masked_wide_sprite
     
     ; Move screen pointer down 8 rows (256 bytes)
-    LDA &72
+    LDA screen_ptr+1
     CLC
     ADC #1
-    STA &72
+    STA screen_ptr+1
     
     ; Move sprite pointer to bottom half (+16 bytes)
-    LDA &73
+    LDA sprite_ptr
     CLC
     ADC #16
-    STA &73
+    STA sprite_ptr
     BCC next_half_masked
-    INC &74
+    INC sprite_ptr+1
     
 .next_half_masked
     ; Plot second half (bottom 8 rows) with masking  
@@ -153,9 +152,9 @@
     
     ; Restore screen pointer
     PLA
-    STA &72
+    STA screen_ptr+1
     PLA
-    STA &71
+    STA screen_ptr
     RTS
 
 ; plots a 16-byte, double character wide sprite
@@ -163,8 +162,8 @@
     ; Plot 16 bytes of sprite data consecutively
     LDY #0
 .sprite_wide_row_loop
-    LDA (&73),Y             ; Get sprite row data from sprite_ptr (&73/&74)
-    STA (&71),Y             ; Plot to screen at screen_ptr (&71/&72)
+    LDA (sprite_ptr),Y             ; Get sprite row data from sprite_ptr
+    STA (screen_ptr),Y             ; Plot to screen at screen_ptr
     INY
     CPY #16                 ; 16 bytes per row
     BNE sprite_wide_row_loop
@@ -175,56 +174,56 @@
 .plot_masked_wide_sprite
     LDY #0
 .masked_sprite_byte_loop
-    LDA (&73),Y             ; Load sprite byte from sprite_ptr (&73/&74)
+    LDA (sprite_ptr),Y             ; Load sprite byte from sprite_ptr
     BEQ skip_sprite_byte    ; If entire byte is 0 (all black), skip it
     
-    STA &70                 ; Store sprite byte in &70 (temp)
-    LDA (&71),Y             ; Load current screen byte from screen_ptr (&71/&72)
-    STA &75                 ; Store screen byte in &75 (temp_y)
+    STA temp                 ; Store sprite byte in &70 (temp)
+    LDA (screen_ptr),Y             ; Load current screen byte from screen_ptr
+    STA temp_y                 ; Store screen byte in &75 (temp_y)
     
     ; Process pixel 0 (bits 0 and 4) - MSB bit 0 = bit 7, bit 4 = bit 3
-    LDA &70
+    LDA temp
     AND #&88                ; Mask bits 7 and 3 (0 and 4 in MSB numbering)
     BEQ keep_screen_pixel0  ; If sprite pixel is black, keep screen pixel
-    LDA &75
-    AND #&77                ; Clear screen bits 7 and 3  
-    ORA &70                 ; OR in sprite bits 7 and 3
-    STA &75
+    LDA temp_y
+    AND #&77                ; Clear screen bits 7 and 3
+    ORA temp                ; OR in sprite bits 7 and 3
+    STA temp_y
 .keep_screen_pixel0
     
     ; Process pixel 1 (bits 1 and 5) - MSB bit 1 = bit 6, bit 5 = bit 2
-    LDA &70
+    LDA temp
     AND #&44                ; Mask bits 6 and 2 (1 and 5 in MSB numbering)
     BEQ keep_screen_pixel1  ; If sprite pixel is black, keep screen pixel
-    LDA &75
+    LDA temp_y
     AND #&BB                ; Clear screen bits 6 and 2
-    ORA &70                 ; OR in sprite bits 6 and 2
-    STA &75
+    ORA temp                ; OR in sprite bits 6 and 2
+    STA temp_y
 .keep_screen_pixel1
     
     ; Process pixel 2 (bits 2 and 6) - MSB bit 2 = bit 5, bit 6 = bit 1
-    LDA &70
+    LDA temp
     AND #&22                ; Mask bits 5 and 1 (2 and 6 in MSB numbering)
     BEQ keep_screen_pixel2  ; If sprite pixel is black, keep screen pixel
-    LDA &75
+    LDA temp_y
     AND #&DD                ; Clear screen bits 5 and 1
-    ORA &70                 ; OR in sprite bits 5 and 1
-    STA &75
+    ORA temp                ; OR in sprite bits 5 and 1
+    STA temp_y
 .keep_screen_pixel2
     
     ; Process pixel 3 (bits 3 and 7) - MSB bit 3 = bit 4, bit 7 = bit 0
-    LDA &70
+    LDA temp
     AND #&11                ; Mask bits 4 and 0 (3 and 7 in MSB numbering)
     BEQ keep_screen_pixel3  ; If sprite pixel is black, keep screen pixel
-    LDA &75
+    LDA temp_y
     AND #&EE                ; Clear screen bits 4 and 0
-    ORA &70                 ; OR in sprite bits 4 and 0
-    STA &75
+    ORA temp                ; OR in sprite bits 4 and 0
+    STA temp_y
 .keep_screen_pixel3
-    
-    LDA &75
-    STA (&71),Y             ; Write modified byte back to screen
-    
+
+    LDA temp_y
+    STA (screen_ptr),Y             ; Write modified byte back to screen
+
 .skip_sprite_byte
     INY
     CPY #16                 ; 16 bytes total

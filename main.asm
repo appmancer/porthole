@@ -16,9 +16,8 @@ ORG &70
 .mask_ptr       SKIP 2    ; Pointer to current mask data
 .char_x         SKIP 1    ; Character X position in tile coordinates (0-15)
 .char_y         SKIP 1    ; Character Y position in tile coordinates (0-15)
-.temp_char_x    SKIP 1    ; Temporary storage for original char_x position
 
-; total zero page bytes: 19
+; total zero page bytes: 20
 
 ORG &1900             
 
@@ -70,48 +69,19 @@ ORG &1900
     ; Initialize character position (tile coordinates)
     LDA #4              ; Start at tile column 4 (middle-left of screen)
     STA char_x
-    LDA #11             ; Start at tile row 10 (lower portion of screen)
     STA char_y
+    ; each tile is 16x16 pixels, so char_x 2 = pixel x 32
+
+    LDA #<(&6040)  ; Start in the correct tile [4,4]
+    STA screen_ptr
+    LDA #>(&6040)
+    STA screen_ptr+1
 
     ; Demo pixel-aligned sprite cycling
     JSR pixel_aligned_demo
 
     ; Wait for final keypress
     JSR OSRDCH
-
-; Convert char_x, char_y tile coordinates to screen_ptr
-; Input: char_x (0-15), char_y (0-15)
-; Output: screen_ptr points to top-left of character position
-.calc_char_screen_position
-    ; screen_ptr = &5800 + (char_y * 256) + (char_x * 16)
-    ; Each tile row = 256 bytes, each tile column = 16 bytes (2 bytes × 8 pixel rows)
-    
-    ; Start with base screen address
-    LDA #<(&5800)
-    STA screen_ptr
-    LDA #>(&5800)
-    STA screen_ptr+1
-    
-    ; Add Y offset: char_y * 256 (add to high byte)
-    LDA screen_ptr+1
-    CLC
-    ADC char_y
-    STA screen_ptr+1
-    
-    ; Add X offset: char_x * 16
-    LDA char_x
-    ASL A           ; * 2
-    ASL A           ; * 4
-    ASL A           ; * 8
-    ASL A           ; * 16
-    CLC
-    ADC screen_ptr
-    STA screen_ptr
-    BCC char_pos_no_carry
-    INC screen_ptr+1
-.char_pos_no_carry
-    
-    RTS
 
 ; Redraw a 1×4 character area with background tiles
 ; Input: screen_ptr points to top-left of area to redraw
@@ -126,10 +96,6 @@ ORG &1900
     ; If char_y is even (aligned to tile top): spans 2 tiles
     ; If char_y is odd (not aligned): spans 3 tiles
     
-    ; Calculate the first tile row that contains char_y
-    LDA char_y
-    LSR A               ; Divide by 2: char_y / 2 = first_tile_y
-    STA temp_y          ; Store the first tile row
     
     ; Calculate screen position for start of this tile row
     ; Reset screen_ptr to tile-aligned position
@@ -139,7 +105,8 @@ ORG &1900
     STA screen_ptr+1
     
     ; Add tile row offset: tile_row * 512 bytes (each tile = 2 char rows)
-    LDA temp_y
+    LDA char_y
+    STA temp_y
     BEQ add_x_offset    ; Skip if tile row 0
 .tile_offset_loop
     INC screen_ptr+1    ; Add 256 bytes  
@@ -148,7 +115,7 @@ ORG &1900
     BNE tile_offset_loop
     
 .add_x_offset
-    ; Add X offset for character column  
+    ; Add X offset for character column using visual_tile_x
     LDA char_x
     ASL A               ; * 2
     ASL A               ; * 4
@@ -162,8 +129,6 @@ ORG &1900
     
 .first_tile
     ; First tile - get tile from tilemap
-    LDA char_y
-    LSR A               ; Convert to tile coordinate
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -175,7 +140,7 @@ ORG &1900
     LDA char_y
     LSR A               ; Convert to tile coordinate
     CLC
-    ADC #1              ; Next tile row: tile_y + 1
+    ADC #1            
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -251,8 +216,6 @@ ORG &1900
 ; Frames 4-7: move to next char position, pixel shifts 0-3
 .pixel_aligned_demo
     ; Frame 0: sprite 0 at current position
-    JSR calc_char_screen_position
-    LDA #0
     JSR render_character_sprite
     JSR short_delay
     JSR redraw_background_area
@@ -280,6 +243,7 @@ ORG &1900
     ; Frame 4: Move to next character position, sprite 0
     ; Move by 8 bytes (4 pixels) for half-character precision
     ; This gives us 1-pixel precision over 8 frames total
+.end_of_cycle
     LDA screen_ptr
     CLC
     ADC #8              ; Move right by half character cell (8 bytes = 4 pixels)
@@ -310,6 +274,7 @@ ORG &1900
     JSR short_delay
     ;JSR redraw_background_area
     
+    JMP end_of_cycle
     RTS
 
 ; Short delay routine
