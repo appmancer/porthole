@@ -109,8 +109,12 @@ ORG &1900
     LDA #>(&5800)
     STA screen_ptr+1
     
-    ; Add tile row offset: tile_row * 512 bytes (each tile = 2 char rows)
-    LDA char_y
+    ; Calculate tile_y from char_tile_pos: tile_y = char_tile_pos / 16
+    LDA char_tile_pos
+    LSR A               ; Divide by 2
+    LSR A               ; Divide by 4  
+    LSR A               ; Divide by 8
+    LSR A               ; Divide by 16 = tile_y
     STA temp_y
     BEQ add_x_offset    ; Skip if tile row 0
 .tile_offset_loop
@@ -120,8 +124,9 @@ ORG &1900
     BNE tile_offset_loop
     
 .add_x_offset
-    ; Add X offset for character column using visual_tile_x
-    LDA char_x
+    ; Calculate tile_x from char_tile_pos: tile_x = char_tile_pos AND 15
+    LDA char_tile_pos
+    AND #15             ; Keep only lower 4 bits = tile_x
     ASL A               ; * 2
     ASL A               ; * 4
     ASL A               ; * 8
@@ -200,9 +205,12 @@ ORG &1900
 ; Input: Y = tile position (tilemap_y * 16 + tilemap_x)
 ; Output: A = tile number
 .get_tilemap_tile
-    ; Read tile directly using the provided tile position
-    LDA (tilemap_ptr), Y
+    ; DIAGNOSTIC: Always return tile 3 to see background restoration pattern
+    LDA #&03
     RTS
+    ; Read tile directly using the provided tile position
+    ;LDA (tilemap_ptr), Y
+    ;RTS
 
 .end_main
 
@@ -268,6 +276,9 @@ ORG &1900
     JSR render_character_sprite
     JSR short_delay
     ;JSR redraw_background_area
+    
+    ; Movement cycle complete - update tile position for next cycle
+    INC char_tile_pos       ; Move to next tile position
     
     JMP end_of_cycle
     RTS
