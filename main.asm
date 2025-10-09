@@ -17,8 +17,9 @@ ORG &70
 .char_x         SKIP 1    ; Character X position in tile coordinates (0-15)
 .char_y         SKIP 1    ; Character Y position in tile coordinates (0-15)
 .char_tile_pos  SKIP 1    ; Single tile position (char_y * 16 + char_x), shadows char_x/char_y
+.char_pixel_offset SKIP 1 ; Pixel offset within current tile (0-7)
 
-; total zero page bytes: 21
+; total zero page bytes: 22
 
 ORG &1900             
 
@@ -76,6 +77,10 @@ ORG &1900
     ; Initialize char_tile_pos as shadow of char_x/char_y: 4*16+4 = 68
     LDA #68             ; char_y * 16 + char_x = 4 * 16 + 4 = 68
     STA char_tile_pos
+    
+    ; Initialize pixel offset within tile
+    LDA #0
+    STA char_pixel_offset
 
     LDA #<(&6040)  ; Start in the correct tile [4,4]
     STA screen_ptr
@@ -91,6 +96,7 @@ ORG &1900
 ; Redraw a 1×4 character area with background tiles
 ; Input: screen_ptr points to top-left of area to redraw
 .redraw_background_area
+    CLI
     ; Save screen_ptr
     LDA screen_ptr
     PHA
@@ -98,82 +104,33 @@ ORG &1900
     PHA
     
     ; Character sprite is 1 tile wide × 4 character rows tall
-    ; Derive tile coordinates from actual input screen_ptr position
+    ; Use char_tile_pos directly for both tilemap lookup and screen position
     
-    ; Calculate tile_y: (screen_ptr - &5800) / 512
-    ; First get offset from screen base
-    LDA screen_ptr
-    SEC
-    SBC #<(&5800)
-    STA temp           ; Low byte of offset
-    LDA screen_ptr+1
-    SBC #>(&5800)
-    STA temp_y         ; High byte of offset
-    
-    ; Now divide by 512: high byte of offset = tile_y (since 512 = &200)
-    LDA temp_y
-    LSR A              ; Divide high byte by 2 to get tile_y
-    STA temp_y         ; temp_y now contains tile_y
-    
-    ; Calculate tile_x: (offset within tile row) / 16
-    ; Get the low 8 bits + LSB of high byte for position within 512-byte row
-    LDA temp_y
-    AND #1             ; Get LSB of original high byte
-    BEQ calc_tile_x    ; If 0, use temp directly
-    
-    ; Add 256 to temp for the extra bit
-    LDA temp
-    CLC
-    ADC #0             ; temp already has the right value
-    STA temp
-    LDA #1
-    STA col_counter    ; Use col_counter as flag for +256
-    JMP do_tile_x_calc
-    
-.calc_tile_x
-    LDA #0
-    STA col_counter    ; Clear the +256 flag
-
-.do_tile_x_calc
-    ; Now divide temp by 16 to get tile_x
-    LDA temp
+    ; Calculate tile_y and tile_x from char_tile_pos for screen positioning only
+    LDA char_tile_pos
     LSR A              ; Divide by 2
-    LSR A              ; Divide by 4
+    LSR A              ; Divide by 4  
     LSR A              ; Divide by 8
-    LSR A              ; Divide by 16
+    LSR A              ; Divide by 16 = tile_y
+    STA temp_y         ; Store tile_y
     
-    ; Add 16 if we had the +256 flag
-    LDX col_counter
-    BEQ store_tile_x
-    CLC
-    ADC #16
+    ; Calculate tile_x from char_tile_pos  
+    LDA char_tile_pos
+    AND #15            ; Keep only lower 4 bits = tile_x
+    STA col_counter    ; Store tile_x
     
-.store_tile_x
-    STA col_counter    ; Store tile_x in col_counter
-    
-    ; Now recalculate tile-aligned screen_ptr
-    ; Start with screen base
-    LDA #<(&5800)
+    ; Look up screen position from tile row table
+    LDA temp_y         ; tile_y
+    ASL A              ; * 2 for 16-bit table index
+    TAY
+    LDA tile_row_screen_table,Y
     STA screen_ptr
-    LDA #>(&5800)
+    LDA tile_row_screen_table+1,Y
     STA screen_ptr+1
     
-    ; Add tile_y * 512
-    LDX temp_y         ; tile_y
-    BEQ add_tile_x_offset
-.tile_y_loop
-    INC screen_ptr+1   ; Add 256
-    INC screen_ptr+1   ; Add 256 = 512 total
-    DEX
-    BNE tile_y_loop
-    
-.add_tile_x_offset
-    ; Add tile_x * 16
-    LDA col_counter    ; tile_x
-    ASL A              ; * 2
-    ASL A              ; * 4
-    ASL A              ; * 8
-    ASL A              ; * 16
+    ; Add tile_x * 16 using lookup table
+    LDY col_counter    ; tile_x
+    LDA times16_table,Y
     CLC
     ADC screen_ptr
     STA screen_ptr
@@ -181,15 +138,8 @@ ORG &1900
     INC screen_ptr+1
     
 .first_tile
-    ; First tile - calculate linear position: tile_y * 16 + tile_x
-    LDA temp_y         ; tile_y
-    ASL A              ; * 2
-    ASL A              ; * 4
-    ASL A              ; * 8  
-    ASL A              ; * 16
-    CLC
-    ADC col_counter    ; + tile_x
-    TAY                ; Y = tile position for tilemap lookup
+    ; First tile - use char_tile_pos directly (already tile_y * 16 + tile_x)
+    LDY char_tile_pos
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -197,17 +147,12 @@ ORG &1900
     INC screen_ptr+1
     INC screen_ptr+1
     
-    ; Second tile - next tile row down (tile_y + 1)
-    LDA temp_y         ; tile_y
+    ; Second tile - next tile row down (char_tile_pos + 16)
+    LDY char_tile_pos
+    TYA
     CLC
-    ADC #1             ; tile_y + 1
-    ASL A              ; * 2
-    ASL A              ; * 4
-    ASL A              ; * 8
-    ASL A              ; * 16
-    CLC
-    ADC col_counter    ; + tile_x
-    TAY                ; Y = tile position for tilemap lookup
+    ADC #16            ; Add 16 for next tile row
+    TAY
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -226,17 +171,12 @@ ORG &1900
     INC screen_ptr+1    ; Move down another 512 bytes
     INC screen_ptr+1
     
-    ; Third tile - two tile rows down (tile_y + 2)
-    LDA temp_y         ; tile_y
+    ; Third tile - two tile rows down (char_tile_pos + 32)
+    LDY char_tile_pos
+    TYA
     CLC
-    ADC #2             ; tile_y + 2
-    ASL A              ; * 2
-    ASL A              ; * 4
-    ASL A              ; * 8
-    ASL A              ; * 16
-    CLC
-    ADC col_counter    ; + tile_x
-    TAY                ; Y = tile position for tilemap lookup
+    ADC #32            ; Add 32 for two tile rows down
+    TAY
     JSR get_tilemap_tile
     JSR render_large_block
     
@@ -248,6 +188,7 @@ ORG &1900
     PLA
     STA screen_ptr
     
+    SEI
     RTS
 
 ; Set tilemap_ptr based on current_room variable
@@ -312,7 +253,7 @@ ORG &1900
     ; First clean up the old position before moving
     JSR redraw_background_area
     
-    ; Now move to next position
+    ; Now move to next position (4 pixels = 8 bytes)
     LDA screen_ptr
     CLC
     ADC #8              ; Move right by half character cell (8 bytes = 4 pixels)
@@ -321,6 +262,18 @@ ORG &1900
     INC screen_ptr+1
 .pixel_demo_no_carry
     
+    ; Count 4-frame cycles - need 2 cycles (8 frames) to complete one tile
+    INC char_pixel_offset
+    LDA char_pixel_offset
+    CMP #2              ; Have we completed 2 cycles? (8 frames = 1 tile)
+    BNE continue_animation
+    
+    ; Completed full tile (8 pixels), reset counter and move to next tile
+    LDA #0
+    STA char_pixel_offset
+    INC char_tile_pos
+    
+.continue_animation
     JMP animation_cycle     ; Loop all 8 frames
     RTS
 
