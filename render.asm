@@ -27,11 +27,11 @@
     LDY row_counter                 ; row_counter as index
     LDA times16_table,Y     ; Get row_counter * 16 (2 cycles vs 8 for 4 ASLs)
     CLC
-    ADC &78                 ; + col_counter
+    ADC col_counter         ; + col_counter
     TAY
     
     ; Get tile value directly (8-bit format - no nibble extraction!)
-    LDA (tilemap_ptr), Y            ; tilemap_ptr is in &7B/&7C
+    LDA (tilemap_ptr), Y            ; tilemap_ptr is in &79/&7A
     JSR render_large_block
     
     ; Move screen pointer right by 16 bytes
@@ -65,7 +65,7 @@
 
 .render_large_block
     ; Store tile type
-    STA tile
+    STA temp
     ; Preserve screen pointer
     LDA screen_ptr
     PHA
@@ -73,7 +73,7 @@
     PHA
     
     ; Get sprite data pointer for this tile
-    LDA tile
+    LDA temp
     ASL A                   ; × 2 for 16-bit pointer
     TAX
     LDA sprite_table,X
@@ -112,7 +112,7 @@
 ; Masked version of render_large_block - for sprites with transparent black pixels
 .render_masked_large_block
     ; Store tile type
-    STA tile
+    STA temp
 
     ; Preserve screen pointer
     LDA screen_ptr
@@ -121,7 +121,7 @@
     PHA
     
     ; Get sprite data pointer for this tile
-    LDA tile                 ; tile
+    LDA temp                 ; temp
     ASL A                   ; × 2 for 16-bit pointer
     TAX
     LDA sprite_table,X
@@ -232,14 +232,14 @@
     RTS; Render character sprite with mask - uses character_sprite_table and character_mask_table
 .render_character_sprite
     ; preserve A
-    STA tile
+    STA temp
     ; preserve screen_ptr
     LDA screen_ptr
     PHA
     LDA screen_ptr +1
     PHA
     ; restore A
-    LDA tile
+    LDA temp
     ; Input: A = character sprite index (0-based index for character_sprite_table)
     ASL A
     TAX
@@ -349,4 +349,102 @@
     RTS
 
 ; Sprite pointer table lookup is now used for sprite selection.
+
+
+; Redraw a 1×4 character area with background tiles
+; Input: screen_ptr points to top-left of area to redraw
+.redraw_background_area
+    CLI
+    ; Save screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
     
+    ; Character sprite is 1 tile wide × 4 character rows tall
+    ; Use char_tile_pos directly for both tilemap lookup and screen position
+    
+    ; Calculate tile_y and tile_x from char_tile_pos for screen positioning only
+    LDA char_tile_pos
+    LSR A              ; Divide by 2
+    LSR A              ; Divide by 4  
+    LSR A              ; Divide by 8
+    LSR A              ; Divide by 16 = tile_y
+    STA temp_y         ; Store tile_y
+    
+    ; Calculate tile_x from char_tile_pos  
+    LDA char_tile_pos
+    AND #15            ; Keep only lower 4 bits = tile_x
+    STA col_counter    ; Store tile_x
+    
+    ; Look up screen position from tile row table
+    LDA temp_y         ; tile_y
+    ASL A              ; * 2 for 16-bit table index
+    TAY
+    LDA tile_row_screen_table,Y
+    STA screen_ptr
+    LDA tile_row_screen_table+1,Y
+    STA screen_ptr+1
+    
+    ; Add tile_x * 16 using lookup table
+    LDY col_counter    ; tile_x
+    LDA times16_table,Y
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC first_tile
+    INC screen_ptr+1
+    
+.first_tile
+    ; First tile - use char_tile_pos directly (already tile_y * 16 + tile_x)
+    LDY char_tile_pos
+    JSR get_tilemap_tile
+    JSR render_large_block
+    
+    ; Move down to next tile (512 bytes = 2 character rows)
+    INC screen_ptr+1
+    INC screen_ptr+1
+    
+    ; Second tile - next tile row down (char_tile_pos + 16)
+    LDY char_tile_pos
+    TYA
+    CLC
+    ADC #16            ; Add 16 for next tile row
+    TAY
+    JSR get_tilemap_tile
+    JSR render_large_block
+    
+    ; Check if current screen_ptr is 512-byte aligned
+    ; First check: is low byte zero?
+    LDA screen_ptr
+    BNE need_third_tile     ; If low byte != 0, definitely need 3rd tile
+
+    ; Low byte is zero, now check if high byte is even (LSB = 0)
+    LDA screen_ptr+1
+    AND #&01                ; Check LSB of high byte
+    BEQ restore_screen_ptr  ; If even (512-byte aligned), only need 2 tiles
+
+.need_third_tile
+    ; Need third tile
+    INC screen_ptr+1    ; Move down another 512 bytes
+    INC screen_ptr+1
+    
+    ; Third tile - two tile rows down (char_tile_pos + 32)
+    LDY char_tile_pos
+    TYA
+    CLC
+    ADC #32            ; Add 32 for two tile rows down
+    TAY
+    JSR get_tilemap_tile
+    JSR render_large_block
+    
+.restore_screen_ptr
+    
+    ; Restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    
+    SEI
+    RTS
