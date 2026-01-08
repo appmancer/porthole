@@ -1,6 +1,13 @@
 ; render.asm
 ; Routines to render a tilemap and sprites in MODE 5
 
+; Screen memory notes:
+; - Engine treats the playfield as 16x16 tiles.
+; - Screen base is &5800.
+; - Each tile row is treated as 512 bytes apart (see tile_row_screen_table).
+; - We do not use scrolling; we flick between screens.
+; - We may use screen RAM *below the playfield* as scratch (not returned to BASIC).
+
 .render_tilemap
     ; Set up initial pointers
     LDA #<(&5800)           ; Screen starts at &5800 in MODE 5
@@ -254,68 +261,8 @@
     LDA character_mask_table+1,X
     STA mask_ptr+1
 
-    ; Plot first character row (top half)
-    JSR plot_sprite_with_mask
-    ; move screen_ptr down 8 scanlines (256 bytes)
-    INC screen_ptr+1
-    ; move sprite_ptr to next sprite data (next 16 bytes)
-    LDA sprite_ptr
-    CLC
-    ADC #16
-    STA sprite_ptr
-    BCC sprite_row2_ok
-    INC sprite_ptr+1
-.sprite_row2_ok
-    ; move mask_ptr to next mask data (next 16 bytes)
-    LDA mask_ptr
-    CLC
-    ADC #16
-    STA mask_ptr
-    BCC char_row2
-    INC mask_ptr+1
-.char_row2  
-    ; Plot second character row
-    JSR plot_sprite_with_mask
-    ; move screen_ptr down 8 scanlines (256 bytes)
-    INC screen_ptr+1
-    ; move sprite_ptr to next sprite data (next 16 bytes)
-    LDA sprite_ptr
-    CLC
-    ADC #16
-    STA sprite_ptr
-    BCC sprite_row3_ok
-    INC sprite_ptr+1
-.sprite_row3_ok
-    ; move mask_ptr to next mask data (next 16 bytes)
-    LDA mask_ptr
-    CLC
-    ADC #16
-    STA mask_ptr
-    BCC char_row3
-    INC mask_ptr+1
-.char_row3  
-    ; Plot third character row
-    JSR plot_sprite_with_mask
-    ; move screen_ptr down 8 scanlines (256 bytes)
-    INC screen_ptr+1
-    ; move sprite_ptr to next sprite data (next 16 bytes)
-    LDA sprite_ptr
-    CLC
-    ADC #16
-    STA sprite_ptr
-    BCC sprite_row4_ok
-    INC sprite_ptr+1
-.sprite_row4_ok
-    ; move mask_ptr to next mask data (next 16 bytes)
-    LDA mask_ptr
-    CLC
-    ADC #16
-    STA mask_ptr
-    BCC char_row4
-    INC mask_ptr+1
-.char_row4  
-    ; Plot fourth character row (bottom - legs!)
-    JSR plot_sprite_with_mask
+    ; Plot full character sprite (32 scanlines) using Spycat-style masked blit
+    JSR plot_sprite12x32_masked_striped
 
     ; restore screen_ptr
     PLA
@@ -348,11 +295,133 @@
     
     RTS
 
+; Sprite blit used by Spycat-format character sprites.
+; Data: 4 stripes × 32 bytes/stripe (8 scanlines × 4 bytes/scanline).
+; Screen: each stripe is 8 scanlines below the previous one.
+;
+; Debug version (no mask): dst = pix (hard overwrite)
+; Requires: sprite_ptr = pix data, screen_ptr = top-left screen
+.plot_sprite12x32_striped_copy
+    ; Preserve base pointers so we can restore them.
+    LDA sprite_ptr
+    STA temp_sprite_ptr
+    LDA sprite_ptr+1
+    STA temp_sprite_ptr+1
+
+    LDX #0
+.copy_stripe_loop
+    LDY #0
+.copy_row_bytes
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE copy_row_bytes
+
+    ; Next stripe: move down 8 scanlines on screen.
+    INC screen_ptr+1
+
+    ; Next stripe in data (+32 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC copy_sprite_ptr_ok
+    INC sprite_ptr+1
+.copy_sprite_ptr_ok
+
+    INX
+    CPX #4
+    BNE copy_stripe_loop
+
+    ; Restore screen_ptr (advanced 4 stripes)
+    LDA screen_ptr+1
+    SEC
+    SBC #4
+    STA screen_ptr+1
+
+    ; Restore sprite_ptr
+    LDA temp_sprite_ptr
+    STA sprite_ptr
+    LDA temp_sprite_ptr+1
+    STA sprite_ptr+1
+
+    RTS
+
+; Masked version (Spycat-style): dst = (dst & mask) | pix
+; Requires: sprite_ptr = pix data, mask_ptr = mask data, screen_ptr = top-left screen
+.plot_sprite12x32_masked_striped
+    ; Preserve base pointers so we can restore them.
+    LDA sprite_ptr
+    STA temp_sprite_ptr
+    LDA sprite_ptr+1
+    STA temp_sprite_ptr+1
+    LDA mask_ptr
+    STA temp_mask_ptr
+    LDA mask_ptr+1
+    STA temp_mask_ptr+1
+
+    LDX #0
+.masked_stripe_loop
+    LDY #0
+.masked_row_bytes
+    LDA (screen_ptr),Y
+    AND (mask_ptr),Y
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+
+    INY
+    CPY #32
+    BNE masked_row_bytes
+
+    ; Next stripe: move down 8 scanlines on screen.
+    INC screen_ptr+1
+
+    ; Next stripe in data (+32 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC masked_sprite_ptr_ok
+    INC sprite_ptr+1
+.masked_sprite_ptr_ok
+
+    LDA mask_ptr
+    CLC
+    ADC #32
+    STA mask_ptr
+    BCC masked_mask_ptr_ok
+    INC mask_ptr+1
+.masked_mask_ptr_ok
+
+    INX
+    CPX #4
+    BNE masked_stripe_loop
+
+    ; Restore screen_ptr (advanced 4 stripes)
+    LDA screen_ptr+1
+    SEC
+    SBC #4
+    STA screen_ptr+1
+
+    ; Restore sprite/mask pointers
+    LDA temp_sprite_ptr
+    STA sprite_ptr
+    LDA temp_sprite_ptr+1
+    STA sprite_ptr+1
+    LDA temp_mask_ptr
+    STA mask_ptr
+    LDA temp_mask_ptr+1
+    STA mask_ptr+1
+
+    RTS
+
 ; Sprite pointer table lookup is now used for sprite selection.
 
 
-; Redraw a 1×4 character area with background tiles
-; Input: screen_ptr points to top-left of area to redraw
+; Redraw the tiles behind the character
+; Uses char_tile_pos to determine which tiles to restore.
+; Note: screen_ptr is ignored for positioning (it is recomputed from char_tile_pos).
 .redraw_background_area
     CLI
     ; Save screen_ptr
@@ -361,8 +430,8 @@
     LDA screen_ptr+1
     PHA
     
-    ; Character sprite is 1 tile wide × 4 character rows tall
-    ; Use char_tile_pos directly for both tilemap lookup and screen position
+    ; Character sprite is 1 tile wide × 2 tiles tall (32 scanlines).
+    ; We redraw 2 tiles (current tile + tile below).
     
     ; Calculate tile_y and tile_x from char_tile_pos for screen positioning only
     LDA char_tile_pos
@@ -401,7 +470,7 @@
     JSR get_tilemap_tile
     JSR render_large_block
     
-    ; Move down to next tile (512 bytes = 2 character rows)
+    ; Move down one tile row (512 bytes)
     INC screen_ptr+1
     INC screen_ptr+1
     
@@ -409,36 +478,10 @@
     LDY char_tile_pos
     TYA
     CLC
-    ADC #16            ; Add 16 for next tile row
+    ADC #16
     TAY
     JSR get_tilemap_tile
     JSR render_large_block
-    
-    ; Check if current screen_ptr is 512-byte aligned
-    ; First check: is low byte zero?
-    LDA screen_ptr
-    BNE need_third_tile     ; If low byte != 0, definitely need 3rd tile
-
-    ; Low byte is zero, now check if high byte is even (LSB = 0)
-    LDA screen_ptr+1
-    AND #&01                ; Check LSB of high byte
-    BEQ restore_screen_ptr  ; If even (512-byte aligned), only need 2 tiles
-
-.need_third_tile
-    ; Need third tile
-    INC screen_ptr+1    ; Move down another 512 bytes
-    INC screen_ptr+1
-    
-    ; Third tile - two tile rows down (char_tile_pos + 32)
-    LDY char_tile_pos
-    TYA
-    CLC
-    ADC #32            ; Add 32 for two tile rows down
-    TAY
-    JSR get_tilemap_tile
-    JSR render_large_block
-    
-.restore_screen_ptr
     
     ; Restore screen_ptr
     PLA

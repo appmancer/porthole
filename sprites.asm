@@ -15,14 +15,10 @@ EQUW corner_top_right   ;&C
 
 ; Character sprite table - separate from room tiles
 .character_sprite_table
-EQUW chell_standing    ; &0: Chell standing animation
-EQUW chell_standing_shift1
-EQUW chell_standing_shift2
-EQUW chell_standing_shift3
-EQUW chell_moving_right_1 ; &1: Chell moving right animation frame 1
-; Add more character sprites here as needed
+EQUW chell_frame1           ; &0: Chell (frame1) 16x32, MODE 5 screen-byte order
+EQUW test_sprite16x32       ; &1: Test 16x32 sprite (screen byte order)
 
-; Wide 8x16 sprite data 
+; Wide 8x16 tile sprite data
 .sprite_data
 .largebrick ; &1
 EQUB &1F, &1F, &1F, &1F, &1F, &1F, &1F, &FF, &0F, &0F, &0F, &0F, &0F, &0F, &0F, &FF
@@ -52,7 +48,7 @@ EQUB &A0, &50, &A0, &50, &A0, &50, &A0, &50,    &A0, &50, &A0, &50, &A0, &50, &A
 EQUB &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55
 EQUB &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AA, &55
 .metalplate ; &A
-EQUB &FF, &FF, &8F, &8F, &8F, &8F, &8F, &8F, &FF, &FF, &1E, &1E, &1E, &1E, &1E, &1E 
+EQUB &FF, &FF, &8F, &8F, &8F, &8F, &8F, &8F, &FF, &FF, &1E, &1E, &1E, &1E, &1E, &1E
 EQUB &8F, &8F, &8F, &8F, &8F, &8F, &F0, &F0, &1E, &1E, &1E, &1E, &1E, &1E, &F0, &F0
 .corner_bottom_right ;&B
 EQUB &AF, &D7, &EB, &D7, &EB, &F5, &EB, &F5, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F
@@ -61,37 +57,35 @@ EQUB &FA, &F5, &FA, &F5, &FA, &F5, &FA, &F5, &AF, &5F, &AF, &D7, &EB, &F5, &EB, 
 EQUB &AA, &55, &AA, &55, &AA, &55, &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F
 EQUB &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F, &AF, &5F, &AF, &5F, &AF, &5F
 
-.character_sprites
-; Each character is 8x16 pixels (2 wide sprites)
-.chell_standing
-EQUB &77, &CF, &8F, &9E, &AC, &BC, &BC, &BC,   &88, &CC, &4C, &CC, &88, &88, &88, &88
-EQUB &75, &8F, &8F, &AD, &AD, &AD, &AD, &AD,   &00, &88, &88, &88, &88, &88, &88, &88
-EQUB &AD, &8F, &8F, &8F, &FF, &57, &57, &57,   &88, &88, &88, &88, &88, &88, &00, &00
-EQUB &57, &57, &57, &57, &57, &47, &47, &77,   &00, &00, &00, &00, &88, &88, &88, &88
+; Character sprites (screen byte order)
+;
+; Convention for 16x32 in MODE 5:
+; - 4 stripes of 8 scanlines
+; - within each stripe: 4 byte-columns × 8 rows
+;   (i.e. the BBC's 8x8 block order)
+.chell_frame1
+    EQUB &00,&00,&10,&10,&10,&10,&00,&30,&00,&E0,&F0,&F0,&C0,&30,&F0,&C0
+    EQUB &00,&00,&00,&20,&D0,&C0,&00,&08,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &70,&40,&10,&30,&20,&10,&10,&10,&03,&0F,&07,&81,&60,&B0,&B0,&B0
+    EQUB &0E,&0E,&08,&00,&00,&00,&80,&00,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &10,&20,&20,&20,&30,&30,&30,&70,&A0,&90,&F0,&F0,&40,&30,&F0,&F0
+    EQUB &00,&80,&80,&00,&80,&80,&80,&80,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &70,&70,&30,&00,&00,&33,&33,&11,&F0,&F0,&F0,&F0,&00,&77,&77,&BB
+    EQUB &C0,&C0,&C0,&80,&00,&00,&88,&77,&00,&00,&00,&00,&00,&00,&00,&00
 
-; Chell standing shifted 1 pixel right
-.chell_standing_shift1
-EQUB &33, &67, &47, &E7, &47, &47, &47, &47,    &CC, &6E, &2E, &E6, &44, &C4, &C4, &C4
-EQUB &32, &47, &47, &56, &56, &56, &56, &56,    &88, &4C, &4C, &4C, &4C, &4C, &4C, &4C
-EQUB &56, &47, &47, &47, &77, &23, &23, &23,    &4C, &4C, &4C, &4C, &CC, &CC, &88, &88
-EQUB &23, &23, &23, &23, &23, &23, &23, &33,    &88, &88, &88, &88, &CC, &4C, &4C, &CC
+.test_sprite16x32
+    ; Stripe 0 (rows 0-7)
+    EQUB &FF,&FF,&FF,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF
+    EQUB &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF
 
-; Chell standing shifted 2 pixels right
-.chell_standing_shift2
-EQUB &11, &22, &23, &23, &23, &23, &23, &23,    &EE, &3F, &1F, &78, &A2, &E2, &E2, &E2
-EQUB &11, &22, &23, &23, &23, &23, &23, &23,    &C4, &2E, &2E, &A6, &A6, &A6, &A6, &A6
-EQUB &23, &23, &23, &23, &23, &11, &11, &11,    &A6, &2E, &2E, &2E, &EE, &6E, &4C, &4C
-EQUB &11, &11, &11, &11, &11, &11, &11, &11,    &4C, &4C, &4C, &4C, &6E, &2E, &2E, &EE
+    ; Stripe 1 (rows 8-15)
+    EQUB &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF
+    EQUB &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF
 
-; Chell standing shifted 3 pixels right
-.chell_standing_shift3
-EQUB &00, &11, &11, &11, &11, &11, &11, &11,    &FF, &9F, &0F, &3D, &59, &79, &79, &79
-EQUB &00, &11, &11, &11, &11, &11, &11, &11,    &EA, &1F, &1F, &5B, &5B, &5B, &5B, &5B
-EQUB &11, &11, &11, &11, &11, &00, &00, &00,    &5B, &1F, &1F, &1F, &FF, &BF, &AE, &AE
-EQUB &00, &00, &00, &00, &00, &00, &00, &00,    &AE, &AE, &AE, &AE, &BF, &9F, &9F, &FF
+    ; Stripe 2 (rows 16-23)
+    EQUB &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF
+    EQUB &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF
 
-.chell_moving_right_1
-EQUB &11, &21, &23, &23, &23, &23, &23, &23,    &88, &3F, &1F, &7B, &A2, &E2, &E2, &E2
-EQUB &33, &23, &23, &23, &23, &76, &56, &AD,    &E6, &2E, &2E, &A6, &A6, &3D, &6E, &C4
-EQUB &47, &47, &47, &47, &33, &23, &23, &47,    &4C, &4C, &4C, &4C, &CC, &AE, &AE, &AE
-EQUB &57, &57, &AE, &AE, &AE, &57, &57, &77,    &AE, &57, &57, &57, &57, &57, &22, &00
+    ; Stripe 3 (rows 24-31)
+    EQUB &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF
+    EQUB &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&00,&00,&FF,  &FF,&FF,&FF,&FF

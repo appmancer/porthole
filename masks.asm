@@ -1,40 +1,37 @@
 ; Character mask table - matches character_sprite_table
 .character_mask_table
-    EQUW chell_standing_mask   ; &0: Matches character_sprite_table[0]
-    EQUW chell_standing_offset_1_pixel_mask
-    EQUW chell_standing_offset_2_pixel_mask
-    EQUW chell_standing_offset_3_pixel_mask
-    EQUW chell_moving_right_1_mask
+    EQUW chell_frame1_mask
+    EQUW test_sprite16x32_mask
     ; Add more character masks here as needed
 
-; Character mask data
-.chell_standing_mask
-EQUB &77, &FF, &FF, &FF, &FF, &FF, &FF, &FF,    &88, &CC, &CC, &CC, &88, &88, &88, &88
-EQUB &77, &FF, &FF, &FF, &FF, &FF, &FF, &FF,    &00, &88, &88, &88, &88, &88, &88, &88
-EQUB &FF, &FF, &FF, &FF, &FF, &77, &77, &77,    &88, &88, &88, &88, &88, &88, &00, &00
-EQUB &77, &77, &77, &77, &77, &77, &77, &77,    &00, &00, &00, &00, &88, &88, &88, &88
+; Mask for Chell frame1 16x32 sprite in screen byte order (128 bytes).
+; Blitter does: dst = (dst & mask) | pix
+; So mask should be &FF where pix is transparent (keep background)
+; and &00 where pix is opaque (replace).
+.chell_frame1_mask
+    EQUB &FF,&EE,&CC,&CC,&CC,&CC,&CC,&88,&11,&00,&00,&00,&00,&00,&00,&00
+    EQUB &FF,&FF,&55,&00,&00,&11,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&00,&88,&88,&88,&CC,&CC,&CC,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &00,&00,&11,&77,&77,&77,&33,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &CC,&88,&88,&88,&88,&88,&88,&00,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &77,&33,&33,&77,&33,&33,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&00,&88,&CC,&CC,&88,&88,&CC,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &11,&11,&11,&33,&77,&77,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
 
-.chell_standing_offset_1_pixel_mask
-EQUB &33, &77, &77, &77, &77, &77, &77, &77,    &CC, &EE, &EE, &EE, &CC, &CC, &CC, &CC
-EQUB &33, &77, &77, &77, &77, &77, &77, &77,    &88, &CC, &CC, &CC, &CC, &CC, &CC, &CC
-EQUB &77, &77, &77, &77, &77, &77, &33, &33,    &CC, &CC, &CC, &CC, &CC, &CC, &88, &88
-EQUB &33, &33, &33, &33, &33, &33, &33, &33,    &88, &88, &88, &88, &CC, &CC, &CC, &CC
+; Mask for test 16x32 sprite in screen byte order (128 bytes).
+.test_sprite16x32_mask
+    ; Stripe 0 (rows 0-7)
+    EQUB &00,&00,&00,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00
+    EQUB &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00
 
-.chell_standing_offset_2_pixel_mask
-EQUB &11, &33, &33, &33, &33, &33, &33, &33,    &EE, &FF, &FF, &EE, &EE, &EE, &EE, &EE
-EQUB &11, &33, &33, &33, &33, &33, &33, &33,    &CC, &EE, &EE, &EE, &EE, &EE, &EE, &EE
-EQUB &33, &33, &33, &33, &33, &11, &11, &11,    &EE, &EE, &EE, &EE, &EE, &EE, &CC, &CC
-EQUB &11, &11, &11, &11, &11, &11, &11, &11,    &CC, &CC, &CC, &CC, &EE, &EE, &EE, &EE
+    ; Stripe 1 (rows 8-15)
+    EQUB &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00
+    EQUB &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00
 
-.chell_standing_offset_3_pixel_mask
-EQUB &00, &11, &11, &11, &11, &11, &11, &11,    &FF, &FF, &FF, &FF, &FF, &FF, &FF, &FF
-EQUB &00, &11, &11, &11, &11, &11, &11, &11,    &FF, &FF, &FF, &FF, &FF, &FF, &FF, &FF
-EQUB &00, &11, &11, &11, &11, &00, &00, &00,    &FF, &FF, &FF, &FF, &FF, &FF, &EE, &EE
-EQUB &00, &00, &00, &00, &00, &00, &00, &00,    &EE, &EE, &EE, &EE, &FF, &FF, &FF, &FF
+    ; Stripe 2 (rows 16-23)
+    EQUB &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00
+    EQUB &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00
 
-.chell_moving_right_1_mask
-EQUB &11, &11, &33, &33, &33, &33, &33, &33,    &88, &FF, &FF, &FF, &EE, &EE, &EE, &EE
-EQUB &33, &33, &33, &33, &33, &77, &77, &77,    &EE, &EE, &EE, &EE, &EE, &FF, &EE, &CC
-EQUB &77, &77, &77, &77, &33, &23, &23, &77,    &CC, &CC, &CC, &CC, &CC, &EE, &EE, &EE
-EQUB &77, &77, &AE, &AE, &AE, &77, &77, &77,    &EE, &77, &77, &77, &77, &77, &22, &00
-
+    ; Stripe 3 (rows 24-31)
+    EQUB &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00
+    EQUB &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&FF,&FF,&00,  &00,&00,&00,&00
