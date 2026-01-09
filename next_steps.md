@@ -108,6 +108,10 @@ We already author subpixel variants (x offsets 0..3) per pose.
 - Sprite selection becomes `(pose, x_sub)`.
 - The current sprite data format stays **4 bytes per scanline** (16px window), with the 4th byte acting as spill/empty as needed (character is ~12px wide).
 
+Gameplay simplification (current plan):
+- **Collision/physics is only evaluated when `x_sub = 0`**.
+- Horizontal motion still looks smooth because we render `x_sub` 0..3, but we only apply collision resolution and state transitions at the aligned phase.
+
 ## Background restore strategy
 
 ### Phase 1 (recommended)
