@@ -430,8 +430,8 @@
     LDA screen_ptr+1
     PHA
     
-    ; Character sprite is 1 tile wide × 2 tiles tall (32 scanlines).
-    ; We redraw 2 tiles (current tile + tile below).
+    ; Character sprite is 2 tiles wide × 2 tiles tall (16x32).
+    ; We redraw 4 tiles (2×2) to fully erase the previous frame.
     
     ; Calculate tile_y and tile_x from char_tile_pos for screen positioning only
     LDA char_tile_pos
@@ -465,16 +465,45 @@
     INC screen_ptr+1
     
 .first_tile
-    ; First tile - use char_tile_pos directly (already tile_y * 16 + tile_x)
+    ; Top-left tile
     LDY char_tile_pos
     JSR get_tilemap_tile
     JSR render_large_block
-    
+
+    ; Top-right tile
+    LDA screen_ptr
+    CLC
+    ADC #16
+    STA screen_ptr
+    BCC top_right_no_carry
+    INC screen_ptr+1
+.top_right_no_carry
+    LDY char_tile_pos
+    INY
+    JSR get_tilemap_tile
+    JSR render_large_block
+
     ; Move down one tile row (512 bytes)
     INC screen_ptr+1
     INC screen_ptr+1
-    
-    ; Second tile - next tile row down (char_tile_pos + 16)
+
+    ; Bottom-right tile (char_tile_pos + 17)
+    LDY char_tile_pos
+    TYA
+    CLC
+    ADC #17
+    TAY
+    JSR get_tilemap_tile
+    JSR render_large_block
+
+    ; Bottom-left tile (move screen_ptr back 16 bytes; char_tile_pos + 16)
+    LDA screen_ptr
+    SEC
+    SBC #16
+    STA screen_ptr
+    BCS bottom_left_no_borrow
+    DEC screen_ptr+1
+.bottom_left_no_borrow
     LDY char_tile_pos
     TYA
     CLC
@@ -482,12 +511,12 @@
     TAY
     JSR get_tilemap_tile
     JSR render_large_block
-    
+
     ; Restore screen_ptr
     PLA
     STA screen_ptr+1
     PLA
     STA screen_ptr
-    
+
     SEI
     RTS

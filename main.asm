@@ -16,6 +16,8 @@ ORG &70
 .char_pixel_offset  SKIP 1    ; Pixel offset within current tile
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
+.anim_frame         SKIP 1    ; Animation frame (0/1)
+.anim_dir           SKIP 1    ; Direction (0=left,1=right)
 
 ORG &1900
 
@@ -28,6 +30,9 @@ CRTC_DATA = &FE01
     JSR OSWRCH
     LDA #5
     JSR OSWRCH
+
+    ; Disable the blinking text cursor (it writes into screen RAM).
+    JSR disable_cursor
 
     ; Apply the game's narrower visible width (32 chars) and re-centre.
     ; CRTC R1 (horizontal displayed) = 32
@@ -50,19 +55,140 @@ CRTC_DATA = &FE01
     ; Render the current room tilemap.
     JSR render_tilemap
 
-    ; Demo: draw Spycat Chell over the room.
-    ; Place at tile (4,4): &5800 + 4*512 + 4*16 = &6040
-    LDA #<(&6040)
+    ; Demo: auto-walk Chell left/right across the room.
+    ; Start at tile (4,4): tile_y*16 + tile_x = 4*16 + 4 = 68
+    LDA #68
+    STA char_tile_pos
+
+    LDA #0
+    STA char_pixel_offset
+    STA anim_frame
+
+    LDA #1
+    STA anim_dir
+
+.demo_loop
+    JSR update_screen_ptr_from_char
+
+    LDA anim_frame
+    JSR render_character_sprite
+    JSR short_delay
+    JSR redraw_background_area
+
+    ; Next animation frame
+    LDA anim_frame
+    EOR #1
+    STA anim_frame
+
+    ; Move one tile every 4 frames
+    INC char_pixel_offset
+    LDA char_pixel_offset
+    CMP #4
+    BNE demo_loop
+
+    LDA #0
+    STA char_pixel_offset
+    JSR step_char_tile
+
+    JMP demo_loop
+
+; Disable the text cursor by redefining it to all zeros.
+; This avoids the OS blinking cursor touching screen RAM.
+.disable_cursor
+    LDX #0
+.cursor_loop
+    LDA cursor_vdu,X
+    JSR OSWRCH
+    INX
+    CPX #10
+    BNE cursor_loop
+    RTS
+
+.cursor_vdu
+    EQUB 23,1,0,0,0,0,0,0,0,0
+
+; Simple delay to make the demo visible.
+.short_delay
+    LDY #&80
+.delay_outer
+    ; Two inner passes to slow it down.
+    LDX #&FF
+.delay_inner1
+    DEX
+    BNE delay_inner1
+
+    LDX #&FF
+.delay_inner2
+    DEX
+    BNE delay_inner2
+
+    DEY
+    BNE delay_outer
+    RTS
+
+; Update screen_ptr from char_tile_pos.
+.update_screen_ptr_from_char
+    ; tile_y = char_tile_pos >> 4
+    LDA char_tile_pos
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    STA temp_y
+
+    ; Look up screen base for this tile row
+    ASL A
+    TAY
+    LDA tile_row_screen_table,Y
     STA screen_ptr
-    LDA #>(&6040)
+    LDA tile_row_screen_table+1,Y
     STA screen_ptr+1
 
-    ; character_sprite_table index 0 = chell_frame1
-    LDA #0
-    JSR render_character_sprite
+    ; tile_x = char_tile_pos & 15
+    LDA char_tile_pos
+    AND #15
+    TAY
 
-.hang
-    JMP hang
+    ; Add tile_x * 16
+    LDA times16_table,Y
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC update_screen_done
+    INC screen_ptr+1
+.update_screen_done
+    RTS
+
+; Update char_tile_pos based on anim_dir.
+; Bounces between tile_x 0..14 (sprite is 2 tiles wide).
+.step_char_tile
+    LDA char_tile_pos
+    AND #15
+    STA temp
+
+    LDA anim_dir
+    BEQ step_left
+
+.step_right
+    LDA temp
+    CMP #14
+    BNE step_right_inc
+    LDA #0
+    STA anim_dir
+    RTS
+.step_right_inc
+    INC char_tile_pos
+    RTS
+
+.step_left
+    LDA temp
+    BEQ step_left_turn
+    DEC char_tile_pos
+    RTS
+.step_left_turn
+    LDA #1
+    STA anim_dir
+    RTS
 
 ; Set tilemap_ptr based on current_room variable.
 ; Uses room_pointers table to get correct room data.

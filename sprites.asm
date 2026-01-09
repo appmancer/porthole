@@ -16,7 +16,8 @@ EQUW corner_top_right   ;&C
 ; Character sprite table - separate from room tiles
 .character_sprite_table
 EQUW chell_frame1           ; &0: Chell (frame1) 16x32, MODE 5 screen-byte order
-EQUW test_sprite16x32       ; &1: Test 16x32 sprite (screen byte order)
+EQUW chell_frame2           ; &1: Chell (frame2)
+EQUW test_sprite16x32       ; &2: Test 16x32 sprite (screen byte order)
 
 ; Wide 8x16 tile sprite data
 .sprite_data
@@ -72,6 +73,16 @@ EQUB &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F, &AF, &5F, &AF, &5F, &AF, 
     EQUB &00,&80,&80,&00,&80,&80,&80,&80,&00,&00,&00,&00,&00,&00,&00,&00
     EQUB &70,&70,&30,&00,&00,&33,&33,&11,&F0,&F0,&F0,&F0,&00,&77,&77,&BB
     EQUB &C0,&C0,&C0,&80,&00,&00,&88,&77,&00,&00,&00,&00,&00,&00,&00,&00
+
+.chell_frame2
+    EQUB &00,&00,&10,&10,&10,&10,&00,&30,&00,&E0,&F0,&F0,&C0,&30,&F0,&C0
+    EQUB &00,&00,&00,&20,&E0,&C0,&00,&08,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &70,&40,&10,&30,&00,&30,&30,&30,&03,&0F,&07,&81,&E0,&70,&70,&70
+    EQUB &0E,&0E,&08,&00,&00,&00,&80,&00,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &60,&70,&70,&30,&00,&30,&30,&70,&F0,&30,&D0,&D0,&90,&30,&F0,&F0
+    EQUB &00,&80,&80,&80,&80,&80,&80,&C0,&00,&00,&00,&00,&00,&00,&00,&00
+    EQUB &70,&70,&30,&00,&00,&33,&33,&11,&F0,&F0,&F0,&F0,&00,&00,&BB,&DD
+    EQUB &C0,&C0,&C0,&80,&00,&CC,&CC,&88,&00,&00,&00,&00,&00,&00,&00,&00
 
 .test_sprite16x32
     ; Stripe 0 (rows 0-7)
