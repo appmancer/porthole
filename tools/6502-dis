@@ -1,0 +1,538 @@
+#!/usr/bin/env python3
+"""Minimal 6502 disassembler helper.
+
+This is intentionally lightweight: it is good for first-pass reverse
+engineering of BBC Micro binaries extracted from DFS images.
+
+Features:
+- Disassembles a range (or whole file) assuming a base load address.
+- Decodes a useful subset of 6502 instructions (control-flow + common loads/stores).
+- Annotates MOS calls (JSR $FFxx) and common I/O ranges ($FExx).
+
+It is not a full recursive-flow disassembler; treat output as a guide.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+
+
+OPCODES: dict[int, tuple[str, str, int]] = {
+    # mnemonic, addressing, length
+    0x00: ("BRK", "imp", 1),
+    0x20: ("JSR", "abs", 3),
+    0x40: ("RTI", "imp", 1),
+    0x4C: ("JMP", "abs", 3),
+    0x6C: ("JMP", "ind", 3),
+    0x60: ("RTS", "imp", 1),
+
+    0x4D: ("EOR", "abs", 3),
+    0x45: ("EOR", "zp", 2),
+    0x55: ("EOR", "zpx", 2),
+    0x5D: ("EOR", "absx", 3),
+    0x59: ("EOR", "absy", 3),
+
+    0xE9: ("SBC", "imm", 2),
+    0xE5: ("SBC", "zp", 2),
+    0xED: ("SBC", "abs", 3),
+    0xF9: ("SBC", "absy", 3),
+    0xFD: ("SBC", "absx", 3),
+
+    0x69: ("ADC", "imm", 2),
+    0x65: ("ADC", "zp", 2),
+    0x6D: ("ADC", "abs", 3),
+    0x79: ("ADC", "absy", 3),
+    0x7D: ("ADC", "absx", 3),
+
+    0xE8: ("INX", "imp", 1),
+    0xC8: ("INY", "imp", 1),
+    0xCA: ("DEX", "imp", 1),
+    0x88: ("DEY", "imp", 1),
+
+    0x10: ("BPL", "rel", 2),
+    0x30: ("BMI", "rel", 2),
+    0x50: ("BVC", "rel", 2),
+    0x70: ("BVS", "rel", 2),
+    0x90: ("BCC", "rel", 2),
+    0xB0: ("BCS", "rel", 2),
+    0xD0: ("BNE", "rel", 2),
+    0xF0: ("BEQ", "rel", 2),
+
+    0xA9: ("LDA", "imm", 2),
+    0xA5: ("LDA", "zp", 2),
+    0xB5: ("LDA", "zpx", 2),
+    0xAD: ("LDA", "abs", 3),
+    0xBD: ("LDA", "absx", 3),
+    0xB9: ("LDA", "absy", 3),
+    0xA1: ("LDA", "indx", 2),
+    0xB1: ("LDA", "indy", 2),
+
+    0xA2: ("LDX", "imm", 2),
+    0xA6: ("LDX", "zp", 2),
+    0xB6: ("LDX", "zpy", 2),
+    0xAE: ("LDX", "abs", 3),
+    0xBE: ("LDX", "absy", 3),
+
+    0xA0: ("LDY", "imm", 2),
+    0xA4: ("LDY", "zp", 2),
+    0xB4: ("LDY", "zpx", 2),
+    0xAC: ("LDY", "abs", 3),
+    0xBC: ("LDY", "absx", 3),
+
+    0x85: ("STA", "zp", 2),
+    0x95: ("STA", "zpx", 2),
+    0x8D: ("STA", "abs", 3),
+    0x9D: ("STA", "absx", 3),
+    0x99: ("STA", "absy", 3),
+    0x81: ("STA", "indx", 2),
+    0x91: ("STA", "indy", 2),
+
+    0x86: ("STX", "zp", 2),
+    0x8E: ("STX", "abs", 3),
+    0x84: ("STY", "zp", 2),
+    0x8C: ("STY", "abs", 3),
+
+    0xE6: ("INC", "zp", 2),
+    0xF6: ("INC", "zpx", 2),
+    0xEE: ("INC", "abs", 3),
+    0xFE: ("INC", "absx", 3),
+    0xC6: ("DEC", "zp", 2),
+    0xD6: ("DEC", "zpx", 2),
+    0xCE: ("DEC", "abs", 3),
+    0xDE: ("DEC", "absx", 3),
+
+    0x18: ("CLC", "imp", 1),
+    0x38: ("SEC", "imp", 1),
+    0x58: ("CLI", "imp", 1),
+    0x78: ("SEI", "imp", 1),
+
+    0xB9: ("LDA", "absy", 3),
+    0x79: ("ADC", "absy", 3),
+    0xB8: ("CLV", "imp", 1),
+    0xD8: ("CLD", "imp", 1),
+    0xF8: ("SED", "imp", 1),
+
+    0x48: ("PHA", "imp", 1),
+    0x68: ("PLA", "imp", 1),
+    0x08: ("PHP", "imp", 1),
+    0x28: ("PLP", "imp", 1),
+    0x9A: ("TXS", "imp", 1),
+    0xBA: ("TSX", "imp", 1),
+    0x8A: ("TXA", "imp", 1),
+    0x98: ("TYA", "imp", 1),
+    0xAA: ("TAX", "imp", 1),
+    0xA8: ("TAY", "imp", 1),
+
+    0xC9: ("CMP", "imm", 2),
+    0xC5: ("CMP", "zp", 2),
+    0xD5: ("CMP", "zpx", 2),
+    0xCD: ("CMP", "abs", 3),
+    0xDD: ("CMP", "absx", 3),
+    0xD9: ("CMP", "absy", 3),
+
+    0xE0: ("CPX", "imm", 2),
+    0xE4: ("CPX", "zp", 2),
+    0xEC: ("CPX", "abs", 3),
+
+    0xC0: ("CPY", "imm", 2),
+    0xC4: ("CPY", "zp", 2),
+    0xCC: ("CPY", "abs", 3),
+
+    0x29: ("AND", "imm", 2),
+    0x25: ("AND", "zp", 2),
+    0x35: ("AND", "zpx", 2),
+    0x2D: ("AND", "abs", 3),
+    0x3D: ("AND", "absx", 3),
+    0x39: ("AND", "absy", 3),
+
+    0x09: ("ORA", "imm", 2),
+    0x05: ("ORA", "zp", 2),
+    0x15: ("ORA", "zpx", 2),
+    0x0D: ("ORA", "abs", 3),
+    0x1D: ("ORA", "absx", 3),
+    0x19: ("ORA", "absy", 3),
+
+    0x49: ("EOR", "imm", 2),
+
+    0x4A: ("LSR", "acc", 1),
+    0x46: ("LSR", "zp", 2),
+    0x56: ("LSR", "zpx", 2),
+    0x4E: ("LSR", "abs", 3),
+    0x5E: ("LSR", "absx", 3),
+
+    0x0A: ("ASL", "acc", 1),
+    0x06: ("ASL", "zp", 2),
+    0x16: ("ASL", "zpx", 2),
+    0x0E: ("ASL", "abs", 3),
+    0x1E: ("ASL", "absx", 3),
+
+    0x6A: ("ROR", "acc", 1),
+    0x66: ("ROR", "zp", 2),
+    0x76: ("ROR", "zpx", 2),
+    0x6E: ("ROR", "abs", 3),
+    0x7E: ("ROR", "absx", 3),
+
+    0x2A: ("ROL", "acc", 1),
+    0x26: ("ROL", "zp", 2),
+    0x36: ("ROL", "zpx", 2),
+    0x2E: ("ROL", "abs", 3),
+    0x3E: ("ROL", "absx", 3),
+
+    0xEA: ("NOP", "imp", 1),
+}
+
+MOS_NAMES = {
+    0xFFEE: "OSWRCH",
+    0xFFE0: "OSRDCH",
+    0xFFE3: "OSASCI",
+    0xFFF1: "OSWORD",
+    0xFFF4: "OSBYTE",
+    0xFFF7: "OSCLI",
+}
+
+
+def u16(lo: int, hi: int) -> int:
+    return lo | (hi << 8)
+
+
+def fmt_operand(mode: str, pc: int, b: bytes) -> tuple[str, int | None]:
+    """Return (operand_text, referenced_address_or_None)."""
+    if mode == "imp":
+        return ("", None)
+    if mode == "acc":
+        return ("A", None)
+    if mode == "imm":
+        return (f"#${b[1]:02X}", None)
+    if mode == "zp":
+        return (f"${b[1]:02X}", b[1])
+    if mode == "zpx":
+        return (f"${b[1]:02X},X", b[1])
+    if mode == "zpy":
+        return (f"${b[1]:02X},Y", b[1])
+    if mode == "abs":
+        addr = u16(b[1], b[2])
+        return (f"${addr:04X}", addr)
+    if mode == "absx":
+        addr = u16(b[1], b[2])
+        return (f"${addr:04X},X", addr)
+    if mode == "absy":
+        addr = u16(b[1], b[2])
+        return (f"${addr:04X},Y", addr)
+    if mode == "ind":
+        addr = u16(b[1], b[2])
+        return (f"(${addr:04X})", addr)
+    if mode == "indx":
+        return (f"(${b[1]:02X},X)", b[1])
+    if mode == "indy":
+        return (f"(${b[1]:02X}),Y", b[1])
+    if mode == "rel":
+        off = b[1]
+        if off >= 0x80:
+            off -= 0x100
+        target = (pc + 2 + off) & 0xFFFF
+        return (f"${target:04X}", target)
+    return (f"?({mode})", None)
+
+
+def annotate(mn: str, mode: str, ref: int | None) -> str:
+    if mn == "JSR" and ref is not None and ref >= 0xFF00:
+        name = MOS_NAMES.get(ref)
+        if name:
+            return f"; {name}"
+        return "; MOS"
+    if ref is not None and 0xFE00 <= ref <= 0xFEFF:
+        return "; SHEILA"
+    if ref is not None and 0x5800 <= ref <= 0x7FFF:
+        return "; screen/work"
+    return ""
+
+
+def looks_like_data(blob: bytes, i: int) -> str | None:
+    """Heuristic: classify obvious data runs in linear code."""
+    window = blob[i : i + 64]
+    if len(window) < 32:
+        return None
+
+    if window[:32].count(0x00) >= 30:
+        return "zeros"
+    if window[:32].count(0xFF) >= 30:
+        return "0xFF"
+
+    printable = sum(1 for b in window[:64] if 32 <= b < 127 or b in (9, 10, 13))
+    if printable / 64.0 >= 0.85:
+        return "ascii"
+
+    return None
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("binary")
+    ap.add_argument("--base", type=lambda s: int(s, 0), required=True, help="Load address (e.g. 0x8C0)")
+    ap.add_argument("--start", type=lambda s: int(s, 0), default=0, help="Start offset into file")
+    ap.add_argument(
+        "--addr",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="Start address in CPU space (overrides --start)",
+    )
+    ap.add_argument("--len", dest="length", type=lambda s: int(s, 0), default=None, help="Bytes to disassemble")
+    ap.add_argument(
+        "--stop-at-data",
+        action="store_true",
+        help="Stop when a likely data region is detected (ASCII/00/FF runs)",
+    )
+    ap.add_argument(
+        "--scan-zp",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="Scan file for references to a zero-page address (e.g. 0x68)",
+    )
+    ap.add_argument(
+        "--scan-abs-range",
+        nargs=2,
+        metavar=("START", "END"),
+        type=lambda s: int(s, 0),
+        default=None,
+        help="Scan file for absolute-address operands within [START, END] using known opcodes",
+    )
+    ap.add_argument(
+        "--scan-indirect-target",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="Scan for ZP pointers set to TARGET then used by STA (zp),Y or LDA (zp),Y",
+    )
+    ap.add_argument(
+        "--scan-indirect-range",
+        nargs=2,
+        metavar=("START", "END"),
+        type=lambda s: int(s, 0),
+        default=None,
+        help="Scan for (zp),Y reads/writes when tracked ptr is within [START, END]",
+    )
+    args = ap.parse_args()
+
+    data = pathlib.Path(args.binary).read_bytes()
+
+    if args.scan_zp is not None:
+        zp = args.scan_zp & 0xFF
+        # Very small scanner: match opcodes that encode a single-byte ZP operand.
+        patterns = {
+            0xA5: "LDA",
+            0x85: "STA",
+            0xA6: "LDX",
+            0x86: "STX",
+            0xA4: "LDY",
+            0x84: "STY",
+            0xC5: "CMP",
+            0xE4: "CPX",
+            0xC4: "CPY",
+            0xE6: "INC",
+            0xC6: "DEC",
+            0x05: "ORA",
+            0x25: "AND",
+            0x45: "EOR",
+            0x65: "ADC",
+            0xE5: "SBC",
+        }
+        hits = 0
+        for i in range(0, len(data) - 1):
+            op = data[i]
+            if op in patterns and data[i + 1] == zp:
+                pc = (args.base + i) & 0xFFFF
+                print(f"{pc:04X}: {data[i]:02X} {data[i+1]:02X}  {patterns[op]} ${zp:02X}")
+                hits += 1
+        if hits == 0:
+            print(f"(no references found to ${zp:02X})")
+        return 0
+
+    if args.scan_abs_range is not None:
+        start, end = args.scan_abs_range
+        start &= 0xFFFF
+        end &= 0xFFFF
+        if end < start:
+            raise SystemExit("--scan-abs-range END must be >= START")
+
+        abs_ops = {
+            0xAD: ("LDA", "abs"),
+            0xBD: ("LDA", "absx"),
+            0xB9: ("LDA", "absy"),
+            0x8D: ("STA", "abs"),
+            0x9D: ("STA", "absx"),
+            0x99: ("STA", "absy"),
+            0xAE: ("LDX", "abs"),
+            0xBE: ("LDX", "absy"),
+            0xAC: ("LDY", "abs"),
+            0xBC: ("LDY", "absx"),
+            0x8E: ("STX", "abs"),
+            0x8C: ("STY", "abs"),
+            0xCD: ("CMP", "abs"),
+            0xDD: ("CMP", "absx"),
+            0xD9: ("CMP", "absy"),
+            0xEC: ("CPX", "abs"),
+            0xCC: ("CPY", "abs"),
+            0xEE: ("INC", "abs"),
+            0xFE: ("INC", "absx"),
+            0xCE: ("DEC", "abs"),
+            0xDE: ("DEC", "absx"),
+            0x2D: ("AND", "abs"),
+            0x3D: ("AND", "absx"),
+            0x39: ("AND", "absy"),
+            0x0D: ("ORA", "abs"),
+            0x1D: ("ORA", "absx"),
+            0x19: ("ORA", "absy"),
+            0x4D: ("EOR", "abs"),
+            0x5D: ("EOR", "absx"),
+            0x59: ("EOR", "absy"),
+            0x6D: ("ADC", "abs"),
+            0x7D: ("ADC", "absx"),
+            0x79: ("ADC", "absy"),
+            0xED: ("SBC", "abs"),
+            0xFD: ("SBC", "absx"),
+            0xF9: ("SBC", "absy"),
+            0x4C: ("JMP", "abs"),
+            0x20: ("JSR", "abs"),
+        }
+
+        hits = 0
+        for i in range(0, len(data) - 2):
+            op = data[i]
+            info = abs_ops.get(op)
+            if info is None:
+                continue
+            addr = u16(data[i + 1], data[i + 2])
+            if start <= addr <= end:
+                mn, mode = info
+                pc = (args.base + i) & 0xFFFF
+                operand, _ = fmt_operand(mode, pc, data[i : i + 3])
+                print(f"{pc:04X}: {data[i]:02X} {data[i+1]:02X} {data[i+2]:02X}  {mn} {operand}")
+                hits += 1
+        if hits == 0:
+            print(f"(no references found in ${start:04X}-${end:04X})")
+        return 0
+
+    if args.scan_indirect_target is not None:
+        target = args.scan_indirect_target & 0xFFFF
+        target_lo = target & 0xFF
+        target_hi = (target >> 8) & 0xFF
+        args.scan_indirect_range = (target, target)
+
+    if args.scan_indirect_range is not None:
+        start, end = args.scan_indirect_range
+        start &= 0xFFFF
+        end &= 0xFFFF
+        if end < start:
+            raise SystemExit("--scan-indirect-range END must be >= START")
+
+        # Track best-effort ZP pointer bytes set via immediate loads:
+        #   LDA/LDX/LDY #imm; STA/STX/STY zp
+        # plus simple INC/DEC tracking on zp.
+        tracked: dict[int, int] = {}
+
+        def track_set(zp: int, value: int) -> None:
+            tracked[zp & 0xFF] = value & 0xFF
+
+        def track_inc(zp: int, delta: int) -> None:
+            zp &= 0xFF
+            if zp in tracked:
+                tracked[zp] = (tracked[zp] + delta) & 0xFF
+
+        hits = 0
+        i = 0
+        while i < len(data):
+            op = data[i]
+
+            # LDA/LDX/LDY #imm
+            if op in (0xA9, 0xA2, 0xA0) and i + 3 < len(data):
+                imm = data[i + 1]
+                store_op = data[i + 2]
+                zp = data[i + 3]
+
+                # ... followed by STA/STX/STY zp
+                if store_op == 0x85 and op == 0xA9:  # LDA; STA
+                    track_set(zp, imm)
+                    i += 4
+                    continue
+                if store_op == 0x86 and op == 0xA2:  # LDX; STX
+                    track_set(zp, imm)
+                    i += 4
+                    continue
+                if store_op == 0x84 and op == 0xA0:  # LDY; STY
+                    track_set(zp, imm)
+                    i += 4
+                    continue
+
+            # INC/DEC zp
+            if op in (0xE6, 0xC6) and i + 1 < len(data):
+                zp = data[i + 1]
+                track_inc(zp, +1 if op == 0xE6 else -1)
+                i += 2
+                continue
+
+            # Indirect indexed reads/writes
+            if op in (0x91, 0xB1) and i + 1 < len(data):
+                zp = data[i + 1]
+                lo = tracked.get(zp)
+                hi = tracked.get((zp + 1) & 0xFF)
+                if lo is not None and hi is not None:
+                    ptr = lo | (hi << 8)
+                    if start <= ptr <= end:
+                        mn = "STA" if op == 0x91 else "LDA"
+                        pc = (args.base + i) & 0xFFFF
+                        print(f"{pc:04X}: {op:02X} {zp:02X}  {mn} (${zp:02X}),Y  ; ptr=${ptr:04X}")
+                        hits += 1
+                i += 2
+                continue
+
+            i += 1
+
+        if hits == 0:
+            print(f"(no indirect hits in ${start:04X}-${end:04X})")
+        return 0
+
+    if args.addr is not None:
+        if args.addr < args.base:
+            raise SystemExit(f"--addr {args.addr:#x} is below --base {args.base:#x}")
+        off0 = args.addr - args.base
+    else:
+        off0 = args.start
+    off1 = len(data) if args.length is None else min(len(data), off0 + args.length)
+
+    i = off0
+    while i < off1:
+        if args.stop_at_data:
+            kind = looks_like_data(data, i)
+            if kind is not None:
+                pc = (args.base + i) & 0xFFFF
+                print(f"{pc:04X}: ; stopping at likely data region ({kind})")
+                break
+
+        pc = (args.base + i) & 0xFFFF
+        op = data[i]
+        info = OPCODES.get(op)
+        if info is None:
+            row = data[i : min(off1, i + 8)]
+            hex_bytes = " ".join(f"{b:02X}" for b in row)
+            print(f"{pc:04X}: {hex_bytes:<23}  .byte ${op:02X}")
+            i += 1
+            continue
+
+        mn, mode, oplen = info
+        if i + oplen > len(data):
+            break
+        ins = data[i : i + oplen]
+        operand, ref = fmt_operand(mode, pc, ins)
+        hex_bytes = " ".join(f"{b:02X}" for b in ins)
+        ann = annotate(mn, mode, ref)
+        if operand:
+            print(f"{pc:04X}: {hex_bytes:<8}  {mn} {operand}{' ' if ann else ''}{ann}")
+        else:
+            print(f"{pc:04X}: {hex_bytes:<8}  {mn}{' ' if ann else ''}{ann}")
+        i += oplen
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

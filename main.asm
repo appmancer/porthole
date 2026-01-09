@@ -11,9 +11,11 @@ ORG &70
 .col_counter        SKIP 1    ; Column counter for loops
 .current_room       SKIP 1    ; Current room number (0=room1, 1=room2)
 .tilemap_ptr        SKIP 2    ; Pointer to current room's tilemap data
+.portalmap_ptr      SKIP 2    ; Pointer to current room's portalable tile layer
 .mask_ptr           SKIP 2    ; Pointer to current mask data
-.char_tile_pos      SKIP 1    ; Character tile position (tile_y*16 + tile_x)
-.char_pixel_offset  SKIP 1    ; Pixel offset within current tile
+.char_tile_pos      SKIP 1    ; Character cell position (cell_y*16 + cell_x)
+.char_pixel_offset  SKIP 1    ; Subpixel offset (0..3)
+.char_byte_offset   SKIP 1    ; Byte offset within cell (0 or 8)
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
 .anim_frame         SKIP 1    ; Animation frame (0/1)
@@ -51,44 +53,76 @@ CRTC_DATA = &FE01
     LDA #0
     STA current_room
     JSR set_room_tilemap
+    JSR set_room_portalmap
 
     ; Render the current room tilemap.
     JSR render_tilemap
 
+    ; Build material planes from the tilemap.
+    JSR build_material_planes_from_tilemap
+
     ; Demo: auto-walk Chell left/right across the room.
-    ; Start at tile (4,4): tile_y*16 + tile_x = 4*16 + 4 = 68
+    ; Start at cell (4,4): cell_y*16 + cell_x = 4*16 + 4 = 68
     LDA #68
     STA char_tile_pos
 
     LDA #0
     STA char_pixel_offset
+    STA char_byte_offset
     STA anim_frame
 
     LDA #1
     STA anim_dir
 
-.demo_loop
+    ; Draw the first frame before entering the loop.
     JSR update_screen_ptr_from_char
-
+    JSR save_playfield_rect
     LDA anim_frame
+    ASL A
+    ASL A
+    CLC
+    ADC char_pixel_offset
     JSR render_character_sprite
+
+.demo_loop
     JSR short_delay
-    JSR redraw_background_area
+
+    ; Erase current frame by restoring the saved background.
+    JSR restore_playfield_rect
 
     ; Next animation frame
     LDA anim_frame
     EOR #1
     STA anim_frame
 
-    ; Move one tile every 4 frames
+    ; Advance subpixel offset (0..3). When it wraps, step 4 pixels.
     INC char_pixel_offset
     LDA char_pixel_offset
     CMP #4
-    BNE demo_loop
+    BNE draw_next
 
     LDA #0
     STA char_pixel_offset
+
+    ; Toggle 4-pixel byte offset within the tile (0/8). When it wraps, step tile.
+    LDA char_byte_offset
+    EOR #8
+    STA char_byte_offset
+    BNE draw_next
+
     JSR step_char_tile
+
+.draw_next
+    JSR update_screen_ptr_from_char
+    JSR save_playfield_rect
+
+    ; Sprite index = pose*4 + subpixel_offset
+    LDA anim_frame
+    ASL A
+    ASL A
+    CLC
+    ADC char_pixel_offset
+    JSR render_character_sprite
 
     JMP demo_loop
 
@@ -154,6 +188,14 @@ CRTC_DATA = &FE01
     CLC
     ADC screen_ptr
     STA screen_ptr
+    BCC add_byte_offset
+    INC screen_ptr+1
+
+.add_byte_offset
+    LDA char_byte_offset
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
     BCC update_screen_done
     INC screen_ptr+1
 .update_screen_done
@@ -204,9 +246,23 @@ CRTC_DATA = &FE01
 
     RTS
 
-; Get tile from tilemap at specified tile position.
-; Input: Y = tile position (tile_y * 16 + tile_x)
-; Output: A = tile number
+; Set portalmap_ptr based on current_room variable.
+; Uses portal_room_pointers table to get correct room data.
+.set_room_portalmap
+    LDA current_room
+    ASL A                   ; ×2 for 16-bit pointer
+    TAX
+
+    LDA portal_room_pointers,X
+    STA portalmap_ptr
+    LDA portal_room_pointers+1,X
+    STA portalmap_ptr+1
+
+    RTS
+
+; Get cell value from cellmap at specified cell position.
+; Input: Y = cell position (cell_y * 16 + cell_x)
+; Output: A = cell value
 .get_tilemap_tile
     LDA (tilemap_ptr),Y
     RTS

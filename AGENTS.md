@@ -1,0 +1,97 @@
+# AGENTS
+
+This repository contains **PORTHOLE**, a BBC Micro (6502) game.
+
+- **Game**: PORTHOLE
+- **Concept**: A demake of Valve’s *Portal*, reimagined as a 2D platformer.
+- **Platform**: BBC Micro (6502) using DFS `.ssd` disk images.
+- **Assembler**: `beebasm`
+- **Boot flow**: The disk uses beebasm’s `-boot PROGRAM`, which creates a DFS `!Boot` entry that runs BASIC file `PROGRAM`.
+
+## Agent role
+
+When working in this repo, assume the agent is an expert in writing 6502 games for the BBC Micro, including:
+
+- Cycle/size-aware 6502 code (tight inner loops, minimizing page crossings)
+- BBC Micro display memory layouts and MODE-specific considerations
+- Efficient sprite/tile rendering and masking techniques
+- Use of OS calls where appropriate (`OSWRCH`, `OSBYTE`, etc.)
+
+## Project conventions
+
+- The main machine code is built to run from `&1900`.
+- Zero-page variables are allocated starting at `&70` (see `main.asm`).
+- Keep changes minimal and consistent with existing beebasm style.
+- DFS filename limit is **7 characters** (e.g. the main binary is `PORTHLE`).
+
+## Display mode (custom MODE 5)
+
+The game runs in a **customized MODE 5**:
+
+- `PROGRAM` sets `MODE 5` in BASIC.
+- Early in `main.asm`, we program the 6845 CRTC directly via `&FE00/&FE01`:
+  - CRTC register `R1` (horizontal displayed) is set to `32` characters (instead of the normal 40).
+  - CRTC register `R2` (horizontal sync position) is set to `45` to re-centre the narrower display.
+
+Notes:
+
+- This reduces the *visible* width, but it does **not** reduce how much RAM the OS reserves for MODE 5; screen RAM layout and base address still behave like stock MODE 5.
+- Code assumes the MODE 5 screen base at `&5800` (see `render.asm`, `lookup_tables.asm`). Keep screen-addressing code consistent with that.
+
+## Screen RAM scratch (below playfield)
+
+We don’t scroll; we *flick* between screens. The renderer treats the playfield as **16 tile rows**, with each tile row `512` bytes apart.
+
+- Playfield footprint: `&5800 .. &77FF` (16 * 512 bytes)
+- “Below playfield” scratch area: `&7800 .. &7FFF`
+
+This scratch area is **not** returned to BASIC; it’s simply screen memory we agree not to display. Suitable uses: decompression workspace, pre-shifted sprite cache, temporary mask buffers.
+
+Gotchas:
+
+- Don’t use OS `CLS`/VDU clears after initialization; they may wipe the whole MODE 5 screen RAM including scratch.
+- Don’t later implement scrolling via CRTC start-address without revisiting the scratch contract.
+
+## Build and run workflow
+
+### Build
+
+- `./build.sh` builds a bootable DFS disk image.
+- Default output: `./.tmp/porthole.ssd`
+- The DFS disk title is set to `PORTHOLE`.
+
+### B2 emulator helpers
+
+The `tools/` directory contains small CLI helpers for running and debugging in the B2 emulator via its HTTP server (defaults: `127.0.0.1:48075`, instance id `b2`).
+
+- `tools/b2-run`
+  - Uploads a `.ssd` to B2 via `PUT /run/<id>?name=...`.
+- `tools/b2-reset`
+  - Resets the emulator via `GET /reset/<id>`.
+- `tools/b2-peek`
+  - Reads memory via `GET /peek/<id>/<addr>/+<len>` and prints a hex dump.
+- `tools/b2-poke`
+  - Writes binary bytes to memory via `POST /poke/<id>/<addr>` (implemented to be binary-safe).
+- `tools/b2-reload`
+  - One-command edit loop: build disk → upload to B2 → reset.
+  - Defaults to building `./.tmp/porthole.ssd`.
+
+Environment overrides used by the tools:
+
+- `B2_HOST` (default `127.0.0.1`)
+- `B2_PORT` (default `48075`)
+- `B2_ID` (default `b2`)
+- `TMP_DIR` (default `.tmp`)
+- `SSD_PATH` (disk image path)
+
+### Recommended tight loop
+
+1. Make code changes.
+2. Run `./tools/b2-reload`.
+3. Use `./tools/b2-peek` / `./tools/b2-poke` for quick memory inspection/patching.
+
+## Known gotcha
+
+Do not manually add a `!BOOT` file to the DFS image when using beebasm `-boot`, as it auto-creates `!Boot` and will fail with:
+
+`File already exists on DFS disc image.`

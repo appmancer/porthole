@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build, upload disk image to b2, then reset.
+# Requires a running b2 instance with its HTTP server up.
+
+B2_HOST="${B2_HOST:-127.0.0.1}"
+B2_PORT="${B2_PORT:-48075}"
+B2_ID="${B2_ID:-b2}"
+
+# Default to a non-hidden SSD in repo root.
+SSD_PATH="${1:-porthole.ssd}"
+
+# 1) Build
+./build.sh "${SSD_PATH}" > /dev/null
+
+# 2) Upload disk image
+name="$(basename "${SSD_PATH}")"
+
+curl -s --upload-file "${SSD_PATH}" "http://${B2_HOST}:${B2_PORT}/run/${B2_ID}?name=${name}" > /dev/null
+
+# 3) Reset (which will then execute !BOOT on autoboot configs)
+curl -s -o /dev/null "http://${B2_HOST}:${B2_PORT}/reset/${B2_ID}"
+
+echo "reload ok (${name})"

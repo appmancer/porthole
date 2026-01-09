@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+B2_HOST="${B2_HOST:-127.0.0.1}"
+B2_PORT="${B2_PORT:-48075}"
+B2_ID="${B2_ID:-b2}"
+
+curl -s -o /dev/null "http://${B2_HOST}:${B2_PORT}/reset/${B2_ID}"
+echo "reset ok"

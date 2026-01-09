@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""DFS catalogue lister (Acorn DFS 0.90/1.2 style).
+
+Usage:
+  tools/dfs-cat path/to/disc.ssd
+
+Notes:
+- Assumes a single-sided 200KB DFS image (80 tracks * 10 sectors * 256 bytes).
+- Reads catalogue from sectors 0 and 1.
+- Prints directory, filename, locked flag, load/exec/length, start sector.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import struct
+import sys
+from dataclasses import dataclass
+
+
+SECTOR_SIZE = 256
+CAT_SECTORS = 2
+CATALOGUE_SIZE = SECTOR_SIZE * CAT_SECTORS
+
+
+@dataclass(frozen=True)
+class DFSEntry:
+    directory: str
+    name: str
+    locked: bool
+    load: int
+    exec: int
+    length: int
+    start_sector: int
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.directory}.{self.name}"
+
+
+def _read_u16_le(b: bytes) -> int:
+    return struct.unpack("<H", b)[0]
+
+
+def parse_catalogue(image: bytes) -> list[DFSEntry]:
+    if len(image) < CATALOGUE_SIZE:
+        raise ValueError("Image too small for DFS catalogue")
+
+    cat = image[:CATALOGUE_SIZE]
+    file_count = cat[0x105] & 0x1F
+
+    entries: list[DFSEntry] = []
+    for i in range(file_count):
+        # Names live at 0x008.. (first 8 bytes are disk title).
+        # Two formats exist in the wild:
+        # - Classic DFS: first char is directory (optionally with lock bit set).
+        # - Some images (including SpyCat here): 7-char name + 1-byte attribute.
+        nraw = cat[0x008 + 8 * i : 0x008 + 8 * i + 8]
+        nd = nraw.decode("latin1")
+
+        attr = nd[7]
+        locked = (ord(attr) & 0x80) != 0 or attr == "\xa4"
+
+        # Default directory when absent.
+        directory = "$"
+        name = nd[0:7].rstrip(" ")
+
+        # Metadata lives at 0x108.. in the second catalogue sector.
+        m = cat[0x108 + 8 * i : 0x108 + 8 * i + 8]
+
+        # NOTE: Some discs set the "locked" bit in the directory character.
+        # We display lock based on that bit.
+
+        load_lo = _read_u16_le(m[0:2])
+        exec_lo = _read_u16_le(m[2:4])
+        len_lo = _read_u16_le(m[4:6])
+
+        load_hi = m[6] & 0x0F
+        exec_hi = (m[6] >> 4) & 0x0F
+        # DFS packs extra bits into the last two bytes.
+        # m[6] high nibble: exec high bits
+        # m[6] low nibble:  load high bits
+        # m[7] bits 0-3:    length high bits
+        # m[7] bits 4-5:    start sector high bits
+        # m[7] bits 6-7:    unused here
+        len_hi = m[7] & 0x0F
+        start_hi = (m[7] >> 4) & 0x03
+        start_lo = m[7]  # start sector low 8 bits
+        start_sector = (start_hi << 8) | start_lo
+
+        load = load_lo | (load_hi << 16)
+        exec_addr = exec_lo | (exec_hi << 16)
+        length = len_lo | (len_hi << 16)
+
+        # In standard DFS, length is 18-bit: low 16 bits + high nibble in m[7].
+        # Some discs ignore the high nibble and store only 16-bit lengths. We treat a
+        # high nibble as valid only if it keeps the file within the image.
+        start = start_sector * SECTOR_SIZE
+        end = start + length
+        if end > len(image):
+            length = len_lo
+
+        entries.append(
+            DFSEntry(
+                directory=directory,
+                name=name,
+                locked=locked,
+                load=load,
+                exec=exec_addr,
+                length=length,
+                start_sector=start_sector,
+            )
+        )
+
+    return entries
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("image", help="Path to DFS .ssd image")
+    args = ap.parse_args(argv)
+
+    with open(args.image, "rb") as f:
+        image = f.read()
+
+    entries = parse_catalogue(image)
+
+    print(f"image={args.image}")
+    print(f"size={len(image)}")
+    print("")
+    print("idx  file       lock   load     exec     length   start")
+    for idx, e in enumerate(entries):
+        lock = "L" if e.locked else "-"
+        print(
+            f"{idx:>3}  {e.full_name:<9} {lock:>4}  {e.load:06X}  {e.exec:06X}  {e.length:6d}  {e.start_sector:5d}"
+        )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

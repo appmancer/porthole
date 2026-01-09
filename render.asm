@@ -2,9 +2,10 @@
 ; Routines to render a tilemap and sprites in MODE 5
 
 ; Screen memory notes:
-; - Engine treats the playfield as 16x16 tiles.
+; - Engine treats the playfield as a 16x16 grid of *cells*.
+; - Each cell is 8x16 pixels (MODE 5, 128px-wide playfield).
 ; - Screen base is &5800.
-; - Each tile row is treated as 512 bytes apart (see tile_row_screen_table).
+; - Each cell row is 512 bytes apart (32 bytes/scanline × 16 scanlines; see tile_row_screen_table).
 ; - We do not use scrolling; we flick between screens.
 ; - We may use screen RAM *below the playfield* as scratch (not returned to BASIC).
 
@@ -30,18 +31,20 @@
     STA col_counter                 ; col_counter
     
 .tilemap_col_loop
-    ; Calculate tilemap index: row_counter * 16 + col_counter  
+    ; Calculate cell index: row_counter * 16 + col_counter  
     LDY row_counter                 ; row_counter as index
     LDA times16_table,Y     ; Get row_counter * 16 (2 cycles vs 8 for 4 ASLs)
     CLC
     ADC col_counter         ; + col_counter
     TAY
     
-    ; Get tile value directly (8-bit format - no nibble extraction!)
+    ; Get cell value directly (8-bit format - no nibble extraction!)
     LDA (tilemap_ptr), Y            ; tilemap_ptr is in &79/&7A
-    JSR render_large_block
+    JSR render_cell8x16
     
-    ; Move screen pointer right by 16 bytes
+    ; Move to next cell column.
+    ; Each 8x16 cell is 2 bytes wide per scanline.
+    ; In MODE 5 screen-byte order that becomes +16 bytes for the next cell column.
     LDA screen_ptr
     CLC
     ADC #16
@@ -57,20 +60,20 @@
     BNE tilemap_col_loop
     
 .tilemap_end_of_row
-    ; Move to next screen row (add 256 bytes)
+    ; Move to next cell row (add 256 bytes = 8 scanlines)
     INC screen_ptr+1
 
     ; Next row
     INC row_counter
     LDA row_counter
-    CMP #16                 ; 16 rows total
+    CMP #16                 ; 16 cell rows total
     BEQ tilemap_done
     JMP tilemap_row_loop
     
 .tilemap_done
     RTS
 
-.render_large_block
+.render_cell8x16
     ; Store tile type
     STA temp
     ; Preserve screen pointer
@@ -89,7 +92,7 @@
     STA sprite_ptr+1                 ; sprite_ptr_hi
 
     ; Plot first half (top 8 rows)
-    JSR plot_wide_sprite
+    JSR plot_cell_stripe8x8
     
     ; Move screen pointer down 8 rows (256 bytes)
     LDA screen_ptr+1
@@ -107,7 +110,7 @@
     
 .next_half
     ; Plot second half (bottom 8 rows)
-    JSR plot_wide_sprite
+    JSR plot_cell_stripe8x8
     
     ; Restore screen pointer
     PLA
@@ -116,8 +119,8 @@
     STA screen_ptr
     RTS
 
-; Masked version of render_large_block - for sprites with transparent black pixels
-.render_masked_large_block
+; Masked version of render_cell8x16 - for sprites with transparent black pixels
+.render_masked_cell8x16
     ; Store tile type
     STA temp
 
@@ -137,7 +140,7 @@
     STA sprite_ptr+1                 ; sprite_ptr_hi
 
     ; Plot first half (top 8 rows) with masking
-    JSR plot_masked_wide_sprite
+    JSR plot_masked_cell_stripe8x8
     
     ; Move screen pointer down 8 rows (256 bytes)
     LDA screen_ptr+1
@@ -155,7 +158,7 @@
     
 .next_half_masked
     ; Plot second half (bottom 8 rows) with masking  
-    JSR plot_masked_wide_sprite
+    JSR plot_masked_cell_stripe8x8
     
     ; Restore screen pointer
     PLA
@@ -164,8 +167,9 @@
     STA screen_ptr
     RTS
 
-; plots a 16-byte, double character wide sprite
-.plot_wide_sprite
+; Plots one 8x8 stripe of an 8x16 cell.
+; Stored as 16 bytes (2 bytes wide × 8 scanlines) in MODE 5 screen-byte order.
+.plot_cell_stripe8x8
     ; Plot 16 bytes of sprite data consecutively
     LDY #0
 .sprite_wide_row_loop
@@ -176,9 +180,9 @@
     BNE sprite_wide_row_loop
     RTS
 
-; plots a 16-byte, double character wide sprite with masking (black pixels transparent)
+; Plots one 8x8 stripe of an 8x16 cell with masking (black pixels transparent).
 ; MODE 5 uses interleaved bits: pixel 0=bits 0+4, pixel 1=bits 1+5, pixel 2=bits 2+6, pixel 3=bits 3+7
-.plot_masked_wide_sprite
+.plot_masked_cell_stripe8x8
     LDY #0
 .masked_sprite_byte_loop
     LDA (sprite_ptr),Y             ; Load sprite byte from sprite_ptr
@@ -419,9 +423,288 @@
 ; Sprite pointer table lookup is now used for sprite selection.
 
 
-; Redraw the tiles behind the character
-; Uses char_tile_pos to determine which tiles to restore.
-; Note: screen_ptr is ignored for positioning (it is recomputed from char_tile_pos).
+SOLID_PLANE_BASE     = &3000
+SAVE_UNDER_BASE      = &7800
+
+; Save the 16x32 sprite rectangle (4 bytes wide × 32 scanlines) under screen_ptr.
+; Stores into SAVE_UNDER_BASE.
+.save_playfield_rect
+    ; Preserve screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+
+    ; Preserve sprite_ptr (used as temp dest pointer here)
+    LDA sprite_ptr
+    PHA
+    LDA sprite_ptr+1
+    PHA
+
+    ; sprite_ptr := save-under buffer
+    LDA #<(SAVE_UNDER_BASE)
+    STA sprite_ptr
+    LDA #>(SAVE_UNDER_BASE)
+    STA sprite_ptr+1
+
+    LDX #0
+.save_stripe_loop
+    LDY #0
+.save_row_bytes
+    LDA (screen_ptr),Y
+    STA (sprite_ptr),Y
+    INY
+    CPY #32
+    BNE save_row_bytes
+
+    ; Next stripe: move down 8 scanlines
+    INC screen_ptr+1
+    INC sprite_ptr+1
+
+    INX
+    CPX #4
+    BNE save_stripe_loop
+
+    ; Restore pointers
+    PLA
+    STA sprite_ptr+1
+    PLA
+    STA sprite_ptr
+
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    RTS
+
+; Restore the saved 16x32 sprite rectangle back to screen_ptr.
+; Restores from SAVE_UNDER_BASE.
+.restore_playfield_rect
+    ; Preserve screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+
+    ; Preserve sprite_ptr (used as temp source pointer here)
+    LDA sprite_ptr
+    PHA
+    LDA sprite_ptr+1
+    PHA
+
+    ; sprite_ptr := save-under buffer
+    LDA #<(SAVE_UNDER_BASE)
+    STA sprite_ptr
+    LDA #>(SAVE_UNDER_BASE)
+    STA sprite_ptr+1
+
+    LDX #0
+.restore_stripe_loop
+    LDY #0
+.restore_row_bytes
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE restore_row_bytes
+
+    ; Next stripe: move down 8 scanlines
+    INC screen_ptr+1
+    INC sprite_ptr+1
+
+    INX
+    CPX #4
+    BNE restore_stripe_loop
+
+    ; Restore pointers
+    PLA
+    STA sprite_ptr+1
+    PLA
+    STA sprite_ptr
+
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    RTS
+
+; Build material plane (solid, 1bpp) from the current room tilemap.
+;
+; Portalability is handled separately via a tile-layer (portalmap_ptr).
+.build_material_planes_from_tilemap
+    ; Clear solid plane first (&3000..&3FFF).
+    LDA #<(SOLID_PLANE_BASE)
+    STA screen_ptr
+    LDA #>(SOLID_PLANE_BASE)
+    STA screen_ptr+1
+
+    LDA #0
+    LDX #16                 ; 16 pages of 256 bytes = 4KB
+.clear_plane_pages
+    LDY #0
+.clear_plane_bytes
+    STA (screen_ptr),Y
+    INY
+    BNE clear_plane_bytes
+    INC screen_ptr+1
+    DEX
+    BNE clear_plane_pages
+
+    ; Iterate tilemap (16x16 tiles). Each tile expands to 8x16 pixels.
+    LDA #0
+    STA row_counter
+
+.material_row_loop
+    LDA #0
+    STA col_counter
+
+.material_col_loop
+    ; tile index = row*16 + col
+    LDY row_counter
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    TAX
+    LDA tile_material_flags,X
+
+    ; bit1 = solid
+    AND #2
+    BEQ skip_solid
+
+    ; Fill 16 scanlines in SOLID plane: base + row*256 + col, step +16 each scanline.
+    LDA col_counter
+    STA temp_sprite_ptr
+    LDA #>(SOLID_PLANE_BASE)
+    CLC
+    ADC row_counter
+    STA temp_sprite_ptr+1
+
+    LDA #&FF
+    LDX #16
+.fill_solid_loop
+    LDY #0
+    STA (temp_sprite_ptr),Y
+    CLC
+    LDA temp_sprite_ptr
+    ADC #16
+    STA temp_sprite_ptr
+    BCC solid_no_carry
+    INC temp_sprite_ptr+1
+.solid_no_carry
+    LDA #&FF
+    DEX
+    BNE fill_solid_loop
+
+.skip_solid
+
+    INC col_counter
+    LDA col_counter
+    CMP #16
+    BNE material_col_loop
+
+    INC row_counter
+    LDA row_counter
+    CMP #16
+    BNE material_row_loop
+
+    RTS
+
+; Return C=1 if solid at (X,Y).
+.is_solid
+    ; screen_ptr := SOLID_PLANE_BASE + (Y<<4)
+    TYA
+    AND #&0F
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    STA screen_ptr
+
+    TYA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CLC
+    ADC #>(SOLID_PLANE_BASE)
+    STA screen_ptr+1
+
+    ; Add x_byte (X>>3)
+    TXA
+    LSR A
+    LSR A
+    LSR A
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC solid_ptr_ok
+    INC screen_ptr+1
+.solid_ptr_ok
+
+    ; mask = bitmask_table[X&7]
+    TXA
+    AND #7
+    TAY
+    LDA bitmask_table,Y
+    STA temp
+
+    LDY #0
+    LDA (screen_ptr),Y
+    AND temp
+    BEQ solid_clear
+    SEC
+    RTS
+.solid_clear
+    CLC
+    RTS
+
+; Return C=1 if portalable at (X,Y) using the portalable tile-layer.
+; Tiles are 8x16 pixels (16 tiles across 128px).
+.is_portalable
+    ; tile_x = X >> 3
+    TXA
+    LSR A
+    LSR A
+    LSR A
+    STA temp
+
+    ; tile_y = Y >> 4
+    TYA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAY
+
+    ; tilepos = tile_y*16 + tile_x
+    LDA times16_table,Y
+    CLC
+    ADC temp
+    TAY
+
+    LDA (portalmap_ptr),Y
+    BEQ portal_clear
+    SEC
+    RTS
+.portal_clear
+    CLC
+    RTS
+
+
+.bitmask_table
+    EQUB &80,&40,&20,&10,&08,&04,&02,&01
+
+.tile_material_flags
+    ; 0..3: non-solid (bootstrap default)
+    EQUB 0,0,0,0
+    ; 4..12: solid
+    EQUB 2,2,2,2,2,2,2,2,2
+    ; Fill remaining entries with 0.
+    SKIP 256-13
+
+; Legacy: redraw tiles behind the character (tilemap-based restore)
 .redraw_background_area
     CLI
     ; Save screen_ptr
@@ -468,7 +751,7 @@
     ; Top-left tile
     LDY char_tile_pos
     JSR get_tilemap_tile
-    JSR render_large_block
+    JSR render_cell8x16
 
     ; Top-right tile
     LDA screen_ptr
@@ -481,7 +764,7 @@
     LDY char_tile_pos
     INY
     JSR get_tilemap_tile
-    JSR render_large_block
+    JSR render_cell8x16
 
     ; Move down one tile row (512 bytes)
     INC screen_ptr+1
@@ -494,7 +777,7 @@
     ADC #17
     TAY
     JSR get_tilemap_tile
-    JSR render_large_block
+    JSR render_cell8x16
 
     ; Bottom-left tile (move screen_ptr back 16 bytes; char_tile_pos + 16)
     LDA screen_ptr
@@ -510,7 +793,7 @@
     ADC #16
     TAY
     JSR get_tilemap_tile
-    JSR render_large_block
+    JSR render_cell8x16
 
     ; Restore screen_ptr
     PLA

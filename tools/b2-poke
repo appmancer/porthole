@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+B2_HOST="${B2_HOST:-127.0.0.1}"
+B2_PORT="${B2_PORT:-48075}"
+B2_ID="${B2_ID:-b2}"
+
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "Usage: $0 <addr> <hex-bytes> [suffix]" >&2
+  echo "  addr: hex (e.g. 0x2000 or 2000)" >&2
+  echo "  hex-bytes: e.g. '00 FF 10 2A'" >&2
+  echo "  suffix: optional B2 view suffix (e.g. m, o, i)" >&2
+  exit 2
+fi
+
+addr="$1"
+bytes_str="$2"
+suffix="${3:-}"
+
+addr="${addr#0x}"
+
+url="http://${B2_HOST}:${B2_PORT}/poke/${B2_ID}/${addr}"
+if [[ -n "${suffix}" ]]; then
+  url+="?s=${suffix}"
+fi
+
+# Convert "00 FF 10" -> raw bytes and stream to curl (binary-safe).
+printf '%s' "${bytes_str}" \
+  | tr -d ' \n\t' \
+  | xxd -r -p \
+  | curl -s -H 'Content-Type: application/octet-stream' --data-binary @- "${url}" > /dev/null
+
+echo "poke ok"

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+B2_HOST="${B2_HOST:-127.0.0.1}"
+B2_PORT="${B2_PORT:-48075}"
+B2_ID="${B2_ID:-b2}"
+
+usage() {
+  echo "Usage: $0 <disk.ssd>" >&2
+  echo "Env: B2_HOST, B2_PORT, B2_ID" >&2
+}
+
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 2
+fi
+
+ssd="$1"
+if [[ ! -f "${ssd}" ]]; then
+  echo "File not found: ${ssd}" >&2
+  exit 2
+fi
+
+name="$(basename "${ssd}")"
+
+curl -s --upload-file "${ssd}" "http://${B2_HOST}:${B2_PORT}/run/${B2_ID}?name=${name}" > /dev/null
+
+echo "run ok (${name})"

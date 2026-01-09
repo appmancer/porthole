@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Generate beebasm EQUB sprite+mask data from sprite CSVs.
+
+Input format:
+- CSV contains one or more 32-row blocks separated by blank rows.
+- Each non-blank row's first 16 columns are pixels (16x32 sprite):
+  - '.' (or any cell containing '.') means transparent
+  - '0'..'3' means MODE 5 colour index
+
+Output format:
+- Emits Spycat/MODE5 "screen byte order": 4 stripes x (4 columns x 8 rows).
+- Emits both sprite pixels and mask bytes (dst = (dst & mask) | pix).
+
+Example:
+  ./tools/gen-sprites \
+    --out-sprites sprites/generated_chell_sprites.asm \
+    --out-masks sprites/generated_chell_masks.asm \
+    --prefix chell_pos1 "sprites/Chell Position 1 - Sheet3.csv" \
+    --prefix chell_pos2 "sprites/Chell Position 2 - Sheet3.csv"
+
+If --prefix is omitted, one is derived from the filename.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class InputSpec:
+    path: Path
+    prefix: str
+
+
+def derive_prefix(path: Path) -> str:
+    name = path.stem.lower()
+    # Common Chell naming.
+    name = name.replace("chell position 1", "chell_pos1")
+    name = name.replace("chell position 2", "chell_pos2")
+
+    # Collapse to identifier-ish.
+    name = re.sub(r"[^a-z0-9]+", "_", name).strip("_")
+    if not name:
+        raise ValueError(f"cannot derive prefix from filename: {path}")
+    if name[0].isdigit():
+        name = f"sprite_{name}"
+    return name
+
+
+def is_transparent_cell(cell: str) -> bool:
+    cell = cell.strip()
+    return cell == "" or "." in cell
+
+
+def parse_cell(cell: str, *, path: Path, block_index: int, row_index: int, col_index: int) -> int | None:
+    if is_transparent_cell(cell):
+        return None
+    try:
+        value = int(cell.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"{path}: block {block_index}, row {row_index + 1}, col {col_index + 1}: invalid cell '{cell}'"
+        ) from exc
+    if not (0 <= value <= 3):
+        raise ValueError(
+            f"{path}: block {block_index}, row {row_index + 1}, col {col_index + 1}: value {value} out of range (0..3)"
+        )
+    return value
+
+
+def pack_sprite_byte(pixels4: list[int | None]) -> int:
+    values = [0 if v is None else v for v in pixels4]
+    msb = [(v >> 1) & 1 for v in values]
+    lsb = [v & 1 for v in values]
+
+    hi = (msb[0] << 3) | (msb[1] << 2) | (msb[2] << 1) | msb[3]
+    lo = (lsb[0] << 3) | (lsb[1] << 2) | (lsb[2] << 1) | lsb[3]
+    return (hi << 4) | lo
+
+
+def pack_mask_byte(pixels4: list[int | None]) -> int:
+    # 0xFF keeps background; clear the two bits for each opaque pixel.
+    mask = 0xFF
+    if pixels4[0] is not None:
+        mask -= 0x88
+    if pixels4[1] is not None:
+        mask -= 0x44
+    if pixels4[2] is not None:
+        mask -= 0x22
+    if pixels4[3] is not None:
+        mask -= 0x11
+    return mask
+
+
+def to_spycat_order(raster_bytes: list[int]) -> list[int]:
+    # raster_bytes: 32 rows * 4 bytes per row = 128 bytes.
+    if len(raster_bytes) != 128:
+        raise ValueError(f"expected 128 bytes, got {len(raster_bytes)}")
+
+    out: list[int] = []
+    for stripe in range(4):
+        base_row = stripe * 8
+        for col in range(4):
+            for row in range(8):
+                out.append(raster_bytes[(base_row + row) * 4 + col])
+    return out
+
+
+def read_blocks(path: Path) -> list[list[list[str]]]:
+    rows = list(csv.reader(path.read_text().splitlines()))
+
+    blocks: list[list[list[str]]] = []
+    current: list[list[str]] = []
+
+    for r in rows:
+        first16 = [(r[i].strip() if i < len(r) else "") for i in range(16)]
+        if all(c == "" for c in first16):
+            if current:
+                blocks.append(current)
+                current = []
+            continue
+
+        current.append(first16)
+
+    if current:
+        blocks.append(current)
+
+    for i, b in enumerate(blocks):
+        if len(b) != 32:
+            raise ValueError(f"{path}: block {i} has {len(b)} rows (expected 32)")
+
+    return blocks
+
+
+def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], list[tuple[str, list[int]]]]:
+    blocks = read_blocks(spec.path)
+
+    sprites_out: list[tuple[str, list[int]]] = []
+    masks_out: list[tuple[str, list[int]]] = []
+
+    for block_index, block in enumerate(blocks):
+        raster_sprite: list[int] = []
+        raster_mask: list[int] = []
+
+        for row_index, row in enumerate(block):
+            pixels = [
+                parse_cell(row[col], path=spec.path, block_index=block_index, row_index=row_index, col_index=col)
+                for col in range(16)
+            ]
+
+            for byte_col in range(4):
+                group = pixels[byte_col * 4 : byte_col * 4 + 4]
+                raster_sprite.append(pack_sprite_byte(group))
+                raster_mask.append(pack_mask_byte(group))
+
+        sprite_bytes = to_spycat_order(raster_sprite)
+        mask_bytes = to_spycat_order(raster_mask)
+
+        label = f"{spec.prefix}_x{block_index}"
+        sprites_out.append((label, sprite_bytes))
+        masks_out.append((label, mask_bytes))
+
+    return sprites_out, masks_out
+
+
+def format_eqb(label: str, data: list[int]) -> str:
+    lines = [f".{label}"]
+    for i in range(0, len(data), 16):
+        chunk = data[i : i + 16]
+        lines.append("    EQUB " + ",".join(f"&{b:02X}" for b in chunk))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate beebasm EQUB sprite+mask data from CSVs")
+    parser.add_argument(
+        "--out-sprites",
+        default="sprites/generated_chell_sprites.asm",
+        help="Output .asm file containing sprite pixel data",
+    )
+    parser.add_argument(
+        "--out-masks",
+        default="sprites/generated_chell_masks.asm",
+        help="Output .asm file containing sprite mask data",
+    )
+
+    parser.add_argument(
+        "--spec",
+        action="append",
+        default=[],
+        help="Input spec PREFIX:PATH (repeatable)",
+    )
+    parser.add_argument(
+        "--prefix",
+        action="append",
+        default=[],
+        help="Prefixes for positional inputs (must match count)",
+    )
+    parser.add_argument(
+        "inputs",
+        nargs="*",
+        help="Input CSV files (each may contain multiple 32-row blocks)",
+    )
+
+    args = parser.parse_args()
+
+    specs: list[InputSpec] = []
+
+    if args.spec:
+        if args.inputs:
+            raise SystemExit("use either --spec or positional inputs, not both")
+        if args.prefix:
+            raise SystemExit("--prefix is not used with --spec")
+
+        for spec_text in args.spec:
+            if ":" not in spec_text:
+                raise SystemExit(f"invalid --spec '{spec_text}' (expected PREFIX:PATH)")
+            prefix, path_text = spec_text.split(":", 1)
+            specs.append(InputSpec(path=Path(path_text), prefix=prefix))
+    else:
+        if not args.inputs:
+            raise SystemExit("no inputs provided")
+
+        input_paths = [Path(p) for p in args.inputs]
+        if args.prefix and len(args.prefix) != len(input_paths):
+            raise SystemExit("--prefix count must match number of input files")
+
+        for i, path in enumerate(input_paths):
+            prefix = args.prefix[i] if args.prefix else derive_prefix(path)
+            specs.append(InputSpec(path=path, prefix=prefix))
+
+    all_sprite_blocks: list[tuple[str, list[int]]] = []
+    all_mask_blocks: list[tuple[str, list[int]]] = []
+
+    for spec in specs:
+        sprite_blocks, mask_blocks = generate_for_input(spec)
+        all_sprite_blocks.extend(sprite_blocks)
+        all_mask_blocks.extend(mask_blocks)
+
+    out_sprites = Path(args.out_sprites)
+    out_masks = Path(args.out_masks)
+
+    out_sprites.parent.mkdir(parents=True, exist_ok=True)
+    out_masks.parent.mkdir(parents=True, exist_ok=True)
+
+    header = (
+        "; Auto-generated by tools/gen-sprites.\n"
+        "; Do not edit by hand.\n"
+        "\n"
+    )
+
+    sprite_text = header + "".join(format_eqb(label, data) for label, data in all_sprite_blocks)
+    mask_text = header + "".join(format_eqb(label + "_mask", data) for label, data in all_mask_blocks)
+
+    out_sprites.write_text(sprite_text)
+    out_masks.write_text(mask_text)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -14,10 +14,22 @@ EQUW corner_bottom_right;&B
 EQUW corner_top_right   ;&C
 
 ; Character sprite table - separate from room tiles
+; Indices are used by render_character_sprite.
+;
+; For Chell we use: index = pose*4 + subpixel_offset
+; - pose 0: chell_pos1
+; - pose 1: chell_pos2
+; - subpixel_offset: 0..3
 .character_sprite_table
-EQUW chell_frame1           ; &0: Chell (frame1) 16x32, MODE 5 screen-byte order
-EQUW chell_frame2           ; &1: Chell (frame2)
-EQUW test_sprite16x32       ; &2: Test 16x32 sprite (screen byte order)
+EQUW chell_pos1_x0          ; &0
+EQUW chell_pos1_x1          ; &1
+EQUW chell_pos1_x2          ; &2
+EQUW chell_pos1_x3          ; &3
+EQUW chell_pos2_x0          ; &4
+EQUW chell_pos2_x1          ; &5
+EQUW chell_pos2_x2          ; &6
+EQUW chell_pos2_x3          ; &7
+EQUW test_sprite16x32       ; &8: Test 16x32 sprite (screen byte order)
 
 ; Wide 8x16 tile sprite data
 .sprite_data
@@ -64,25 +76,9 @@ EQUB &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F, &AF, &5F, &AF, &5F, &AF, 
 ; - 4 stripes of 8 scanlines
 ; - within each stripe: 4 byte-columns × 8 rows
 ;   (i.e. the BBC's 8x8 block order)
-.chell_frame1
-    EQUB &00,&00,&10,&10,&10,&10,&00,&30,&00,&E0,&F0,&F0,&C0,&30,&F0,&C0
-    EQUB &00,&00,&00,&20,&D0,&C0,&00,&08,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &70,&40,&10,&30,&20,&10,&10,&10,&03,&0F,&07,&81,&60,&B0,&B0,&B0
-    EQUB &0E,&0E,&08,&00,&00,&00,&80,&00,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &10,&20,&20,&20,&30,&30,&30,&70,&A0,&90,&F0,&F0,&40,&30,&F0,&F0
-    EQUB &00,&80,&80,&00,&80,&80,&80,&80,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &70,&70,&30,&00,&00,&33,&33,&11,&F0,&F0,&F0,&F0,&00,&77,&77,&BB
-    EQUB &C0,&C0,&C0,&80,&00,&00,&88,&77,&00,&00,&00,&00,&00,&00,&00,&00
-
-.chell_frame2
-    EQUB &00,&00,&10,&10,&10,&10,&00,&30,&00,&E0,&F0,&F0,&C0,&30,&F0,&C0
-    EQUB &00,&00,&00,&20,&E0,&C0,&00,&08,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &70,&40,&10,&30,&00,&30,&30,&30,&03,&0F,&07,&81,&E0,&70,&70,&70
-    EQUB &0E,&0E,&08,&00,&00,&00,&80,&00,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &60,&70,&70,&30,&00,&30,&30,&70,&F0,&30,&D0,&D0,&90,&30,&F0,&F0
-    EQUB &00,&80,&80,&80,&80,&80,&80,&C0,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &70,&70,&30,&00,&00,&33,&33,&11,&F0,&F0,&F0,&F0,&00,&00,&BB,&DD
-    EQUB &C0,&C0,&C0,&80,&00,&CC,&CC,&88,&00,&00,&00,&00,&00,&00,&00,&00
+;
+; Generated from CSV sources in sprites/.
+INCLUDE "sprites/generated_chell_sprites.asm"
 
 .test_sprite16x32
     ; Stripe 0 (rows 0-7)

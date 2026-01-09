@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+"""Quickly scan the packed Superior Spycat.ssd container.
+
+This script is intentionally heuristic-driven: the Superior/Spycat.ssd file
+is not a standard 200KB DFS image. It appears to be a compact container that
+includes:
+- boot/menu BASIC-ish text blocks
+- a 6502 loader (SPYLOAD)
+- additional packed data blocks (game/screen/etc.)
+
+The goal here is to extract SPYLOAD and report useful anchors (strings,
+code-like blocks, and likely text blocks) to support follow-up reverse
+engineering.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import re
+from typing import Iterable
+
+
+DEFAULT_IMAGE = pathlib.Path("Superior/Spycat.ssd")
+DEFAULT_OUT_DIR = pathlib.Path(".tmp/spycat_superior_scan")
+
+
+def iter_ascii_strings(data: bytes, min_len: int = 4) -> Iterable[bytes]:
+    current = bytearray()
+    for b in data:
+        if 32 <= b < 127:
+            current.append(b)
+        else:
+            if len(current) >= min_len:
+                yield bytes(current)
+            current.clear()
+    if len(current) >= min_len:
+        yield bytes(current)
+
+
+def ascii_density(block: bytes) -> float:
+    printable = sum(1 for b in block if 32 <= b < 127 or b in (9, 10, 13))
+    return printable / len(block)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("image", nargs="?", default=str(DEFAULT_IMAGE))
+    parser.add_argument("--out", default=str(DEFAULT_OUT_DIR))
+    parser.add_argument("--min-string", type=int, default=4)
+    parser.add_argument("--spyload-dump", action="store_true", help="Dump SPYLOAD as hex")
+    parser.add_argument("--spyload-dump-annot", action="store_true", help="Dump annotated SPYLOAD region")
+    args = parser.parse_args()
+
+    image_path = pathlib.Path(args.image)
+    out_dir = pathlib.Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    data = image_path.read_bytes()
+    if len(data) % 256 != 0:
+        raise SystemExit(f"Expected 256-byte blocks, got {len(data)} bytes")
+
+    num_blocks = len(data) // 256
+    print(f"image={image_path} size={len(data)} blocks={num_blocks}")
+
+    # 1) Locate obvious BASIC/menu text blocks to orient ourselves.
+    scored = []
+    for bi in range(num_blocks):
+        blk = data[bi * 256 : (bi + 1) * 256]
+        scored.append((ascii_density(blk), bi))
+
+    print("\nTop text-like blocks (ASCII density):")
+    for score, bi in sorted(scored, reverse=True)[:12]:
+        head = data[bi * 256 : bi * 256 + 32]
+        head_ascii = "".join(chr(b) if 32 <= b < 127 else "." for b in head)
+        print(f"  block={bi:3d} score={score:0.3f} head={head_ascii}")
+
+    # 2) Find the bit-reversal-style permutation table we saw previously.
+    needles = {
+        b"SPYCAT\x00\x00": "disc-title",
+        b"THE STAIRWAY TO HELL": "stairway-string",
+        b"*/SPYLOAD": "run-spyload",
+        b"L.SPY": "loader-file-prefix",
+    }
+
+    print("\nSelected literal hits:")
+    for needle, name in needles.items():
+        locs = [m.start() for m in re.finditer(re.escape(needle), data)]
+        locs_show = ", ".join(str(x) for x in locs[:10])
+        print(f"  {name:18s} count={len(locs):2d} first=[{locs_show}]")
+
+    perm_seed = bytes(
+        [
+            0x60,
+            0x68,
+            0x64,
+            0x6C,
+            0x62,
+            0x6A,
+            0x66,
+            0x6E,
+            0x61,
+            0x69,
+            0x65,
+            0x6D,
+            0x63,
+            0x6B,
+            0x67,
+            0x6F,
+        ]
+    )
+    perm_hits = [m.start() for m in re.finditer(re.escape(perm_seed), data)]
+    if perm_hits:
+        print("\nPermutation table seed hits:")
+        for off in perm_hits[:10]:
+            print(f"  off={off} (block={off//256}, +{off%256})")
+
+    # 3) Extract SPYLOAD.
+    #
+    # The packed image starts with an ASCII catalogue (block 0), but it is *not*
+    # a normal DFS catalogue. Separately, we can see a BASIC-ish script that runs
+    # `*/SPYLOAD` and there is a real 6502 loader near the end of the container.
+    #
+    # For now, we locate SPYLOAD by taking the last occurrence of the "SPYLOAD"
+    # token and then searching nearby for a contiguous 6502-looking block.
+    # This is intentionally heuristic until we fully understand the container.
+    # Heuristic SPYLOAD extraction: take the last occurrence of "SPYLOAD"
+    # string (the earlier one is in the block-0 catalogue), then look backward
+    # to the nearest 256-byte boundary and assume a fixed 1280-byte loader.
+    #
+    # We already observed that the code-like region begins at block 141.
+    spyload_locs = [m.start() for m in re.finditer(b"SPYLOAD", data)]
+    if not spyload_locs:
+        print("\nCould not find 'SPYLOAD' token")
+        return 2
+
+    last_loc = spyload_locs[-1]
+    guess_block = last_loc // 256
+
+    # We already found a strong code-like region around blocks 141-142.
+    # Prefer scanning a window around there, but fall back to a window around
+    # the last 'SPYLOAD' occurrence.
+    def code_score(block: bytes) -> int:
+        return block.count(0x20) * 2 + block.count(0x4C) + block.count(0x60)
+
+    candidates = []
+    for bi in range(max(0, 141 - 16), min(num_blocks, 141 + 16)):
+        blk = data[bi * 256 : (bi + 1) * 256]
+        candidates.append((code_score(blk), bi))
+    for bi in range(max(0, guess_block - 16), guess_block + 1):
+        blk = data[bi * 256 : (bi + 1) * 256]
+        candidates.append((code_score(blk), bi))
+
+    # Avoid selecting obvious pure-text blocks near the end.
+    spyload_block = max((sc, bi) for (sc, bi) in candidates if ascii_density(data[bi*256:(bi+1)*256]) < 0.5)[1]
+
+    # Observed loader length.
+    spyload_len = 1280
+    spyload_off = spyload_block * 256
+    if spyload_off + spyload_len > len(data):
+        spyload_len = len(data) - spyload_off
+
+    spyload_bytes = data[spyload_off : spyload_off + spyload_len]
+    spyload_path = out_dir / "SPYLOAD.bin"
+    spyload_path.write_bytes(spyload_bytes)
+
+    print(f"\nSPYLOAD (heuristic): block={spyload_block} off={spyload_off} len={len(spyload_bytes)}")
+    print(f"  wrote {spyload_path}")
+
+    # 4) Summarise interesting strings inside SPYLOAD.
+    strings = sorted(set(iter_ascii_strings(spyload_bytes, min_len=args.min_string)))
+    wanted = []
+    for s in strings:
+        if any(x in s for x in (b"SPY", b"SCREEN", b"PANEL", b"LOAD", b"DONE")):
+            wanted.append(s)
+
+    print("\nSPYLOAD interesting strings:")
+    for s in wanted[:80]:
+        print(" ", s.decode("ascii", "replace"))
+
+    if args.spyload_dump:
+        print("\nSPYLOAD hex dump (16 bytes/row):")
+        for base in range(0, len(spyload_bytes), 16):
+            row = spyload_bytes[base : base + 16]
+            hex_bytes = " ".join(f"{b:02X}" for b in row)
+            ascii_bytes = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
+            print(f"  +{base:04X}: {hex_bytes:<47}  {ascii_bytes}")
+
+    # 5) Very lightweight 6502 scan.
+    # We don't try to fully disassemble (no address base context yet), but we can
+    # reliably spot: JSR abs (0x20) and absolute STA/LDA patterns.
+    def scan_jsr(blob: bytes):
+        hits = []
+        for i in range(0, len(blob) - 2):
+            if blob[i] != 0x20:
+                continue
+            lo = blob[i + 1]
+            hi = blob[i + 2]
+            addr = lo | (hi << 8)
+            hits.append((i, addr))
+        return hits
+
+    jsrs = scan_jsr(spyload_bytes)
+    os_calls = [(off, addr) for (off, addr) in jsrs if 0xFF00 <= addr <= 0xFFFF]
+
+    print("\nSPYLOAD JSRs to OS (&FFxx):")
+    for off, addr in os_calls[:80]:
+        window = spyload_bytes[max(0, off - 3) : min(len(spyload_bytes), off + 8)]
+        win_hex = " ".join(f"{b:02X}" for b in window)
+        print(f"  +{off:04X}: JSR ${addr:04X}   [{win_hex}]")
+
+    # Spot direct writes to Sheila (&FExx) which often indicate hardware/CRTC/FDC work.
+    def scan_sta_abs(blob: bytes):
+        hits = []
+        for i in range(0, len(blob) - 2):
+            if blob[i] != 0x8D:  # STA abs
+                continue
+            lo = blob[i + 1]
+            hi = blob[i + 2]
+            addr = lo | (hi << 8)
+            hits.append((i, addr))
+        return hits
+
+    stas = scan_sta_abs(spyload_bytes)
+    sheila = [(off, addr) for (off, addr) in stas if 0xFE00 <= addr <= 0xFEFF]
+
+    print("\nSPYLOAD STA $FExx (Sheila writes):")
+    for off, addr in sheila[:80]:
+        window = spyload_bytes[max(0, off - 3) : min(len(spyload_bytes), off + 8)]
+        win_hex = " ".join(f"{b:02X}" for b in window)
+        print(f"  +{off:04X}: STA ${addr:04X}   [{win_hex}]")
+
+    # 6) Spot the 8271 block specifically (FE80..FE8F). We look for absolute
+    # reads/writes touching those addresses.
+    def scan_abs_ops(blob: bytes, opcode: int):
+        hits = []
+        for i in range(0, len(blob) - 2):
+            if blob[i] != opcode:
+                continue
+            lo = blob[i + 1]
+            hi = blob[i + 2]
+            addr = lo | (hi << 8)
+            hits.append((i, addr))
+        return hits
+
+    # Common absolute addressing opcodes we care about.
+    abs_reads = []
+    for opc in (0xAD, 0xAE, 0xAC):  # LDA/LDX/LDY abs
+        abs_reads.extend((off, addr, opc) for (off, addr) in scan_abs_ops(spyload_bytes, opc))
+
+    abs_writes = []
+    for opc in (0x8D, 0x8E, 0x8C):  # STA/STX/STY abs
+        abs_writes.extend((off, addr, opc) for (off, addr) in scan_abs_ops(spyload_bytes, opc))
+
+    def is_8271(addr: int) -> bool:
+        return 0xFE80 <= addr <= 0xFE8F
+
+    fdc_hits = []
+    for off, addr, opc in abs_reads:
+        if is_8271(addr):
+            fdc_hits.append((off, addr, opc, "R"))
+    for off, addr, opc in abs_writes:
+        if is_8271(addr):
+            fdc_hits.append((off, addr, opc, "W"))
+
+    opc_name = {
+        0xAD: "LDA",
+        0xAE: "LDX",
+        0xAC: "LDY",
+        0x8D: "STA",
+        0x8E: "STX",
+        0x8C: "STY",
+    }
+
+    print("\nSPYLOAD 8271 ($FE80-$FE8F) absolute hits:")
+    for off, addr, opc, rw in sorted(fdc_hits)[:120]:
+        window = spyload_bytes[max(0, off - 8) : min(len(spyload_bytes), off + 12)]
+        win_hex = " ".join(f"{b:02X}" for b in window)
+        print(f"  +{off:04X}: {opc_name.get(opc, hex(opc))} ${addr:04X} ({rw})   [{win_hex}]")
+
+    # 7) Annotated hexdump around the 8271 routine.
+    # This gives a stable chunk of bytes we can reason about, without requiring
+    # full relocation/entry-point knowledge.
+    dump_start = 0x0200
+    dump_end = 0x0450
+    dump_end = min(dump_end, len(spyload_bytes))
+
+    annotations: dict[int, str] = {}
+
+    # annotate JSRs
+    mos_names = {
+        0xFFEE: "OSWRCH",
+        0xFFF4: "OSWORD",
+        0xFFF7: "OSBYTE",
+    }
+    for off, addr in jsrs:
+        if dump_start <= off < dump_end:
+            if 0xFF00 <= addr <= 0xFFFF:
+                name = mos_names.get(addr)
+                if name:
+                    annotations[off] = f"JSR ${addr:04X} ({name})"
+                else:
+                    annotations[off] = f"JSR ${addr:04X} (OS)"
+            else:
+                annotations[off] = f"JSR ${addr:04X}"
+
+    # annotate absolute ops to FE80..FE8F
+    for off, addr, opc, rw in fdc_hits:
+        if dump_start <= off < dump_end:
+            annotations[off] = f"{opc_name.get(opc, hex(opc))} ${addr:04X} ({rw})"
+
+    # annotate bit tests we saw in-context
+    for i in range(dump_start, dump_end - 2):
+        if spyload_bytes[i] == 0x29 and spyload_bytes[i + 1] in (0x04, 0x08):
+            bit = spyload_bytes[i + 1]
+            annotations.setdefault(i, f"AND #${bit:02X} (8271 status bit?)")
+
+    # annotate common ZP pointer counter operations (INC zp / DEC zp)
+    for i in range(dump_start, dump_end - 1):
+        op = spyload_bytes[i]
+        zp = spyload_bytes[i + 1] if i + 1 < dump_end else None
+        if op == 0xE6 and zp is not None:
+            annotations.setdefault(i, f"INC ${zp:02X} (ZP)")
+        elif op == 0xC6 and zp is not None:
+            annotations.setdefault(i, f"DEC ${zp:02X} (ZP)")
+
+    # annotate likely 16-bit pointer increments: INC lo; BNE +2; INC hi
+    for i in range(dump_start, dump_end - 4):
+        if spyload_bytes[i] != 0xE6:
+            continue
+        lo = spyload_bytes[i + 1]
+        if spyload_bytes[i + 2] != 0xD0:
+            continue
+        rel = spyload_bytes[i + 3]
+        if rel != 0x02:
+            continue
+        if spyload_bytes[i + 4] != 0xE6:
+            continue
+        hi = spyload_bytes[i + 5]
+        annotations[i] = f"INC16 ${lo:02X}/${hi:02X} (ZP ptr++)"
+
+    # annotate (zp),Y indexed indirect loads/stores (common for stream copy)
+    for i in range(dump_start, dump_end - 1):
+        op = spyload_bytes[i]
+        zp = spyload_bytes[i + 1]
+        if op == 0xB1:  # LDA (zp),Y
+            annotations.setdefault(i, f"LDA (${zp:02X}),Y")
+        elif op == 0x91:  # STA (zp),Y
+            annotations.setdefault(i, f"STA (${zp:02X}),Y")
+
+    # annotate common zp register ops that often surround byte-copy loops
+    for i in range(dump_start, dump_end - 1):
+        op = spyload_bytes[i]
+        zp = spyload_bytes[i + 1]
+        if op == 0xA4:  # LDY zp
+            annotations.setdefault(i, f"LDY ${zp:02X}")
+        elif op == 0xA5:  # LDA zp
+            annotations.setdefault(i, f"LDA ${zp:02X}")
+        elif op == 0xC4:  # CPY zp
+            annotations.setdefault(i, f"CPY ${zp:02X}")
+        elif op == 0x85:  # STA zp
+            annotations.setdefault(i, f"STA ${zp:02X}")
+        elif op == 0x84:  # STY zp
+            annotations.setdefault(i, f"STY ${zp:02X}")
+
+    if args.spyload_dump_annot:
+        print(f"\nAnnotated hexdump SPYLOAD +{dump_start:04X}..+{dump_end:04X}:")
+        for base in range(dump_start, dump_end, 16):
+            row = spyload_bytes[base : min(dump_end, base + 16)]
+            hex_bytes = " ".join(f"{b:02X}" for b in row)
+            ascii_bytes = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
+            note = ""
+            for j in range(base, min(dump_end, base + 16)):
+                if j in annotations:
+                    note = annotations[j]
+                    break
+            print(f"  +{base:04X}: {hex_bytes:<47}  {ascii_bytes}  {note}")
+
+    # 8) Locate likely ZP initialisation sites for the counters/pointers used
+    # by the FDC loop (A3..A7 seen in the code above).
+    targets = list(range(0xA3, 0xA8))
+
+    # ZP usage locator: find where each ZP byte is first used.
+    # Note: this is still a heuristic scan over raw bytes; code/data can be mixed.
+    ops_imm_zp = {
+        0xA5: "LDA",
+        0xA6: "LDX",
+        0xA4: "LDY",
+        0x85: "STA",
+        0x86: "STX",
+        0x84: "STY",
+        0xC5: "CMP",
+        0xE4: "CPX",
+        0xC4: "CPY",
+        0xE6: "INC",
+        0xC6: "DEC",
+    }
+
+    first_hits: dict[int, tuple[int, int]] = {}  # zp -> (offset, opcode)
+    all_hits: list[tuple[int, int, int]] = []  # (offset, opcode, zp)
+
+    for i in range(0, len(spyload_bytes) - 1):
+        op = spyload_bytes[i]
+        if op not in ops_imm_zp:
+            continue
+        zp = spyload_bytes[i + 1]
+        if zp not in targets:
+            continue
+        all_hits.append((i, op, zp))
+        first_hits.setdefault(zp, (i, op))
+
+    print("\nZP usage locator ($A3-$A7 first references):")
+    for zp in targets:
+        hit = first_hits.get(zp)
+        if not hit:
+            print(f"  ${zp:02X}: (no direct zp-op hits)")
+            continue
+        off, op = hit
+        win0 = max(0, off - 24)
+        win1 = min(len(spyload_bytes), off + 48)
+        snippet = spyload_bytes[win0:win1]
+        hex_snip = " ".join(f"{b:02X}" for b in snippet)
+        print(f"  ${zp:02X}: +{off:04X} {ops_imm_zp[op]} ${zp:02X}  window=+{win0:04X}..+{win1:04X}")
+        print(f"    {hex_snip}")
+
+    print("\nZP usage locator ($A3-$A7 all hits, first 40):")
+    for off, op, zp in all_hits[:40]:
+        print(f"  +{off:04X}: {ops_imm_zp[op]} ${zp:02X}")
+
+    print("\nNext: interpret these hits to recover the container read algorithm.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

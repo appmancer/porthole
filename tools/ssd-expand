@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Expand a short SSD image to a full 200KB DFS-sized SSD.
+
+Some emulators (e.g. jsbeeb) accept truncated SSD images and treat missing
+sectors as zero-filled. Other tools/emulators expect the canonical size:
+
+- Single sided: 80 tracks * 10 sectors/track * 256 bytes = 204800 bytes
+
+This tool pads the input with 0x00 bytes up to the requested size.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+
+
+DFS_SSD_SIZE = 80 * 10 * 256
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input")
+    parser.add_argument("output")
+    parser.add_argument(
+        "--size",
+        type=int,
+        default=DFS_SSD_SIZE,
+        help=f"Output size in bytes (default {DFS_SSD_SIZE})",
+    )
+    parser.add_argument(
+        "--pad",
+        default="00",
+        help="Pad byte in hex (default 00)",
+    )
+    args = parser.parse_args()
+
+    in_path = pathlib.Path(args.input)
+    out_path = pathlib.Path(args.output)
+
+    data = in_path.read_bytes()
+    if len(data) % 256 != 0:
+        raise SystemExit(f"Input size must be multiple of 256 (got {len(data)})")
+    if len(data) > args.size:
+        raise SystemExit(f"Input is larger than output size ({len(data)} > {args.size})")
+
+    pad_byte = int(args.pad, 16)
+    if not (0 <= pad_byte <= 0xFF):
+        raise SystemExit("--pad must be 00..FF")
+
+    out = bytearray(data)
+    out.extend([pad_byte] * (args.size - len(out)))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(out)
+
+    print(f"input={in_path} bytes={len(data)}")
+    print(f"output={out_path} bytes={len(out)} pad={pad_byte:02X}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

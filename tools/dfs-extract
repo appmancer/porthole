@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""DFS file extractor (Acorn DFS 0.90/1.2 style).
+
+Usage:
+  tools/dfs-extract path/to/disc.ssd <D.NAME> <out.bin>
+
+Example:
+  tools/dfs-extract Disc041-Spycat.ssd !.BOOT .tmp/spycat/BOOT.bin
+
+Notes:
+- Assumes file data is stored in 256-byte sectors.
+- Uses start sector + length from the DFS catalogue.
+- For learning/reverse engineering, we preserve raw bytes only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+
+SECTOR_SIZE = 256
+CATALOGUE_SIZE = 512
+
+
+def _read_u16_le(b: bytes) -> int:
+    return b[0] | (b[1] << 8)
+
+
+def _parse_entries(image: bytes):
+    if len(image) < CATALOGUE_SIZE:
+        raise ValueError("Image too small for DFS catalogue")
+
+    cat = image[:CATALOGUE_SIZE]
+    file_count = cat[0x105] & 0x1F
+
+    entries = []
+    for i in range(file_count):
+        nraw = cat[0x008 + 8 * i : 0x008 + 8 * i + 8]
+        nd = nraw.decode("latin1")
+
+        # See dfs-cat for format notes: assume 7-char name + attribute.
+        directory = "$"
+        name = nd[0:7].rstrip(" ")
+
+        m = cat[0x108 + 8 * i : 0x108 + 8 * i + 8]
+        # Match the packing used in dfs-cat (standard DFS):
+        # - start sector: high bits in m[7] bits 4-5, low 8 bits in m[7]
+        # - length: low 16 bits in m[4:6], high nibble in m[7] bits 0-3
+        start_hi = (m[7] >> 4) & 0x03
+        start_lo = m[7]
+        start_sector = (start_hi << 8) | start_lo
+
+        # Some discs encode the start sector low byte in m[6]/m[7]
+        # differently; if the computed sector is implausible for a 200KB
+        # single-sided image, fall back to just m[7].
+        if start_sector >= (len(image) // SECTOR_SIZE):
+            start_sector = start_lo
+
+        length_lo = _read_u16_le(m[4:6])
+        length = length_lo | ((m[7] & 0x0F) << 16)
+
+        # If the high nibble makes the length implausible for this image,
+        # fall back to the 16-bit length.
+        if start_sector * SECTOR_SIZE + length > len(image):
+            length = length_lo
+
+        start = start_sector * SECTOR_SIZE
+        end = start + length
+        if end > len(image):
+            length = length_lo
+
+        entries.append((f"{directory}.{name}", start_sector, length))
+
+    return entries
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("image", help="Path to DFS .ssd image")
+    ap.add_argument("dfs_name", help="DFS filename like S.PYCAT or !.BOOT")
+    ap.add_argument("out", help="Output file path")
+    args = ap.parse_args(argv)
+
+    with open(args.image, "rb") as f:
+        image = f.read()
+
+    entries = _parse_entries(image)
+    wanted = args.dfs_name
+
+    def _norm(n: str) -> str:
+        return "".join(ch for ch in n if ch not in ("\x00", " "))
+
+    wanted_norm = _norm(wanted)
+
+    match = None
+    for fullname, start_sector, length in entries:
+        if _norm(fullname) == wanted_norm:
+            match = (fullname, start_sector, length)
+            break
+
+    if match is None:
+        print(f"Not found: {wanted}", file=sys.stderr)
+        print("Available:", file=sys.stderr)
+        for fullname, start_sector, length in entries:
+            print(f"  {fullname}  start={start_sector} len={length}", file=sys.stderr)
+        print("\nTip: names often have padded spaces; paste from dfs-cat output.", file=sys.stderr)
+        return 2
+
+    fullname, start_sector, length = match
+    start = start_sector * SECTOR_SIZE
+    end = start + length
+
+    if end > len(image):
+        raise ValueError(
+            f"File {fullname} overruns image: start={start} length={length} image={len(image)}"
+        )
+
+    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+    with open(args.out, "wb") as f:
+        f.write(image[start:end])
+
+    print(
+        f"extracted {fullname}: start_sector={start_sector} start=0x{start:05X} length={length} -> {args.out}"
+    )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
