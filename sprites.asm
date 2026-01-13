@@ -122,7 +122,7 @@ EQUB &AA, &55, &AB, &55, &AB, &57, &AF, &57, &AF, &5F, &AF, &5F, &AF, &5F, &AF, 
 ;   (i.e. the BBC's 8x8 block order)
 ;
 ; Generated from CSV sources in sprites/.
-INCLUDE "sprites/generated_chell_sprites.asm"
+; Chell sprites are now loaded into sideways RAM at runtime (see `main.asm`).
 
 .test_sprite16x32
     ; Stripe 0 (rows 0-7)

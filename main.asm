@@ -18,6 +18,8 @@ ORG &70
 .char_byte_offset   SKIP 1    ; Byte offset within cell (0 or 8)
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
+.chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
+.saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
  .anim_frame              SKIP 1    ; Animation frame (0..3)
  .anim_dir                SKIP 1    ; Direction (0=left,1=right)
  .last_anim_dir           SKIP 1    ; Previous direction for redraw
@@ -38,6 +40,9 @@ ORG &1900
 
 CRTC_ADDR = &FE00
 CRTC_DATA = &FE01
+ROMSEL    = &FE30          ; Master paged ROM/SWRAM bank select
+
+CHELL_SWRAM_BANK_DEFAULT = 4
 
 .start
     ; PROGRAM sets MODE 5, but reassert it here for safety.
@@ -52,6 +57,7 @@ CRTC_DATA = &FE01
     ; Remap logical colours to physical palette:
     ; 0=black, 1=red, 2=cyan, 3=yellow
     JSR set_palette
+
 
     ; Apply the game's narrower visible width (32 chars) and re-centre.
     ; CRTC R1 (horizontal displayed) = 32
@@ -74,6 +80,14 @@ CRTC_DATA = &FE01
     JSR set_room_tilemap
     JSR set_room_portalmap
 
+    ; Load Chell sprite+mask data into sideways RAM.
+    ; (Do this before enabling shadow screen so &3000 is main RAM.)
+    JSR load_chell_sprites
+
+    ; Enable shadow screen (Master).
+    ; We still use MODE 5 layout at &5800, but in shadow RAM.
+    JSR enable_shadow_screen
+
     ; Place Chell at cell (4,4): cell_y*16 + cell_x = 4*16 + 4 = 68
     LDA #68
     STA char_tile_pos
@@ -84,9 +98,15 @@ CRTC_DATA = &FE01
     STA anim_frame
     STA save_under_count
 
+    ; Default: face right.
     LDA #1
     STA anim_dir
     STA last_anim_dir
+
+    ; Chell sprite data lives in sideways RAM bank 4 in B2 config.
+    ; (B2 Master defaults configure banks 4-7 as SWRAM.)
+    LDA #CHELL_SWRAM_BANK_DEFAULT
+    STA chell_bank
 
     ; Render background once.
     JSR render_tilemap
@@ -129,6 +149,15 @@ CRTC_DATA = &FE01
  
 ; Draw current body + overlay at screen_ptr.
 .draw_character_current
+    ; Keep ROMSEL stable during blit (B2/MOS IRQs may page ROMs).
+    SEI
+    LDA ROMSEL
+    STA saved_romsel
+
+    ; Ensure Chell SWRAM bank is visible for reads.
+    LDA chell_bank
+    STA ROMSEL
+
     ; Index = run_frame*4 + subpixel_offset
     ; run_frame cycles 0,1,0,2 (i.e. 1,2,1,3)
     ; Facing selects between right-facing (0..11) and left-facing (12..23).
@@ -157,6 +186,11 @@ CRTC_DATA = &FE01
 
     LDA char_sprite_index
     JSR render_overlay_sprite
+
+    ; Restore previous ROM selection and re-enable IRQs.
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
     RTS
  
 ; Poll Z/X for left/right movement (single-pixel).
@@ -548,6 +582,240 @@ CRTC_DATA = &FE01
     PLA
     RTS
 
+; Enable Master shadow screen.
+; Master MOS supports selecting screen memory in shadow RAM.
+; OSBYTE 114 is used by the MOS for shadow screen selection.
+.enable_shadow_screen
+    LDA #114
+    LDX #1
+    LDY #0
+    JSR OSBYTE
+    RTS
+
+; Load Chell sprite+mask data into sideways RAM.
+;
+; We cannot safely `*LOAD` straight into `&8000` because filing system ROM code
+; also lives in the `&8000..&BFFF` paged ROM window.
+;
+; Instead:
+; 1) `*LOAD` `CHDATA` into a main-RAM buffer at `&3000`.
+; 2) Select the SWRAM bank and copy 16KB from `&3000..&6FFF` into `&8000..&BFFF`.
+.load_chell_sprites
+    ; Keep the OS/language ROM visible across OSCLI.
+    LDA ROMSEL
+    STA saved_romsel
+
+    ; Step 1: load into main RAM buffer.
+    LDX #<cmd_load_chelldata_to_buf
+    LDY #>cmd_load_chelldata_to_buf
+    JSR OSCLI
+
+    ; Step 2: select SWRAM bank and copy 16KB into it.
+    ; Keep ROMSEL stable during the copy (IRQ handlers may touch it).
+    SEI
+
+    ; Real Master: bank number alone is writable.
+    ; B2: some configs require bit 7 set for SWRAM writes.
+    JSR select_chell_romsel
+    BCC chell_bank_selected
+
+    ; No usable bank mapping -> fail loudly.
+    CLI
+    LDA saved_romsel
+    STA ROMSEL
+    LDX #<msg_no_swr
+    LDY #>msg_no_swr
+    JSR print_string_xy
+.no_swr_hang
+    JMP no_swr_hang
+
+.chell_bank_selected
+
+    ; src := &3000
+    LDA #&00
+    STA temp_sprite_ptr
+    LDA #&30
+    STA temp_sprite_ptr+1
+
+    ; dst := &8000 (in SWRAM bank)
+    LDA #&00
+    STA temp_mask_ptr
+    LDA #&80
+    STA temp_mask_ptr+1
+
+    LDX #&40                  ; 64 pages = 16KB
+.copy_chelldata_page
+    LDY #0
+.copy_chelldata_byte
+    LDA (temp_sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    BNE copy_chelldata_byte
+
+    INC temp_sprite_ptr+1
+    INC temp_mask_ptr+1
+    DEX
+    BNE copy_chelldata_page
+
+    ; Quick sanity check: confirm we really wrote SWRAM.
+    JSR sanity_check_chell_swrambank
+    BCC chell_sprites_ok
+
+    ; Restore ROMSEL before calling OS.
+    CLI
+    LDA saved_romsel
+    STA ROMSEL
+
+    LDX #<msg_swr_copy_fail
+    LDY #>msg_swr_copy_fail
+    JSR print_string_xy
+
+.swr_fail_hang
+    JMP swr_fail_hang
+
+.chell_sprites_ok
+    ; Restore previous ROM selection and re-enable IRQs.
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
+    RTS
+
+.cmd_load_chelldata_to_buf
+    EQUS "LOAD CHDATA 3000",13
+
+
+; Select a ROMSEL value for Chell SWRAM writes.
+; Tries bank 4, then bank 4|&80 (B2 quirk).
+;
+; Output:
+; - `chell_bank` set
+; - ROMSEL set to `chell_bank`
+; Returns: C=0 if ok, C=1 if no mapping worked.
+.select_chell_romsel
+    LDA #CHELL_SWRAM_BANK_DEFAULT
+    JSR romsel_writable
+    BCC romsel_ok
+
+    LDA #CHELL_SWRAM_BANK_DEFAULT
+    ORA #&80
+    JSR romsel_writable
+    BCS romsel_fail
+
+.romsel_ok
+    STA chell_bank
+    STA ROMSEL
+    CLC
+    RTS
+
+.romsel_fail
+    SEC
+    RTS
+
+; Test whether current A (ROMSEL value) is writable at &8000.
+; Returns: C=0 writable, C=1 not writable. Preserves A.
+.romsel_writable
+    PHA
+    STA ROMSEL
+
+    LDA &8000
+    STA temp
+
+    LDA #&A5
+    STA &8000
+    CMP &8000
+    BNE romsel_not_writable
+
+    LDA #&5A
+    STA &8000
+    CMP &8000
+    BNE romsel_not_writable
+
+    ; Restore original byte.
+    LDA temp
+    STA &8000
+
+    PLA
+    CLC
+    RTS
+
+.romsel_not_writable
+    ; Best-effort restore.
+    LDA temp
+    STA &8000
+    PLA
+    SEC
+    RTS
+
+; Sanity check for the Chell SWRAM bank in B2.
+; Preconditions:
+; - `chell_bank` has been selected into ROMSEL.
+; - CHDATA buffer still present at `&3000`.
+;
+; Returns: C=0 if ok, C=1 if failed.
+.sanity_check_chell_swrambank
+    ; Confirm writes stick at &8000 (restore original byte afterwards).
+    LDA &8000
+    STA temp
+
+    LDA #&A5
+    STA &8000
+    CMP &8000
+    BNE sanity_fail
+
+    LDA #&5A
+    STA &8000
+    CMP &8000
+    BNE sanity_fail
+
+    ; Restore original byte.
+    LDA temp
+    STA &8000
+
+    ; Confirm the first 16 bytes match the load buffer.
+    LDX #0
+.sanity_cmp_loop
+    LDA &3000,X
+    CMP &8000,X
+    BNE sanity_fail
+    INX
+    CPX #16
+    BNE sanity_cmp_loop
+
+    CLC
+    RTS
+
+.sanity_fail
+    ; Best-effort restore of first byte.
+    LDA temp
+    STA &8000
+    SEC
+    RTS
+
+; Print NUL-terminated string at XY using OSWRCH.
+.print_string_xy
+    STX temp_sprite_ptr
+    STY temp_sprite_ptr+1
+
+.print_loop
+    LDY #0
+    LDA (temp_sprite_ptr),Y
+    BEQ print_done
+    JSR OSWRCH
+
+    INC temp_sprite_ptr
+    BNE print_loop
+    INC temp_sprite_ptr+1
+    BNE print_loop
+
+.print_done
+    RTS
+
+.msg_no_swr
+    EQUS "NO SWRAM",13,0
+
+.msg_swr_copy_fail
+    EQUS "SWRAM COPY FAIL",13,0
+
 ; Wait for vertical sync (VBlank).
 ; Uses OSBYTE 19 (&13): "Wait for vertical sync".
 .wait_vsync
@@ -728,3 +996,15 @@ INCLUDE "lookup_tables.asm"
 
 SAVE "PORTHLE", start, end
 PUTBASIC "program.bas", "PROGRAM"
+
+; Chell sprite+mask data file for sideways RAM.
+; This is loaded at runtime into a sideways RAM bank mapped at &8000..&BFFF.
+ORG &8000
+.chelldata_start
+INCLUDE "sprites/generated_chell_sprites.asm"
+INCLUDE "sprites/generated_chell_masks.asm"
+
+; Pad to full 16KB SWRAM bank.
+ORG &C000
+.chelldata_end
+SAVE "CHDATA", chelldata_start, chelldata_end

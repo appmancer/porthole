@@ -1,7 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUT_SSD="${1:-porthole.ssd}"
+VERBOSE=0
+OUT_SSD="porthole.ssd"
+
+# Usage:
+#   ./build.sh [out.ssd]
+#   ./build.sh -v [out.ssd]
+#   BEEBASM_VERBOSE=1 ./build.sh [out.ssd]
+if [[ "${BEEBASM_VERBOSE:-}" == "1" ]]; then
+  VERBOSE=1
+fi
+
+if [[ "${1:-}" == "-v" ]]; then
+  VERBOSE=1
+  shift
+fi
+
+if [[ "${1:-}" != "" ]]; then
+  OUT_SSD="$1"
+fi
 
 # Recreate the DFS image each build; beebasm won't overwrite files within
 # an existing disc image.
@@ -24,6 +42,16 @@ rm -f "${OUT_SSD}"
   --spec "chell_rgun_l2^:sprites/Chell Running Overlays - R-Gun Frame 2.csv" \
   --spec "chell_rgun_l3^:sprites/Chell Running Overlays - R-Gun Frame 3.csv"
 
-beebasm -i main.asm -do "${OUT_SSD}" -title "PORTHOLE" -boot PROGRAM -v
+BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTHOLE" -boot PROGRAM)
+
+# Verbose beebasm listings are huge and can blow token budgets.
+if [[ "${VERBOSE}" == "1" ]]; then
+  BEEBASM_ARGS+=( -v )
+fi
+
+beebasm "${BEEBASM_ARGS[@]}"
+
+# Some emulators and real-hardware tools expect a full 200KB SSD.
+python3 tools/ssd-expand "${OUT_SSD}" "${OUT_SSD}"
 
 echo "Build complete! Output: ${OUT_SSD}"

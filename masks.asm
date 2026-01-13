@@ -53,10 +53,10 @@
     EQUW chell_rgun_l3_x4_mask
 
 ; Masks for generated character sprites.
+; Chell masks are now loaded into sideways RAM at runtime (see `main.asm`).
 ; Blitter does: dst = (dst & mask) | pix
 ; So mask should be &FF where pix is transparent (keep background)
 ; and &00 where pix is opaque (replace).
-INCLUDE "sprites/generated_chell_masks.asm"
 
 ; Mask for test 16x32 sprite in screen byte order (128 bytes).
 .test_sprite16x32_mask

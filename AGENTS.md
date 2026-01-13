@@ -1,16 +1,16 @@
 # AGENTS
 
-This repository contains **PORTHOLE**, a BBC Micro (6502) game.
+This repository contains **PORTHOLE**, a BBC Master (65C02) game.
 
 - **Game**: PORTHOLE
 - **Concept**: A demake of Valve’s *Portal*, reimagined as a 2D platformer.
-- **Platform**: BBC Micro (6502) using DFS `.ssd` disk images.
+- **Platform**: BBC Master 128 (65C02), using DFS `.ssd` disk images.
 - **Assembler**: `beebasm`
 - **Boot flow**: The disk uses beebasm’s `-boot PROGRAM`, which creates a DFS `!Boot` entry that runs BASIC file `PROGRAM`.
 
 ## Agent role
 
-When working in this repo, assume the agent is an expert in writing 6502 games for the BBC Micro, including:
+When working in this repo, assume the agent is an expert in writing 65C02 games for the BBC Master, including:
 
 - Cycle/size-aware 6502 code (tight inner loops, minimizing page crossings)
 - BBC Micro display memory layouts and MODE-specific considerations
@@ -23,6 +23,16 @@ When working in this repo, assume the agent is an expert in writing 6502 games f
 - Zero-page variables are allocated starting at `&70` (see `main.asm`).
 - Keep changes minimal and consistent with existing beebasm style.
 - DFS filename limit is **7 characters** (e.g. the main binary is `PORTHLE`).
+
+## Master memory model (current)
+
+- We use the Master’s **shadow screen RAM** for the display (screen still addressed as MODE 5 at `&5800`, but lives in shadow).
+- Chell’s many sprite/mask assets live in **sideways RAM** (paged into `&8000..&BFFF`).
+  - Built as DFS file `CHDATA` and loaded at runtime into bank `CHELL_SWRAM_BANK` at `&8000`.
+  - Avoid bank switching mid-blit; select the bank once per draw.
+- Other (non-Chell) sprite resources should remain in main RAM unless we explicitly bank them.
+
+Reference material lives under `books/` (e.g. Master ROM/SWRAM + MOS behaviour).
 
 ## Display mode (custom MODE 5)
 
