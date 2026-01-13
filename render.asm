@@ -276,27 +276,46 @@
     
     RTS
 
-; Render character sprite with mask - uses character_sprite_table and character_mask_table
+; Render 16x16 overlay sprite (gun/box arms) with mask.
+; Input: A = overlay index (0-based, matches overlay_*_table order).
+; The overlay is drawn over the middle two stripes of the 16x32 body (stripes 1+2).
+.render_overlay_sprite
+    ; Preserve input index before clobbering A.
+    STA temp
 
-; plots a 16-byte sprite with separate mask data (00=transparent, 11=opaque per pixel)
-; Requires: sprite_ptr = sprite data, mask_ptr = mask data, screen_ptr = screen location
-.plot_sprite_with_mask
-    LDY #0
-.mask_sprite_byte_loop
-    LDA (mask_ptr),Y        ; Load mask byte
-    AND (sprite_ptr),Y      ; Keep sprite pixels where mask bits are set
-    STA temp                ; Store masked sprite data
-    
-    LDA (mask_ptr),Y        ; Reload mask byte
-    EOR #&FF                ; Invert mask (00->FF, 11->EE, etc)
-    AND (screen_ptr),Y      ; Keep screen pixels where inverted mask bits are set
-    ORA temp                ; Combine masked sprite + masked screen
-    STA (screen_ptr),Y      ; Write result to screen
-    
-    INY
-    CPY #16                 ; 16 bytes for one half of character sprite
-    BNE mask_sprite_byte_loop
-    
+    ; preserve screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+
+    ; screen_ptr += 1 stripe (8 scanlines)
+    INC screen_ptr+1
+
+    ; Restore our index (original A)
+    LDA temp
+
+    ASL A
+    TAX
+
+    LDA overlay_sprite_table,X
+    STA sprite_ptr
+    LDA overlay_sprite_table+1,X
+    STA sprite_ptr+1
+
+    LDA overlay_mask_table,X
+    STA mask_ptr
+    LDA overlay_mask_table+1,X
+    STA mask_ptr+1
+
+    JSR plot_sprite16x16_masked_striped
+
+    ; restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+
     RTS
 
 ; Sprite blit used by Spycat-format character sprites.
@@ -417,115 +436,298 @@
     STA mask_ptr
     LDA temp_mask_ptr+1
     STA mask_ptr+1
+ 
+    RTS
+
+; Unmasked version: 16x16 (two stripes): dst = pix (hard overwrite)
+; Requires: sprite_ptr = pix data, screen_ptr = top-left screen address for stripe 0
+.plot_sprite16x16_striped_copy
+    ; Preserve base sprite pointer so we can restore it.
+    LDA sprite_ptr
+    STA temp_sprite_ptr
+    LDA sprite_ptr+1
+    STA temp_sprite_ptr+1
+
+    ; Stripe 0: copy 32 bytes
+    LDY #0
+.overlay_copy_bytes0
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE overlay_copy_bytes0
+
+    ; Advance screen one stripe (8 scanlines) and data +32 bytes
+    INC screen_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC overlay_copy_sprite_ptr_ok
+    INC sprite_ptr+1
+.overlay_copy_sprite_ptr_ok
+
+    ; Stripe 1: copy 32 bytes
+    LDY #0
+.overlay_copy_bytes1
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE overlay_copy_bytes1
+
+    ; Restore screen_ptr (advanced 1 stripe)
+    DEC screen_ptr+1
+
+    ; Restore sprite_ptr
+    LDA temp_sprite_ptr
+    STA sprite_ptr
+    LDA temp_sprite_ptr+1
+    STA sprite_ptr+1
 
     RTS
 
+; Masked version (Spycat-style): 16x16 (two stripes): dst = (dst & mask) | pix
+; Requires: sprite_ptr = pix data, mask_ptr = mask data
+;          screen_ptr = top-left screen address for stripe 0
+.plot_sprite16x16_masked_striped
+    ; Preserve base pointers so we can restore them.
+    LDA sprite_ptr
+    STA temp_sprite_ptr
+    LDA sprite_ptr+1
+    STA temp_sprite_ptr+1
+    LDA mask_ptr
+    STA temp_mask_ptr
+    LDA mask_ptr+1
+    STA temp_mask_ptr+1
+
+    ; Stripe 0: copy 32 bytes
+    LDY #0
+.overlay_bytes0
+    LDA (screen_ptr),Y
+    AND (mask_ptr),Y
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE overlay_bytes0
+
+    ; Advance screen one stripe (8 scanlines) and data +32 bytes
+    INC screen_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC sprite_ptr_ok1
+    INC sprite_ptr+1
+.sprite_ptr_ok1
+
+    LDA mask_ptr
+    CLC
+    ADC #32
+    STA mask_ptr
+    BCC mask_ptr_ok1
+    INC mask_ptr+1
+.mask_ptr_ok1
+
+    ; Stripe 1: copy 32 bytes
+    LDY #0
+.overlay_bytes1
+    LDA (screen_ptr),Y
+    AND (mask_ptr),Y
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE overlay_bytes1
+
+    ; Restore screen_ptr (advanced 1 stripe)
+    DEC screen_ptr+1
+
+    ; Restore sprite/mask pointers
+    LDA temp_sprite_ptr
+    STA sprite_ptr
+    LDA temp_sprite_ptr+1
+    STA sprite_ptr+1
+    LDA temp_mask_ptr
+    STA mask_ptr
+    LDA temp_mask_ptr+1
+    STA mask_ptr+1
+
+    RTS
+ 
 ; Sprite pointer table lookup is now used for sprite selection.
 
 
-SOLID_PLANE_BASE     = &3000
-SAVE_UNDER_BASE      = &7800
 
-; Save the 16x32 sprite rectangle (4 bytes wide × 32 scanlines) under screen_ptr.
-; Stores into SAVE_UNDER_BASE.
+SOLID_PLANE_BASE          = &4000
+SAVE_UNDER_POOL_BASE      = &7800
+SAVE_UNDER_SLOT_SIZE      = 128
+SAVE_UNDER_MAX_SLOTS      = 4
+
+; Save-under pool (4 slots × 128 bytes).
+;
+; Each slot stores a 16x32 rectangle in our striped order:
+; - 4 stripes
+; - 32 bytes per stripe
+; Slots are stored contiguously (not spaced by 256-byte scanline stride).
+;
+; `save_under_count` and per-slot screen pointers live in ZP (main.asm).
+
+; Save the 16x32 sprite rectangle (4 bytes wide × 32 scanlines) under `screen_ptr`.
+; Allocates the next free slot and records its destination address.
+;
+; If the pool is full, the save is skipped (sprite may leave trails).
 .save_playfield_rect
-    ; Preserve screen_ptr
+    LDA save_under_count
+    CMP #SAVE_UNDER_MAX_SLOTS
+    BCS save_under_full
+
+    TAX                         ; X = slot
+    INC save_under_count
+
+    ; Record destination screen pointer for restore.
     LDA screen_ptr
-    PHA
+    STA save_under_screen_low,X
     LDA screen_ptr+1
-    PHA
+    STA save_under_screen_high,X
 
-    ; Preserve sprite_ptr (used as temp dest pointer here)
-    LDA sprite_ptr
-    PHA
-    LDA sprite_ptr+1
-    PHA
+    ; temp_mask_ptr := source pointer (screen)
+    LDA screen_ptr
+    STA temp_mask_ptr
+    LDA screen_ptr+1
+    STA temp_mask_ptr+1
 
-    ; sprite_ptr := save-under buffer
-    LDA #<(SAVE_UNDER_BASE)
+    ; sprite_ptr := slot buffer base
+    LDA #<(SAVE_UNDER_POOL_BASE)
     STA sprite_ptr
-    LDA #>(SAVE_UNDER_BASE)
+    LDA #>(SAVE_UNDER_POOL_BASE)
     STA sprite_ptr+1
 
-    LDX #0
+    ; slot*128: low = (slot&1)*&80, high += slot>>1
+    TXA
+    LSR A
+    CLC
+    ADC sprite_ptr+1
+    STA sprite_ptr+1
+
+    TXA
+    AND #1
+    BEQ save_slot_ptr_ok
+    LDA #&80
+    STA sprite_ptr
+.save_slot_ptr_ok
+
+    ; Copy 4 stripes.
+    LDY #0
+    STY temp                  ; stripe counter
 .save_stripe_loop
     LDY #0
 .save_row_bytes
-    LDA (screen_ptr),Y
+    LDA (temp_mask_ptr),Y
     STA (sprite_ptr),Y
     INY
     CPY #32
     BNE save_row_bytes
 
-    ; Next stripe: move down 8 scanlines
-    INC screen_ptr+1
-    INC sprite_ptr+1
+    ; Next stripe on screen: move down 8 scanlines.
+    ; MODE 5 has 256-byte interleave per 8 scanlines, so this is +&0100.
+    ; (tile rows are 16 scanlines high, so `tile_row_screen_table` steps by +512.)
+    INC temp_mask_ptr+1
 
-    INX
-    CPX #4
+    ; Next stripe in save-under buffer (+32 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC save_next_stripe
+    INC sprite_ptr+1
+.save_next_stripe
+
+    INC temp
+    LDA temp
+    CMP #4
     BNE save_stripe_loop
 
-    ; Restore pointers
-    PLA
-    STA sprite_ptr+1
-    PLA
-    STA sprite_ptr
-
-    PLA
-    STA screen_ptr+1
-    PLA
-    STA screen_ptr
+.save_under_full
     RTS
 
-; Restore the saved 16x32 sprite rectangle back to screen_ptr.
-; Restores from SAVE_UNDER_BASE.
+; Restore all saved rectangles from last frame and reset the pool.
+;
+; Restore order matters when objects overlap.
+; We restore in the same order the slots were allocated (oldest first), so that
+; later objects' saved-under data (which may include earlier objects) wins.
 .restore_playfield_rect
-    ; Preserve screen_ptr
-    LDA screen_ptr
-    PHA
-    LDA screen_ptr+1
-    PHA
-
-    ; Preserve sprite_ptr (used as temp source pointer here)
-    LDA sprite_ptr
-    PHA
-    LDA sprite_ptr+1
-    PHA
-
-    ; sprite_ptr := save-under buffer
-    LDA #<(SAVE_UNDER_BASE)
-    STA sprite_ptr
-    LDA #>(SAVE_UNDER_BASE)
-    STA sprite_ptr+1
+    LDA save_under_count
+    BEQ restore_done
+    STA temp_y
 
     LDX #0
+.restore_slot_loop
+    ; temp_mask_ptr := destination screen pointer for this slot
+    LDA save_under_screen_low,X
+    STA temp_mask_ptr
+    LDA save_under_screen_high,X
+    STA temp_mask_ptr+1
+
+    ; sprite_ptr := slot buffer base
+    LDA #<(SAVE_UNDER_POOL_BASE)
+    STA sprite_ptr
+    LDA #>(SAVE_UNDER_POOL_BASE)
+    STA sprite_ptr+1
+
+    TXA
+    LSR A
+    CLC
+    ADC sprite_ptr+1
+    STA sprite_ptr+1
+
+    TXA
+    AND #1
+    BEQ restore_slot_ptr_ok
+    LDA #&80
+    STA sprite_ptr
+.restore_slot_ptr_ok
+
+    ; Copy 4 stripes.
+    LDY #0
+    STY temp                  ; stripe counter
 .restore_stripe_loop
     LDY #0
 .restore_row_bytes
     LDA (sprite_ptr),Y
-    STA (screen_ptr),Y
+    STA (temp_mask_ptr),Y
     INY
     CPY #32
     BNE restore_row_bytes
 
-    ; Next stripe: move down 8 scanlines
-    INC screen_ptr+1
-    INC sprite_ptr+1
+    ; Next stripe on screen: move down 8 scanlines (+&0100).
+    INC temp_mask_ptr+1
 
-    INX
-    CPX #4
+    ; Next stripe in buffer (+32 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC restore_next_stripe
+    INC sprite_ptr+1
+.restore_next_stripe
+
+    INC temp
+    LDA temp
+    CMP #4
     BNE restore_stripe_loop
 
-    ; Restore pointers
-    PLA
-    STA sprite_ptr+1
-    PLA
-    STA sprite_ptr
+    INX
+    CPX temp_y
+    BNE restore_slot_loop
 
-    PLA
-    STA screen_ptr+1
-    PLA
-    STA screen_ptr
+    LDA #0
+    STA save_under_count
+
+.restore_done
     RTS
 
 ; Build material plane (solid, 1bpp) from the current room tilemap.
@@ -706,7 +908,6 @@ SAVE_UNDER_BASE      = &7800
 
 ; Legacy: redraw tiles behind the character (tilemap-based restore)
 .redraw_background_area
-    CLI
     ; Save screen_ptr
     LDA screen_ptr
     PHA
@@ -800,6 +1001,6 @@ SAVE_UNDER_BASE      = &7800
     STA screen_ptr+1
     PLA
     STA screen_ptr
-
-    SEI
+ 
     RTS
+

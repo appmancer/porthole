@@ -2,21 +2,30 @@
 """Generate beebasm EQUB sprite+mask data from sprite CSVs.
 
 Input format:
-- CSV contains one or more 32-row blocks separated by blank rows.
-- Each non-blank row's first 16 columns are pixels (16x32 sprite):
-  - '.' (or any cell containing '.') means transparent
+- CSV contains one or more blocks separated by blank rows.
+- Each non-blank row's first 16 pixels are taken from the row text:
+  - '.' means transparent
   - '0'..'3' means MODE 5 colour index
 
+Notes:
+- Many of our sprite CSVs contain extra computed columns (hex bytes, formulas).
+  We ignore everything after the first 16 pixel values.
+- This parser is intentionally resilient to merged cells (e.g. "10" meaning "1","0").
+
+Supported block sizes:
+- 16 rows: 16x16 sprite (2 stripes)
+- 32 rows: 16x32 sprite (4 stripes)
+
 Output format:
-- Emits Spycat/MODE5 "screen byte order": 4 stripes x (4 columns x 8 rows).
+- Emits Spycat/MODE5 "screen byte order": stripes x (4 columns x 8 rows).
 - Emits both sprite pixels and mask bytes (dst = (dst & mask) | pix).
 
 Example:
   ./tools/gen-sprites \
     --out-sprites sprites/generated_chell_sprites.asm \
     --out-masks sprites/generated_chell_masks.asm \
-    --prefix chell_pos1 "sprites/Chell Position 1 - Sheet3.csv" \
-    --prefix chell_pos2 "sprites/Chell Position 2 - Sheet3.csv"
+    --spec chell_pos1:"sprites/Chell Position 1 - Sheet3.csv" \
+    --spec chell_pos2:"sprites/Chell Position 2 - Sheet3.csv"
 
 If --prefix is omitted, one is derived from the filename.
 """
@@ -24,7 +33,6 @@ If --prefix is omitted, one is derived from the filename.
 from __future__ import annotations
 
 import argparse
-import csv
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,25 +59,32 @@ def derive_prefix(path: Path) -> str:
     return name
 
 
-def is_transparent_cell(cell: str) -> bool:
-    cell = cell.strip()
-    return cell == "" or "." in cell
+PIXEL_RE = re.compile(r"[0-3.]")
 
-
-def parse_cell(cell: str, *, path: Path, block_index: int, row_index: int, col_index: int) -> int | None:
-    if is_transparent_cell(cell):
+def parse_pixel(ch: str, *, path: Path, block_index: int, row_index: int, col_index: int) -> int | None:
+    if ch == ".":
         return None
-    try:
-        value = int(cell.strip())
-    except ValueError as exc:
-        raise ValueError(
-            f"{path}: block {block_index}, row {row_index + 1}, col {col_index + 1}: invalid cell '{cell}'"
-        ) from exc
+    value = ord(ch) - ord("0")
     if not (0 <= value <= 3):
         raise ValueError(
             f"{path}: block {block_index}, row {row_index + 1}, col {col_index + 1}: value {value} out of range (0..3)"
         )
     return value
+
+
+def pixels_from_line(line: str, *, path: Path, line_index: int) -> list[str]:
+    """Extract the first 16 pixel tokens from a CSV line.
+
+    We scan the raw line text so merged spreadsheet cells like "10" still decode
+    as two pixels.
+    """
+
+    tokens = [m.group(0) for m in PIXEL_RE.finditer(line)]
+    if not tokens:
+        return []
+    if len(tokens) < 16:
+        raise ValueError(f"{path}: line {line_index + 1}: expected 16 pixels, got {len(tokens)}")
+    return tokens[:16]
 
 
 def pack_sprite_byte(pixels4: list[int | None]) -> int:
@@ -96,13 +111,17 @@ def pack_mask_byte(pixels4: list[int | None]) -> int:
     return mask
 
 
-def to_spycat_order(raster_bytes: list[int]) -> list[int]:
-    # raster_bytes: 32 rows * 4 bytes per row = 128 bytes.
-    if len(raster_bytes) != 128:
-        raise ValueError(f"expected 128 bytes, got {len(raster_bytes)}")
+def to_spycat_order(raster_bytes: list[int], *, rows: int) -> list[int]:
+    if rows % 8 != 0:
+        raise ValueError(f"rows must be a multiple of 8, got {rows}")
 
+    expected = rows * 4
+    if len(raster_bytes) != expected:
+        raise ValueError(f"expected {expected} bytes for {rows} rows, got {len(raster_bytes)}")
+
+    stripes = rows // 8
     out: list[int] = []
-    for stripe in range(4):
+    for stripe in range(stripes):
         base_row = stripe * 8
         for col in range(4):
             for row in range(8):
@@ -111,27 +130,26 @@ def to_spycat_order(raster_bytes: list[int]) -> list[int]:
 
 
 def read_blocks(path: Path) -> list[list[list[str]]]:
-    rows = list(csv.reader(path.read_text().splitlines()))
-
     blocks: list[list[list[str]]] = []
     current: list[list[str]] = []
 
-    for r in rows:
-        first16 = [(r[i].strip() if i < len(r) else "") for i in range(16)]
-        if all(c == "" for c in first16):
+    lines = path.read_text().splitlines()
+    for line_index, line in enumerate(lines):
+        pixels = pixels_from_line(line, path=path, line_index=line_index)
+        if not pixels:
             if current:
                 blocks.append(current)
                 current = []
             continue
 
-        current.append(first16)
+        current.append(pixels)
 
     if current:
         blocks.append(current)
 
     for i, b in enumerate(blocks):
-        if len(b) != 32:
-            raise ValueError(f"{path}: block {i} has {len(b)} rows (expected 32)")
+        if len(b) not in (16, 32):
+            raise ValueError(f"{path}: block {i} has {len(b)} rows (expected 16 or 32)")
 
     return blocks
 
@@ -143,12 +161,13 @@ def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], li
     masks_out: list[tuple[str, list[int]]] = []
 
     for block_index, block in enumerate(blocks):
+        rows = len(block)
         raster_sprite: list[int] = []
         raster_mask: list[int] = []
 
         for row_index, row in enumerate(block):
             pixels = [
-                parse_cell(row[col], path=spec.path, block_index=block_index, row_index=row_index, col_index=col)
+                parse_pixel(row[col], path=spec.path, block_index=block_index, row_index=row_index, col_index=col)
                 for col in range(16)
             ]
 
@@ -157,8 +176,8 @@ def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], li
                 raster_sprite.append(pack_sprite_byte(group))
                 raster_mask.append(pack_mask_byte(group))
 
-        sprite_bytes = to_spycat_order(raster_sprite)
-        mask_bytes = to_spycat_order(raster_mask)
+        sprite_bytes = to_spycat_order(raster_sprite, rows=rows)
+        mask_bytes = to_spycat_order(raster_mask, rows=rows)
 
         label = f"{spec.prefix}_x{block_index}"
         sprites_out.append((label, sprite_bytes))

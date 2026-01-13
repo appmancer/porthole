@@ -16,20 +16,39 @@ EQUW corner_top_right   ;&C
 ; Character sprite table - separate from room tiles
 ; Indices are used by render_character_sprite.
 ;
-; For Chell we use: index = pose*4 + subpixel_offset
-; - pose 0: chell_pos1
-; - pose 1: chell_pos2
+; For the demo we use: index = run_frame*4 + subpixel_offset
+; - run_frame: 0..2 (r1..r3)
 ; - subpixel_offset: 0..3
 .character_sprite_table
-EQUW chell_pos1_x0          ; &0
-EQUW chell_pos1_x1          ; &1
-EQUW chell_pos1_x2          ; &2
-EQUW chell_pos1_x3          ; &3
-EQUW chell_pos2_x0          ; &4
-EQUW chell_pos2_x1          ; &5
-EQUW chell_pos2_x2          ; &6
-EQUW chell_pos2_x3          ; &7
-EQUW test_sprite16x32       ; &8: Test 16x32 sprite (screen byte order)
+EQUW chell_run_r1_x0
+EQUW chell_run_r1_x1
+EQUW chell_run_r1_x2
+EQUW chell_run_r1_x3
+EQUW chell_run_r2_x0
+EQUW chell_run_r2_x1
+EQUW chell_run_r2_x2
+EQUW chell_run_r2_x3
+EQUW chell_run_r3_x0
+EQUW chell_run_r3_x1
+EQUW chell_run_r3_x2
+EQUW chell_run_r3_x3
+EQUW test_sprite16x32       ; Debug 16x32 sprite (screen byte order)
+
+; Overlay sprite table (16x16, two stripes). Drawn at Chell Y+16.
+; Indices match character_sprite_table for convenience.
+.overlay_sprite_table
+EQUW chell_rgun_r1_x1
+EQUW chell_rgun_r1_x2
+EQUW chell_rgun_r1_x3
+EQUW chell_rgun_r1_x4
+EQUW chell_rgun_r2_x1
+EQUW chell_rgun_r2_x2
+EQUW chell_rgun_r2_x3
+EQUW chell_rgun_r2_x4
+EQUW chell_rgun_r3_x1
+EQUW chell_rgun_r3_x2
+EQUW chell_rgun_r3_x3
+EQUW chell_rgun_r3_x4
 
 ; Wide 8x16 tile sprite data
 .sprite_data
