@@ -20,8 +20,9 @@ ORG &70
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
  .anim_frame              SKIP 1    ; Animation frame (0..3)
  .anim_dir                SKIP 1    ; Direction (0=left,1=right)
+ .last_anim_dir           SKIP 1    ; Previous direction for redraw
  .move_cooldown           SKIP 1    ; Frames until next move
- .anim_cooldown           SKIP 1    ; Frames until next anim
+ .anim_cooldown           SKIP 1    ; Movement counter for anim
  
  .save_under_count         SKIP 1    ; Number of active save-under slots (0..4)
 
@@ -83,8 +84,15 @@ CRTC_DATA = &FE01
     STA anim_frame
     STA save_under_count
 
+    LDA #1
+    STA anim_dir
+    STA last_anim_dir
+
     ; Render background once.
     JSR render_tilemap
+
+    ; Build collision/material plane from the tilemap.
+    JSR build_material_planes_from_tilemap
 
     ; Init animation + movement.
     LDA #0
@@ -123,17 +131,30 @@ CRTC_DATA = &FE01
 .draw_character_current
     ; Index = run_frame*4 + subpixel_offset
     ; run_frame cycles 0,1,0,2 (i.e. 1,2,1,3)
+    ; Facing selects between right-facing (0..11) and left-facing (12..23).
     LDX anim_frame
     LDA run_frame_seq,X
     ASL A
     ASL A
+    STA char_sprite_index
+
+    ; If facing left, add 12-entry base.
+    LDA anim_dir
+    BNE facing_right
+    LDA char_sprite_index
+    CLC
+    ADC #12
+    STA char_sprite_index
+.facing_right
+
+    LDA char_sprite_index
     CLC
     ADC char_pixel_offset
     STA char_sprite_index
- 
+
     LDA char_sprite_index
     JSR render_character_sprite
- 
+
     LDA char_sprite_index
     JSR render_overlay_sprite
     RTS
@@ -176,6 +197,11 @@ CRTC_DATA = &FE01
     STA move_cooldown
     STA anim_cooldown
     STA anim_frame
+
+    ; Keep facing, but sync last_anim_dir.
+    LDA anim_dir
+    STA last_anim_dir
+
     CLC
     RTS
  
@@ -193,50 +219,55 @@ CRTC_DATA = &FE01
     CLC
     RTS
  
-.key_left
-    LDA #0
-    STA anim_dir
-    JMP key_held
+ .key_left
+     LDA #0
+     STA anim_dir
+     JMP key_held
  
-.key_right
-    LDA #1
-    STA anim_dir
+ .key_right
+     LDA #1
+     STA anim_dir
  
-.key_held
-    ; Tick animation while key is held.
-    LDA anim_cooldown
-    BEQ anim_step
-    DEC anim_cooldown
-    BNE move_tick
-.anim_step
-    ; Run-cycle speed: bigger = slower.
-    LDA #7
-    STA anim_cooldown
-    JSR step_anim
-    LDA #1
-    STA temp
+ .key_held
+     ; If direction changed, force a redraw so we flip immediately.
+     LDA anim_dir
+     CMP last_anim_dir
+     BEQ move_tick
+     STA last_anim_dir
+     LDA #1
+     STA temp
  
-.move_tick
-    LDA move_cooldown
-    BEQ do_move
-    DEC move_cooldown
-    JMP return_redraw
-.do_move
-    ; Throttle to 1px every other frame.
-    LDA #1
-    STA move_cooldown
+ .move_tick
+     LDA move_cooldown
+     BEQ do_move
+     DEC move_cooldown
+     JMP return_redraw
+ .do_move
+     ; Throttle to 1px every other frame.
+     LDA #1
+     STA move_cooldown
  
-    LDA anim_dir
-    BEQ do_move_left
-    JSR step_right_pixel
-    BCC return_redraw
-    JMP did_move
-.do_move_left
-    JSR step_left_pixel
-    BCC return_redraw
-.did_move
-    LDA #1
-    STA temp
+     LDA anim_dir
+     BEQ do_move_left
+     JSR step_right_pixel
+     BCC return_redraw
+     JMP did_move
+ .do_move_left
+     JSR step_left_pixel
+     BCC return_redraw
+ .did_move
+     ; We moved: redraw, and advance animation every 2 pixels.
+     LDA #1
+     STA temp
+ 
+     INC anim_cooldown
+     LDA anim_cooldown
+     CMP #2
+     BNE return_redraw
+     LDA #0
+     STA anim_cooldown
+     JSR step_anim
+
  
 .return_redraw
     LDA temp
@@ -264,9 +295,15 @@ CRTC_DATA = &FE01
     LDA char_byte_offset
     ORA char_pixel_offset
     BEQ step_left_blocked
+
+ .can_step_left
+     ; Collision check at new left edge.
+     JSR will_collide_left
+     BCS step_left_blocked
  
-.can_step_left
-    LDA char_pixel_offset
+.step_left_do_step
+     LDA char_pixel_offset
+
     BNE step_left_dec_sub
  
     ; Wrap subpixel 0 -> 3 and move base left by 4px.
@@ -297,10 +334,98 @@ CRTC_DATA = &FE01
 .step_left_blocked
     CLC
     RTS
- 
+
+; Compute current character X (left edge) in pixels.
+; Output: A = x (0..127)
+.calc_char_x
+    LDA char_tile_pos
+    AND #15
+    ASL A
+    ASL A
+    ASL A
+    STA temp
+
+    ; char_byte_offset is 0 or 8 (i.e. 0 or 4 pixels)
+    LDA char_byte_offset
+    LSR A
+    CLC
+    ADC temp
+    ADC char_pixel_offset
+    RTS
+
+; Compute current character Y (top edge) in pixels.
+; Output: A = y (0..255)
+.calc_char_y
+    LDA char_tile_pos
+    AND #&F0
+    RTS
+
+; Check if moving left 1px would collide.
+; Output: C=1 if collision.
+.will_collide_left
+    JSR calc_char_x
+    BEQ collide_left
+    SEC
+    SBC #1
+    TAX
+
+    JSR calc_char_y
+    STA temp_y
+
+    LDY temp_y
+    JSR is_solid
+    BCS collide_left
+
+    LDY temp_y
+    TYA
+    CLC
+    ADC #31
+    TAY
+    JSR is_solid
+    BCS collide_left
+
+    CLC
+    RTS
+.collide_left
+    SEC
+    RTS
+
+; Check if moving right 1px would collide.
+; Output: C=1 if collision.
+.will_collide_right
+    JSR calc_char_x
+    CLC
+    ADC #16              ; test new right edge (x+16)
+    BCS collide_right    ; overflow => beyond 255 (treat as solid)
+    CMP #128
+    BCS collide_right
+    TAX
+
+    JSR calc_char_y
+    STA temp_y
+
+    LDY temp_y
+    JSR is_solid
+    BCS collide_right
+
+    LDY temp_y
+    TYA
+    CLC
+    ADC #31
+    TAY
+    JSR is_solid
+    BCS collide_right
+
+    CLC
+    RTS
+.collide_right
+    SEC
+    RTS
+  
 ; Step right by 1 pixel.
 ; Output: C=1 if moved.
 .step_right_pixel
+
     ; Clamp/limit to max X so sprite stays on-screen.
     ; Max position is tile_x=14, byte_offset=0, pixel_offset=0 (x=112 for 16px sprite).
     LDA char_tile_pos
@@ -319,6 +444,11 @@ CRTC_DATA = &FE01
     RTS
  
 .can_step_right
+    ; Collision check at new right edge.
+    JSR will_collide_right
+    BCS step_right_blocked
+
+.step_right_do_step
     LDA char_pixel_offset
     CMP #3
     BNE step_right_inc_sub

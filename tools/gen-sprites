@@ -27,6 +27,10 @@ Example:
     --spec chell_pos1:"sprites/Chell Position 1 - Sheet3.csv" \
     --spec chell_pos2:"sprites/Chell Position 2 - Sheet3.csv"
 
+Flipping:
+  Add a trailing '^' to the prefix in --spec to flip horizontally.
+  Example: --spec chell_run_l1^:"sprites/Chell Run Right - Frame 1.csv"
+
 If --prefix is omitted, one is derived from the filename.
 """
 
@@ -42,6 +46,7 @@ from pathlib import Path
 class InputSpec:
     path: Path
     prefix: str
+    flip_x: bool = False
 
 
 def derive_prefix(path: Path) -> str:
@@ -171,6 +176,9 @@ def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], li
                 for col in range(16)
             ]
 
+            if spec.flip_x:
+                pixels = list(reversed(pixels))
+
             for byte_col in range(4):
                 group = pixels[byte_col * 4 : byte_col * 4 + 4]
                 raster_sprite.append(pack_sprite_byte(group))
@@ -179,7 +187,19 @@ def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], li
         sprite_bytes = to_spycat_order(raster_sprite, rows=rows)
         mask_bytes = to_spycat_order(raster_mask, rows=rows)
 
-        label = f"{spec.prefix}_x{block_index}"
+        out_index = block_index
+        if spec.flip_x:
+            # For normal sprites, reversing block order matches subpixel phase.
+            # Overlay CSVs include a leading 16x32 "reference" block (composited sprite)
+            # followed by 4x 16-row overlay blocks. Keep the reference as x0 and only
+            # reverse the overlay blocks so x1..x4 remain usable.
+            if len(blocks) > 1 and len(blocks[0]) == 32 and all(len(b) == 16 for b in blocks[1:]):
+                if block_index != 0:
+                    out_index = len(blocks) - block_index
+            else:
+                out_index = (len(blocks) - 1) - block_index
+
+        label = f"{spec.prefix}_x{out_index}"
         sprites_out.append((label, sprite_bytes))
         masks_out.append((label, mask_bytes))
 
@@ -240,7 +260,13 @@ def main() -> int:
             if ":" not in spec_text:
                 raise SystemExit(f"invalid --spec '{spec_text}' (expected PREFIX:PATH)")
             prefix, path_text = spec_text.split(":", 1)
-            specs.append(InputSpec(path=Path(path_text), prefix=prefix))
+
+            flip_x = False
+            if prefix.endswith("^"):
+                flip_x = True
+                prefix = prefix[:-1]
+
+            specs.append(InputSpec(path=Path(path_text), prefix=prefix, flip_x=flip_x))
     else:
         if not args.inputs:
             raise SystemExit("no inputs provided")
@@ -251,7 +277,13 @@ def main() -> int:
 
         for i, path in enumerate(input_paths):
             prefix = args.prefix[i] if args.prefix else derive_prefix(path)
-            specs.append(InputSpec(path=path, prefix=prefix))
+
+            flip_x = False
+            if prefix.endswith("^"):
+                flip_x = True
+                prefix = prefix[:-1]
+
+            specs.append(InputSpec(path=path, prefix=prefix, flip_x=flip_x))
 
     all_sprite_blocks: list[tuple[str, list[int]]] = []
     all_mask_blocks: list[tuple[str, list[int]]] = []

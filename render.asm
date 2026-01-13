@@ -562,10 +562,13 @@
 
 
 
-SOLID_PLANE_BASE          = &4000
 SAVE_UNDER_POOL_BASE      = &7800
 SAVE_UNDER_SLOT_SIZE      = 128
 SAVE_UNDER_MAX_SLOTS      = 4
+
+; 256-byte solid-tile plane (16x16 tiles) stored in screen scratch.
+; 0 = empty, nonzero = solid.
+SOLID_TILE_PLANE          = &7A00
 
 ; Save-under pool (4 slots × 128 bytes).
 ;
@@ -730,131 +733,53 @@ SAVE_UNDER_MAX_SLOTS      = 4
 .restore_done
     RTS
 
-; Build material plane (solid, 1bpp) from the current room tilemap.
+; Build a 16x16 solid-tile plane from the current room tilemap.
+;
+; Stores 256 bytes at `SOLID_TILE_PLANE`:
+; - 0 = empty
+; - 1 = solid
 ;
 ; Portalability is handled separately via a tile-layer (portalmap_ptr).
 .build_material_planes_from_tilemap
-    ; Clear solid plane first (&3000..&3FFF).
-    LDA #<(SOLID_PLANE_BASE)
-    STA screen_ptr
-    LDA #>(SOLID_PLANE_BASE)
-    STA screen_ptr+1
-
-    LDA #0
-    LDX #16                 ; 16 pages of 256 bytes = 4KB
-.clear_plane_pages
     LDY #0
-.clear_plane_bytes
-    STA (screen_ptr),Y
-    INY
-    BNE clear_plane_bytes
-    INC screen_ptr+1
-    DEX
-    BNE clear_plane_pages
-
-    ; Iterate tilemap (16x16 tiles). Each tile expands to 8x16 pixels.
-    LDA #0
-    STA row_counter
-
-.material_row_loop
-    LDA #0
-    STA col_counter
-
-.material_col_loop
-    ; tile index = row*16 + col
-    LDY row_counter
-    LDA times16_table,Y
-    CLC
-    ADC col_counter
-    TAY
+.build_solid_tile_plane_loop
     LDA (tilemap_ptr),Y
     TAX
     LDA tile_material_flags,X
-
-    ; bit1 = solid
     AND #2
-    BEQ skip_solid
-
-    ; Fill 16 scanlines in SOLID plane: base + row*256 + col, step +16 each scanline.
-    LDA col_counter
-    STA temp_sprite_ptr
-    LDA #>(SOLID_PLANE_BASE)
-    CLC
-    ADC row_counter
-    STA temp_sprite_ptr+1
-
-    LDA #&FF
-    LDX #16
-.fill_solid_loop
-    LDY #0
-    STA (temp_sprite_ptr),Y
-    CLC
-    LDA temp_sprite_ptr
-    ADC #16
-    STA temp_sprite_ptr
-    BCC solid_no_carry
-    INC temp_sprite_ptr+1
-.solid_no_carry
-    LDA #&FF
-    DEX
-    BNE fill_solid_loop
-
-.skip_solid
-
-    INC col_counter
-    LDA col_counter
-    CMP #16
-    BNE material_col_loop
-
-    INC row_counter
-    LDA row_counter
-    CMP #16
-    BNE material_row_loop
-
+    BEQ not_solid_tile
+    LDA #1
+.not_solid_tile
+    STA SOLID_TILE_PLANE,Y
+    INY
+    BNE build_solid_tile_plane_loop
     RTS
 
-; Return C=1 if solid at (X,Y).
+; Return C=1 if solid at pixel (X,Y).
+; Uses the prebuilt solid-tile plane (8x16 tiles).
 .is_solid
-    ; screen_ptr := SOLID_PLANE_BASE + (Y<<4)
-    TYA
-    AND #&0F
-    ASL A
-    ASL A
-    ASL A
-    ASL A
-    STA screen_ptr
-
-    TYA
-    LSR A
-    LSR A
-    LSR A
-    LSR A
-    CLC
-    ADC #>(SOLID_PLANE_BASE)
-    STA screen_ptr+1
-
-    ; Add x_byte (X>>3)
+    ; tile_x = X >> 3
     TXA
     LSR A
     LSR A
     LSR A
-    CLC
-    ADC screen_ptr
-    STA screen_ptr
-    BCC solid_ptr_ok
-    INC screen_ptr+1
-.solid_ptr_ok
-
-    ; mask = bitmask_table[X&7]
-    TXA
-    AND #7
-    TAY
-    LDA bitmask_table,Y
     STA temp
 
-    LDY #0
-    LDA (screen_ptr),Y
-    AND temp
+    ; tile_y = Y >> 4
+    TYA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAY
+
+    ; tilepos = tile_y*16 + tile_x
+    LDA times16_table,Y
+    CLC
+    ADC temp
+    TAY
+
+    LDA SOLID_TILE_PLANE,Y
     BEQ solid_clear
     SEC
     RTS
@@ -895,10 +820,7 @@ SAVE_UNDER_MAX_SLOTS      = 4
     RTS
 
 
-.bitmask_table
-    EQUB &80,&40,&20,&10,&08,&04,&02,&01
-
-.tile_material_flags
+ .tile_material_flags
     ; 0..3: non-solid (bootstrap default)
     EQUB 0,0,0,0
     ; 4..12: solid
