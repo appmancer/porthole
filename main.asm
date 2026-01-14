@@ -20,6 +20,7 @@ ORG &70
 .char_vy            SKIP 1    ; Signed vy in 8px steps
 .char_grounded      SKIP 1    ; 0/1: standing on solid
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
+.rise_cooldown      SKIP 1    ; Frames until next upward step
 .jump_held          SKIP 1    ; 0/1: RETURN currently held
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
@@ -57,6 +58,7 @@ GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
 GRAVITY_DOWN_PERIOD         = 1      ; gravity tick period while falling
 TERMINAL_VELOCITY_DOWN      = 4      ; max falling speed (8px steps)
 JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
+RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
 
 .start
     ; PROGRAM sets MODE 5, but reassert it here for safety.
@@ -118,6 +120,7 @@ JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
     STA char_vy
     STA char_grounded
     STA gravity_cooldown
+    STA rise_cooldown
     STA jump_held
     STA anim_frame
     STA move_cooldown
@@ -283,6 +286,39 @@ JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
      LDA char_vy
      BNE after_jump
 
+     ; Capture jump direction from held movement key.
+     ; (This ensures "jump left" even if move cooldown delays a step.)
+     LDX #&E6            ; INKEY(-26) = Left
+     JSR is_key_pressed
+     BCS jump_face_left
+     LDX #&9E            ; INKEY(-98) = 'Z'
+     JSR is_key_pressed
+     BCS jump_face_left
+
+     LDX #&86            ; INKEY(-122) = Right
+     JSR is_key_pressed
+     BCS jump_face_right
+     LDX #&BD            ; INKEY(-67) = 'X'
+     JSR is_key_pressed
+     BCS jump_face_right
+     JMP jump_dir_done
+
+.jump_face_left
+     LDA #0
+     STA anim_dir
+     STA last_anim_dir
+     LDA #0
+     STA move_cooldown
+     JMP jump_dir_done
+
+.jump_face_right
+     LDA #1
+     STA anim_dir
+     STA last_anim_dir
+     LDA #0
+     STA move_cooldown
+
+.jump_dir_done
      ; Start jump: upward velocity.
      LDA #JUMP_VELOCITY
      STA char_vy
@@ -292,6 +328,10 @@ JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
      ; Delay next gravity tick slightly so the jump starts cleanly.
      LDA #(GRAVITY_UP_PERIOD-1)
      STA gravity_cooldown
+
+     ; Allow an immediate upward step this frame.
+     LDA #0
+     STA rise_cooldown
 
      LDA #1
      STA temp
@@ -368,8 +408,8 @@ JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
      DEC move_cooldown
      JMP return_redraw
  .do_move
-      ; Throttle to 1px every 3 frames.
-      LDA #2
+      ; Walk speed (1px per frame).
+      LDA #0
       STA move_cooldown
 
  
@@ -599,8 +639,17 @@ JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
     JMP apply_gravity_only
 
 .apply_move_up
-    ; Move upward stripe-by-stripe (1 stripe per frame).
-    ; This avoids "teleport" jumps when vy is large.
+    ; Move upward stripe-by-stripe, but slower than falling.
+    ; This avoids "teleport" jumps and keeps vertical speed reasonable.
+    LDA rise_cooldown
+    BEQ do_rise_step
+    DEC rise_cooldown
+    JMP apply_gravity_only
+
+.do_rise_step
+    LDA #(RISE_STEP_PERIOD-1)
+    STA rise_cooldown
+
     JSR step_up_8
     BCC hit_ceiling
     LDA #1
