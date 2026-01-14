@@ -45,6 +45,17 @@ EQUW chell_run_l3_x0
 EQUW chell_run_l3_x1
 EQUW chell_run_l3_x2
 EQUW chell_run_l3_x3
+
+; Jump pose (single frame), used while airborne.
+EQUW chell_jump_r_x0
+EQUW chell_jump_r_x1
+EQUW chell_jump_r_x2
+EQUW chell_jump_r_x3
+EQUW chell_jump_l_x0
+EQUW chell_jump_l_x1
+EQUW chell_jump_l_x2
+EQUW chell_jump_l_x3
+
 EQUW test_sprite16x32       ; Debug 16x32 sprite (screen byte order)
 
 ; Overlay sprite table (16x16, two stripes). Drawn at Chell Y+16.

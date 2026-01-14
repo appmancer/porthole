@@ -134,6 +134,17 @@ def to_spycat_order(raster_bytes: list[int], *, rows: int) -> list[int]:
     return out
 
 
+def shift_block(block: list[list[str]], shift: int) -> list[list[str]]:
+    if shift < 0 or shift > 15:
+        raise ValueError(f"shift out of range: {shift}")
+    if shift == 0:
+        return [row[:] for row in block]
+    out: list[list[str]] = []
+    for row in block:
+        out.append(["."] * shift + row[: 16 - shift])
+    return out
+
+
 def read_blocks(path: Path) -> list[list[list[str]]]:
     blocks: list[list[list[str]]] = []
     current: list[list[str]] = []
@@ -155,6 +166,13 @@ def read_blocks(path: Path) -> list[list[list[str]]]:
     for i, b in enumerate(blocks):
         if len(b) not in (16, 32):
             raise ValueError(f"{path}: block {i} has {len(b)} rows (expected 16 or 32)")
+
+    # Convenience: if a 16x32 sprite only provides a single reference block,
+    # synthesize x0..x3 variants by shifting right by 0..3 pixels.
+    # This keeps the movement pipeline (subpixel_offset 0..3) working without
+    # requiring artists to export four separate blocks.
+    if len(blocks) == 1 and len(blocks[0]) == 32:
+        blocks = [shift_block(blocks[0], shift) for shift in range(4)]
 
     return blocks
 

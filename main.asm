@@ -16,10 +16,16 @@ ORG &70
 .char_tile_pos      SKIP 1    ; Character cell position (cell_y*16 + cell_x)
 .char_pixel_offset  SKIP 1    ; Subpixel offset (0..3)
 .char_byte_offset   SKIP 1    ; Byte offset within cell (0 or 8)
+.char_y_offset      SKIP 1    ; Vertical offset within cell row (0 or 8)
+.char_vy            SKIP 1    ; Signed vy in 8px steps
+.char_grounded      SKIP 1    ; 0/1: standing on solid
+.gravity_cooldown   SKIP 1    ; Frames until next gravity tick
+.dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
 .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
 .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
+.chelldata_fh      SKIP 1    ; File handle for CHDATA
  .anim_frame              SKIP 1    ; Animation frame (0..3)
  .anim_dir                SKIP 1    ; Direction (0=left,1=right)
  .last_anim_dir           SKIP 1    ; Previous direction for redraw
@@ -34,7 +40,7 @@ ORG &70
 
 .cube_tile_pos       SKIP 1    ; Cube cell position (cell_y*16 + cell_x)
 .cube_byte_offset    SKIP 1    ; Cube byte offset within cell (0/8)
-.char_sprite_index  SKIP 1    ; Stable sprite index for test harness
+.char_sprite_index  SKIP 1    ; Stable sprite index
 
 ORG &1900
 
@@ -43,6 +49,12 @@ CRTC_DATA = &FE01
 ROMSEL    = &FE30          ; Master paged ROM/SWRAM bank select
 
 CHELL_SWRAM_BANK_DEFAULT = 4
+CHELLDATA_BUF         = &7B00  ; Temp buffer in screen scratch
+
+GRAVITY_ACCEL        = 1      ; vy += 1 per gravity tick (8px steps)
+GRAVITY_PERIOD       = 2      ; apply gravity every N frames
+TERMINAL_VELOCITY    = 2      ; max falling speed (8px steps)
+JUMP_VELOCITY        = &FF    ; -1 (jump up 8px per frame initially)
 
 .start
     ; PROGRAM sets MODE 5, but reassert it here for safety.
@@ -72,7 +84,7 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     LDA #45
     STA CRTC_DATA
 
-    ; Minimal overlay test harness.
+    ; Minimal demo harness.
 
     ; Select room 0 so tilemap_ptr is valid (not used yet).
     LDA #0
@@ -81,8 +93,12 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     JSR set_room_portalmap
 
     ; Load Chell sprite+mask data into sideways RAM.
-    ; (Do this before enabling shadow screen so &3000 is main RAM.)
+    ; (Do this before enabling shadow screen so OS file I/O stays simple.)
     JSR load_chell_sprites
+
+    ; Filing-system calls may clobber ZP, so restore our room pointers.
+    JSR set_room_tilemap
+    JSR set_room_portalmap
 
     ; Enable shadow screen (Master).
     ; We still use MODE 5 layout at &5800, but in shadow RAM.
@@ -92,10 +108,17 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     LDA #68
     STA char_tile_pos
 
+    ; Init state.
     LDA #0
     STA char_pixel_offset
     STA char_byte_offset
+    STA char_y_offset
+    STA char_vy
+    STA char_grounded
+    STA gravity_cooldown
     STA anim_frame
+    STA move_cooldown
+    STA anim_cooldown
     STA save_under_count
 
     ; Default: face right.
@@ -103,45 +126,50 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     STA anim_dir
     STA last_anim_dir
 
-    ; Chell sprite data lives in sideways RAM bank 4 in B2 config.
-    ; (B2 Master defaults configure banks 4-7 as SWRAM.)
-    LDA #CHELL_SWRAM_BANK_DEFAULT
-    STA chell_bank
-
     ; Render background once.
     JSR render_tilemap
 
     ; Build collision/material plane from the tilemap.
     JSR build_material_planes_from_tilemap
 
-    ; Init animation + movement.
-    LDA #0
-    STA anim_frame
-    STA char_pixel_offset
-    STA move_cooldown
-    STA anim_cooldown
- 
     ; Draw the initial sprite once (allocates save-under slot).
     JSR update_screen_ptr_from_char
     JSR save_playfield_rect
     JSR draw_character_current
  
  .main_loop
-    ; Pace the loop (reduces tearing/flicker).
-    JSR wait_vsync
- 
-    ; Update char position/animation from held keys.
-    ; Returns C=1 if we need to redraw.
-    JSR poll_move_keys
-    BCC main_loop
- 
-    ; Redraw only when something changed.
-    JSR restore_playfield_rect
-    JSR update_screen_ptr_from_char
-    JSR save_playfield_rect
-    JSR draw_character_current
- 
-    JMP main_loop
+     ; Pace the loop (reduces tearing/flicker).
+     JSR wait_vsync
+
+     ; --- Update pipeline ---
+     LDA #0
+     STA dirty_flag
+
+     ; Input -> update horizontal movement/anim.
+     JSR poll_move_keys
+     BCC skip_dirty_move
+     LDA #1
+     STA dirty_flag
+.skip_dirty_move
+
+     ; Physics -> update vertical position.
+     JSR apply_gravity
+     BCC skip_dirty_grav
+     LDA #1
+     STA dirty_flag
+.skip_dirty_grav
+
+     LDA dirty_flag
+     BEQ main_loop
+
+     ; --- Render pipeline ---
+     JSR restore_playfield_rect
+     JSR update_screen_ptr_from_char
+     JSR save_playfield_rect
+     JSR draw_character_current
+
+     JMP main_loop
+
 
 
 .run_frame_seq
@@ -158,6 +186,27 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     LDA chell_bank
     STA ROMSEL
 
+    ; Airborne: draw jump pose only.
+    LDA char_grounded
+    BNE draw_grounded
+
+    ; jump_base = 24 (right) or 28 (left)
+    LDA anim_dir
+    BNE jump_right
+    LDA #28
+    BNE jump_base_ok
+.jump_right
+    LDA #24
+.jump_base_ok
+    CLC
+    ADC char_pixel_offset
+    STA char_sprite_index
+
+    LDA char_sprite_index
+    JSR render_character_sprite
+    JMP draw_done
+
+.draw_grounded
     ; Index = run_frame*4 + subpixel_offset
     ; run_frame cycles 0,1,0,2 (i.e. 1,2,1,3)
     ; Facing selects between right-facing (0..11) and left-facing (12..23).
@@ -187,6 +236,7 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     LDA char_sprite_index
     JSR render_overlay_sprite
 
+.draw_done
     ; Restore previous ROM selection and re-enable IRQs.
     LDA saved_romsel
     STA ROMSEL
@@ -203,9 +253,42 @@ CHELL_SWRAM_BANK_DEFAULT = 4
 ;   char_pixel_offset  = 0..3 (1px subpixel via pre-shifted sprites)
 ;
 ; Output: C=1 if sprite needs redraw.
-.poll_move_keys
-    LDA #0
-    STA temp                  ; redraw flag
+ .poll_move_keys
+     LDA #0
+     STA temp                  ; redraw flag
+
+     ; Update grounded state (used for jump gating and pose selection).
+     JSR is_char_grounded
+     BCC set_not_grounded
+     LDA #1
+     STA char_grounded
+     JMP check_jump
+.set_not_grounded
+     LDA #0
+     STA char_grounded
+
+.check_jump
+     ; Jump on RETURN when grounded.
+     LDA char_grounded
+     BEQ after_jump
+     LDX #&B6            ; INKEY(-74) = RETURN
+     JSR is_key_pressed
+     BCC after_jump
+
+     ; Start jump: upward velocity.
+     LDA #JUMP_VELOCITY
+     STA char_vy
+     LDA #0
+     STA char_grounded
+
+     ; Delay gravity a little so the jump is visible.
+     LDA #(GRAVITY_PERIOD-1)
+     STA gravity_cooldown
+
+     LDA #1
+     STA temp
+
+.after_jump
  
     ; Prefer left if both held.
     ; Also accept cursor keys for convenience.
@@ -225,16 +308,16 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     JSR is_key_pressed
     BCS key_right
  
-.no_key_held
-    ; No key held: stop animation + clear timers.
-    LDA #0
-    STA move_cooldown
-    STA anim_cooldown
-    STA anim_frame
+ .no_key_held
+     ; No key held: stop movement, but keep animation phase.
+     ; This lets quick 1px taps still advance the walk cycle.
+     LDA #0
+     STA move_cooldown
 
-    ; Keep facing, but sync last_anim_dir.
-    LDA anim_dir
-    STA last_anim_dir
+     ; Keep facing, but sync last_anim_dir.
+     LDA anim_dir
+     STA last_anim_dir
+
 
     CLC
     RTS
@@ -277,9 +360,10 @@ CHELL_SWRAM_BANK_DEFAULT = 4
      DEC move_cooldown
      JMP return_redraw
  .do_move
-     ; Throttle to 1px every other frame.
-     LDA #1
-     STA move_cooldown
+      ; Throttle to 1px every 3 frames.
+      LDA #2
+      STA move_cooldown
+
  
      LDA anim_dir
      BEQ do_move_left
@@ -290,17 +374,18 @@ CHELL_SWRAM_BANK_DEFAULT = 4
      JSR step_left_pixel
      BCC return_redraw
  .did_move
-     ; We moved: redraw, and advance animation every 2 pixels.
-     LDA #1
-     STA temp
+      ; We moved: redraw, and advance animation every 2 pixels.
+      LDA #1
+      STA temp
  
-     INC anim_cooldown
-     LDA anim_cooldown
-     CMP #2
-     BNE return_redraw
-     LDA #0
-     STA anim_cooldown
-     JSR step_anim
+      INC anim_cooldown
+      LDA anim_cooldown
+      CMP #2
+      BNE return_redraw
+      LDA #0
+      STA anim_cooldown
+      JSR step_anim
+
 
  
 .return_redraw
@@ -392,6 +477,8 @@ CHELL_SWRAM_BANK_DEFAULT = 4
 .calc_char_y
     LDA char_tile_pos
     AND #&F0
+    CLC
+    ADC char_y_offset
     RTS
 
 ; Check if moving left 1px would collide.
@@ -456,6 +543,282 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     SEC
     RTS
   
+; Apply vertical physics (jump/fall).
+; - Moves by current `char_vy` (signed, in 8px steps).
+; - Then applies gravity to `char_vy` for next frame.
+; - Clamps falling speed to `TERMINAL_VELOCITY`.
+;
+; Returns: C=1 if position changed (needs redraw).
+.apply_gravity
+    ; Jumping (vy negative) must be treated as airborne even if we were grounded
+    ; at the start of the frame.
+    LDA char_vy
+    BMI apply_airborne
+
+    ; If we're grounded, pin vy to 0 and don't move.
+    JSR is_char_grounded
+    BCC apply_airborne
+
+    LDA #1
+    STA char_grounded
+    LDA #0
+    STA char_vy
+    STA gravity_cooldown
+    CLC
+    RTS
+
+.apply_airborne
+    LDA #0
+    STA char_grounded
+
+    LDA #0
+    STA temp          ; moved flag
+
+    ; Move by current vy.
+    LDA char_vy
+    BEQ apply_gravity_only
+    BMI apply_move_up
+
+.apply_move_down
+    LDX char_vy
+.move_down_loop
+    JSR step_down_8
+    BCC hit_ground
+    LDA #1
+    STA temp
+    DEX
+    BNE move_down_loop
+    JMP apply_gravity_only
+
+.apply_move_up
+    ; X = abs(vy)
+    LDA char_vy
+    EOR #&FF
+    CLC
+    ADC #1
+    TAX
+.move_up_loop
+    JSR step_up_8
+    BCC hit_ceiling
+    LDA #1
+    STA temp
+    DEX
+    BNE move_up_loop
+    JMP apply_gravity_only
+
+.hit_ground
+    ; Collided: stop and mark grounded.
+    LDA #0
+    STA char_vy
+    STA gravity_cooldown
+    LDA #1
+    STA char_grounded
+    JMP apply_return
+
+.hit_ceiling
+    ; Hit head: stop upward motion.
+    LDA #0
+    STA char_vy
+
+.apply_gravity_only
+    ; If we landed during movement, don't re-accelerate.
+    LDA char_grounded
+    BNE apply_return
+
+    ; Gravity for next frame (rate-limited).
+    LDA gravity_cooldown
+    BEQ do_gravity_tick
+    DEC gravity_cooldown
+    JMP apply_return
+
+.do_gravity_tick
+    LDA #(GRAVITY_PERIOD-1)
+    STA gravity_cooldown
+
+    LDA char_vy
+    CLC
+    ADC #GRAVITY_ACCEL
+
+    ; Clamp positive vy to terminal velocity.
+    BMI store_vy
+    CMP #TERMINAL_VELOCITY
+    BCC store_vy
+    LDA #TERMINAL_VELOCITY
+
+.store_vy
+    STA char_vy
+
+.apply_return
+    LDA temp
+    BEQ grav_no_move
+    SEC
+    RTS
+.grav_no_move
+    CLC
+    RTS
+
+; Return C=1 if character is standing on solid.
+; Tests a pixel just below the feet at left and right edges.
+.is_char_grounded
+    ; x = left edge
+    JSR calc_char_x
+    STA temp
+
+    ; y = top
+    JSR calc_char_y
+    CLC
+    ADC #32
+    BCS grounded_true
+    TAY
+
+    ; left foot
+    LDX temp
+    JSR is_solid
+    BCS grounded_true
+
+    ; right foot (x+15)
+    LDA temp
+    CLC
+    ADC #15
+    CMP #128
+    BCS grounded_true
+    TAX
+    JSR is_solid
+    BCS grounded_true
+
+    CLC
+    RTS
+.grounded_true
+    SEC
+    RTS
+
+; Step down by 8 pixels (one stripe).
+; Output: C=1 if moved.
+.step_down_8
+    JSR will_collide_down_8
+    BCS step_down_blocked
+
+    LDA char_y_offset
+    BEQ step_down_to8
+
+    ; Was at +8: wrap to +0 and advance to next cell row.
+    LDA #0
+    STA char_y_offset
+    LDA char_tile_pos
+    CLC
+    ADC #16
+    STA char_tile_pos
+    SEC
+    RTS
+
+.step_down_to8
+    LDA #8
+    STA char_y_offset
+    SEC
+    RTS
+
+.step_down_blocked
+    CLC
+    RTS
+
+; Step up by 8 pixels (one stripe).
+; Output: C=1 if moved.
+.step_up_8
+    JSR will_collide_up_8
+    BCS step_up_blocked
+
+    LDA char_y_offset
+    BNE step_up_to0
+
+    ; Was at +0: wrap to +8 and move to previous cell row.
+    LDA #8
+    STA char_y_offset
+    LDA char_tile_pos
+    SEC
+    SBC #16
+    STA char_tile_pos
+    SEC
+    RTS
+
+.step_up_to0
+    LDA #0
+    STA char_y_offset
+    SEC
+    RTS
+
+.step_up_blocked
+    CLC
+    RTS
+
+; Return C=1 if moving down 8px would collide.
+.will_collide_down_8
+    ; x = left edge
+    JSR calc_char_x
+    STA temp
+
+    ; y_test = (y + 8) + 31
+    JSR calc_char_y
+    CLC
+    ADC #39
+    BCS collide_down
+    TAY
+
+    ; left bottom
+    LDX temp
+    JSR is_solid
+    BCS collide_down
+
+    ; right bottom
+    LDA temp
+    CLC
+    ADC #15
+    CMP #128
+    BCS collide_down
+    TAX
+    JSR is_solid
+    BCS collide_down
+
+    CLC
+    RTS
+.collide_down
+    SEC
+    RTS
+
+; Return C=1 if moving up 8px would collide.
+.will_collide_up_8
+    ; x = left edge
+    JSR calc_char_x
+    STA temp
+
+    ; y_test = (y - 8)
+    JSR calc_char_y
+    CMP #8
+    BCC collide_up
+    SEC
+    SBC #8
+    TAY
+
+    ; left top
+    LDX temp
+    JSR is_solid
+    BCS collide_up
+
+    ; right top
+    LDA temp
+    CLC
+    ADC #15
+    CMP #128
+    BCS collide_up
+    TAX
+    JSR is_solid
+    BCS collide_up
+
+    CLC
+    RTS
+.collide_up
+    SEC
+    RTS
+
 ; Step right by 1 pixel.
 ; Output: C=1 if moved.
 .step_right_pixel
@@ -597,45 +960,41 @@ CHELL_SWRAM_BANK_DEFAULT = 4
 ; We cannot safely `*LOAD` straight into `&8000` because filing system ROM code
 ; also lives in the `&8000..&BFFF` paged ROM window.
 ;
-; Instead:
-; 1) `*LOAD` `CHDATA` into a main-RAM buffer at `&3000`.
-; 2) Select the SWRAM bank and copy 16KB from `&3000..&6FFF` into `&8000..&BFFF`.
+; Also, we cannot `*LOAD` into `&3000` anymore because the main program has grown
+; past that address.
+;
+; Instead we stream CHDATA in 256-byte chunks into `CHELLDATA_BUF` and copy each
+; chunk into the target SWRAM bank.
 .load_chell_sprites
-    ; Keep the OS/language ROM visible across OSCLI.
+    ; Keep the OS/language ROM visible across filing-system calls.
     LDA ROMSEL
     STA saved_romsel
 
-    ; Step 1: load into main RAM buffer.
-    LDX #<cmd_load_chelldata_to_buf
-    LDY #>cmd_load_chelldata_to_buf
-    JSR OSCLI
-
-    ; Step 2: select SWRAM bank and copy 16KB into it.
-    ; Keep ROMSEL stable during the copy (IRQ handlers may touch it).
-    SEI
-
-    ; Real Master: bank number alone is writable.
-    ; B2: some configs require bit 7 set for SWRAM writes.
+    ; Choose which ROMSEL value actually maps writable SWRAM in this environment.
+    ; (Real Master: bank number alone; B2 may require bit 7.)
     JSR select_chell_romsel
-    BCC chell_bank_selected
+    BCC chell_bank_ok
 
-    ; No usable bank mapping -> fail loudly.
-    CLI
-    LDA saved_romsel
-    STA ROMSEL
     LDX #<msg_no_swr
     LDY #>msg_no_swr
     JSR print_string_xy
 .no_swr_hang
     JMP no_swr_hang
 
-.chell_bank_selected
+.chell_bank_ok
+    ; Keep filing system ROM visible for OSFIND/OSGBPB.
+    LDA saved_romsel
+    STA ROMSEL
 
-    ; src := &3000
-    LDA #&00
-    STA temp_sprite_ptr
-    LDA #&30
-    STA temp_sprite_ptr+1
+    ; Open CHDATA for input.
+    LDA #&40
+    LDX #<fname_chdata
+    LDY #>fname_chdata
+    JSR OSFIND
+    BNE chdata_open_ok
+    JMP chdata_open_fail
+.chdata_open_ok
+    STA chelldata_fh
 
     ; dst := &8000 (in SWRAM bank)
     LDA #&00
@@ -643,45 +1002,117 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     LDA #&80
     STA temp_mask_ptr+1
 
-    LDX #&40                  ; 64 pages = 16KB
-.copy_chelldata_page
+    ; Use OSGBPB to read 256 bytes per page.
+    LDA #&40
+    STA row_counter
+.chdata_page_loop
+    ; Build OSGBPB control block.
+    LDA chelldata_fh
+    STA gpb_block+0
+
+    LDA #<CHELLDATA_BUF
+    STA gpb_block+1
+    LDA #>CHELLDATA_BUF
+    STA gpb_block+2
+    LDA #0
+    STA gpb_block+3
+    STA gpb_block+4
+
+    ; 256 bytes
+    LDA #0
+    STA gpb_block+5
+    LDA #1
+    STA gpb_block+6
+    LDA #0
+    STA gpb_block+7
+    STA gpb_block+8
+
+    ; seq pointer (ignored for A=4, but keep it 0)
+    LDA #0
+    STA gpb_block+9
+    STA gpb_block+10
+    STA gpb_block+11
+    STA gpb_block+12
+
+    ; Read bytes from media, ignoring new sequential pointer.
+    LDA #4
+    LDX #<gpb_block
+    LDY #>gpb_block
+    JSR OSGBPB
+    BCS chdata_read_fail
+
+    ; Copy into SWRAM page with ROMSEL held stable.
+    SEI
+    LDA chell_bank
+    STA ROMSEL
+
+    LDA #<CHELLDATA_BUF
+    STA temp_sprite_ptr
+    LDA #>CHELLDATA_BUF
+    STA temp_sprite_ptr+1
+
     LDY #0
-.copy_chelldata_byte
+.chdata_copy_loop
     LDA (temp_sprite_ptr),Y
     STA (temp_mask_ptr),Y
     INY
-    BNE copy_chelldata_byte
+    BNE chdata_copy_loop
 
-    INC temp_sprite_ptr+1
-    INC temp_mask_ptr+1
-    DEX
-    BNE copy_chelldata_page
-
-    ; Quick sanity check: confirm we really wrote SWRAM.
+    ; Sanity check against the page we just copied (checks &8000 writeability too).
     JSR sanity_check_chell_swrambank
-    BCC chell_sprites_ok
+    BCS chdata_copy_fail
 
-    ; Restore ROMSEL before calling OS.
-    CLI
+    ; Restore ROMSEL for filing system.
     LDA saved_romsel
     STA ROMSEL
+    CLI
 
+    INC temp_mask_ptr+1
+    DEC row_counter
+    BNE chdata_page_loop
+
+    ; Close file.
+    LDA #0
+    LDY chelldata_fh
+    JSR OSFIND
+
+    ; Leave normal ROM selected.
+    LDA saved_romsel
+    STA ROMSEL
+    RTS
+
+.chdata_open_fail
+    LDX #<msg_chdata_open_fail
+    LDY #>msg_chdata_open_fail
+    JSR print_string_xy
+.chdata_hang
+    JMP chdata_hang
+
+.chdata_read_fail
+    ; Restore ROMSEL before printing.
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
+    LDX #<msg_chdata_read_fail
+    LDY #>msg_chdata_read_fail
+    JSR print_string_xy
+    JMP chdata_hang
+
+.chdata_copy_fail
+    ; Restore ROMSEL before printing.
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
     LDX #<msg_swr_copy_fail
     LDY #>msg_swr_copy_fail
     JSR print_string_xy
+    JMP chdata_hang
 
-.swr_fail_hang
-    JMP swr_fail_hang
+.fname_chdata
+    EQUS "CHDATA",13
 
-.chell_sprites_ok
-    ; Restore previous ROM selection and re-enable IRQs.
-    LDA saved_romsel
-    STA ROMSEL
-    CLI
-    RTS
-
-.cmd_load_chelldata_to_buf
-    EQUS "LOAD CHDATA 3000",13
+.gpb_block
+    SKIP 13
 
 
 ; Select a ROMSEL value for Chell SWRAM writes.
@@ -749,7 +1180,8 @@ CHELL_SWRAM_BANK_DEFAULT = 4
 ; Sanity check for the Chell SWRAM bank in B2.
 ; Preconditions:
 ; - `chell_bank` has been selected into ROMSEL.
-; - CHDATA buffer still present at `&3000`.
+; - `temp_sprite_ptr` points at the source page buffer.
+; - `temp_mask_ptr` points at the destination page in SWRAM.
 ;
 ; Returns: C=0 if ok, C=1 if failed.
 .sanity_check_chell_swrambank
@@ -771,14 +1203,14 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     LDA temp
     STA &8000
 
-    ; Confirm the first 16 bytes match the load buffer.
-    LDX #0
+    ; Confirm the first 16 bytes match what we just copied.
+    LDY #0
 .sanity_cmp_loop
-    LDA &3000,X
-    CMP &8000,X
+    LDA (temp_sprite_ptr),Y
+    CMP (temp_mask_ptr),Y
     BNE sanity_fail
-    INX
-    CPX #16
+    INY
+    CPY #16
     BNE sanity_cmp_loop
 
     CLC
@@ -812,6 +1244,12 @@ CHELL_SWRAM_BANK_DEFAULT = 4
 
 .msg_no_swr
     EQUS "NO SWRAM",13,0
+
+.msg_chdata_open_fail
+    EQUS "CHDATA OPEN FAIL",13,0
+
+.msg_chdata_read_fail
+    EQUS "CHDATA READ FAIL",13,0
 
 .msg_swr_copy_fail
     EQUS "SWRAM COPY FAIL",13,0
@@ -855,6 +1293,12 @@ CHELL_SWRAM_BANK_DEFAULT = 4
     STA screen_ptr
     LDA tile_row_screen_table+1,Y
     STA screen_ptr+1
+
+    ; Optional +8 scanline offset (1 stripe) within the 16px cell row.
+    LDA char_y_offset
+    BEQ char_y_offset_done
+    INC screen_ptr+1
+.char_y_offset_done
 
     ; tile_x = char_tile_pos & 15
     LDA char_tile_pos

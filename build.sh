@@ -40,7 +40,9 @@ rm -f "${OUT_SSD}"
   --spec "chell_rgun_r3:sprites/Chell Running Overlays - R-Gun Frame 3.csv" \
   --spec "chell_rgun_l1^:sprites/Chell Running Overlays - R-Gun Frame 1.csv" \
   --spec "chell_rgun_l2^:sprites/Chell Running Overlays - R-Gun Frame 2.csv" \
-  --spec "chell_rgun_l3^:sprites/Chell Running Overlays - R-Gun Frame 3.csv"
+  --spec "chell_rgun_l3^:sprites/Chell Running Overlays - R-Gun Frame 3.csv" \
+  --spec "chell_jump_r:sprites/Chell Jump - Reference.csv" \
+  --spec "chell_jump_l^:sprites/Chell Jump - Reference.csv"
 
 BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTHOLE" -boot PROGRAM)
 
