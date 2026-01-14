@@ -227,9 +227,22 @@ CHELL_JUMP_LEFT_BASE        = 36
     ADC char_pixel_offset
     STA char_sprite_index
 
-    LDA char_sprite_index
-    JSR render_character_sprite
-    JMP draw_done
+     LDA char_sprite_index
+     JSR render_character_sprite
+
+     ; Jump: draw gun overlay frame 1 (index base 0/12).
+     LDA anim_dir
+     BNE jump_overlay_right
+     LDA #CHELL_RUN_LEFT_BASE
+     BNE jump_overlay_base_ok
+.jump_overlay_right
+     LDA #0
+.jump_overlay_base_ok
+     CLC
+     ADC char_pixel_offset
+     JSR render_overlay_sprite
+
+     JMP draw_done
 
 .draw_grounded
     ; If no movement key held, use idle pose.
