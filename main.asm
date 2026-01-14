@@ -291,7 +291,28 @@ CHELL_JUMP_LEFT_BASE        = 36
      LDA char_sprite_index
      JSR render_character_sprite
  
-     LDA char_sprite_index
+     ; Overlay index must be computed independently of body sprite index.
+     ; Overlay table is 24 entries:
+     ;   right: r1/r2/r3 x0..x3 = 0..11
+     ;   left:  l1/l2/l3 x0..x3 = 12..23
+     ; We cycle overlays with the same run_frame_seq as the body.
+     LDX anim_frame
+     LDA run_frame_seq,X
+     ASL A
+     ASL A
+     STA temp
+
+     LDA anim_dir
+     BNE overlay_run_right
+     LDA temp
+     CLC
+     ADC #CHELL_RUN_LEFT_BASE
+     STA temp
+.overlay_run_right
+
+     LDA temp
+     CLC
+     ADC char_pixel_offset
      JSR render_overlay_sprite
  
  .draw_done
