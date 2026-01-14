@@ -29,6 +29,8 @@ rm -f "${OUT_SSD}"
 ./tools/gen-sprites \
   --out-sprites sprites/generated_chell_sprites.asm \
   --out-masks sprites/generated_chell_masks.asm \
+  --spec "chell_idle_r:sprites/Chell Idle - Reference.csv" \
+  --spec "chell_idle_l^:sprites/Chell Idle - Reference.csv" \
   --spec "chell_run_r1:sprites/Chell Run Right - Frame 1.csv" \
   --spec "chell_run_r2:sprites/Chell Run Right - Frame 2.csv" \
   --spec "chell_run_r3:sprites/Chell Run Right - Frame 3.csv" \

@@ -31,6 +31,8 @@ ORG &70
  .anim_frame              SKIP 1    ; Animation frame (0..3)
  .anim_dir                SKIP 1    ; Direction (0=left,1=right)
  .last_anim_dir           SKIP 1    ; Previous direction for redraw
+ .move_held               SKIP 1    ; 0/1: left/right held this frame
+ .last_move_held          SKIP 1    ; Previous move_held (for pose redraw)
  .move_cooldown           SKIP 1    ; Frames until next move
  .anim_cooldown           SKIP 1    ; Movement counter for anim
  
@@ -59,6 +61,12 @@ GRAVITY_DOWN_PERIOD         = 1      ; gravity tick period while falling
 TERMINAL_VELOCITY_DOWN      = 4      ; max falling speed (8px steps)
 JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
 RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
+
+CHELL_RUN_LEFT_BASE         = 12
+CHELL_IDLE_RIGHT_BASE       = 24
+CHELL_IDLE_LEFT_BASE        = 28
+CHELL_JUMP_RIGHT_BASE       = 32
+CHELL_JUMP_LEFT_BASE        = 36
 
 .start
     ; PROGRAM sets MODE 5, but reassert it here for safety.
@@ -123,6 +131,8 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
     STA rise_cooldown
     STA jump_held
     STA anim_frame
+    STA move_held
+    STA last_move_held
     STA move_cooldown
     STA anim_cooldown
     STA save_under_count
@@ -147,34 +157,43 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
      ; Pace the loop (reduces tearing/flicker).
      JSR wait_vsync
 
-     ; --- Update pipeline ---
+     JSR update_chell
+     LDA dirty_flag
+     BEQ main_loop
+
+     JSR render_chell
+     JMP main_loop
+
+; --- Update pipeline ---
+; Updates Chell state from input and physics.
+; Sets dirty_flag if redraw is needed.
+.update_chell
      LDA #0
      STA dirty_flag
 
      ; Input -> update horizontal movement/anim.
      JSR poll_move_keys
-     BCC skip_dirty_move
+     BCC update_skip_dirty_move
      LDA #1
      STA dirty_flag
-.skip_dirty_move
+.update_skip_dirty_move
 
      ; Physics -> update vertical position.
      JSR apply_gravity
-     BCC skip_dirty_grav
+     BCC update_done
      LDA #1
      STA dirty_flag
-.skip_dirty_grav
+.update_done
+     RTS
 
-     LDA dirty_flag
-     BEQ main_loop
-
-     ; --- Render pipeline ---
+; --- Render pipeline ---
+; Redraws Chell using save-under.
+.render_chell
      JSR restore_playfield_rect
      JSR update_screen_ptr_from_char
      JSR save_playfield_rect
      JSR draw_character_current
-
-     JMP main_loop
+     RTS
 
 
 
@@ -196,13 +215,13 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
     LDA char_grounded
     BNE draw_grounded
 
-    ; jump_base = 24 (right) or 28 (left)
+    ; jump_base = CHELL_JUMP_RIGHT_BASE or CHELL_JUMP_LEFT_BASE
     LDA anim_dir
     BNE jump_right
-    LDA #28
+    LDA #CHELL_JUMP_LEFT_BASE
     BNE jump_base_ok
 .jump_right
-    LDA #24
+    LDA #CHELL_JUMP_RIGHT_BASE
 .jump_base_ok
     CLC
     ADC char_pixel_offset
@@ -213,6 +232,39 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
     JMP draw_done
 
 .draw_grounded
+    ; If no movement key held, use idle pose.
+    LDA move_held
+    BNE draw_running
+
+    LDA anim_dir
+    BNE idle_right
+    LDA #CHELL_IDLE_LEFT_BASE
+    BNE idle_base_ok
+.idle_right
+    LDA #CHELL_IDLE_RIGHT_BASE
+.idle_base_ok
+    CLC
+    ADC char_pixel_offset
+    STA char_sprite_index
+
+    LDA char_sprite_index
+    JSR render_character_sprite
+
+    ; Idle uses the gun overlay too (reuse run frame 1 overlay).
+    LDA anim_dir
+    BNE idle_overlay_right
+    LDA #CHELL_RUN_LEFT_BASE
+    BNE idle_overlay_base_ok
+.idle_overlay_right
+    LDA #0
+.idle_overlay_base_ok
+    CLC
+    ADC char_pixel_offset
+    JSR render_overlay_sprite
+
+    JMP draw_done
+
+.draw_running
     ; Index = run_frame*4 + subpixel_offset
     ; run_frame cycles 0,1,0,2 (i.e. 1,2,1,3)
     ; Facing selects between right-facing (0..11) and left-facing (12..23).
@@ -222,34 +274,36 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
     ASL A
     STA char_sprite_index
 
-    ; If facing left, add 12-entry base.
+    ; If facing left, add run-left base.
     LDA anim_dir
     BNE facing_right
     LDA char_sprite_index
     CLC
-    ADC #12
+    ADC #CHELL_RUN_LEFT_BASE
     STA char_sprite_index
-.facing_right
-
-    LDA char_sprite_index
-    CLC
-    ADC char_pixel_offset
-    STA char_sprite_index
-
-    LDA char_sprite_index
-    JSR render_character_sprite
-
-    LDA char_sprite_index
-    JSR render_overlay_sprite
-
-.draw_done
-    ; Restore previous ROM selection and re-enable IRQs.
-    LDA saved_romsel
-    STA ROMSEL
-    CLI
-    RTS
+ .facing_right
  
-; Poll Z/X for left/right movement (single-pixel).
+     LDA char_sprite_index
+     CLC
+     ADC char_pixel_offset
+     STA char_sprite_index
+ 
+     LDA char_sprite_index
+     JSR render_character_sprite
+ 
+     LDA char_sprite_index
+     JSR render_overlay_sprite
+ 
+ .draw_done
+     ; Restore previous ROM selection and re-enable IRQs.
+     LDA saved_romsel
+     STA ROMSEL
+     CLI
+     RTS
+ 
+  
+ ; Poll Z/X for left/right movement (single-pixel).
+
 ; Uses OSBYTE 129 (INKEY) "scan for a particular key":
 ;   On entry:  Y=&FF, X=&80..&FF (negative INKEY number)
 ;   On exit:   XY=&FFFF if pressed, else XY=&0000
@@ -258,10 +312,16 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
 ;   char_byte_offset   = 0 or 8 (4px step within a cell, MODE5 column stride)
 ;   char_pixel_offset  = 0..3 (1px subpixel via pre-shifted sprites)
 ;
-; Output: C=1 if sprite needs redraw.
- .poll_move_keys
-     LDA #0
-     STA temp                  ; redraw flag
+ ; Output: C=1 if sprite needs redraw.
+  .poll_move_keys
+      ; Track move key transitions so we can redraw into idle.
+      LDA move_held
+      STA last_move_held
+
+      LDA #0
+      STA temp                  ; redraw flag
+      STA move_held             ; clear each frame; set when key held
+
 
      ; Jump on RETURN (edge-triggered) when grounded.
      LDX #&B6            ; INKEY(-74) = RETURN
@@ -357,18 +417,28 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
     BCS key_right
  
  .no_key_held
-     ; No key held: stop movement, but keep animation phase.
-     ; This lets quick 1px taps still advance the walk cycle.
-     LDA #0
-     STA move_cooldown
+      ; No key held: stop movement, but keep animation phase.
+      ; This lets quick 1px taps still advance the walk cycle.
+      LDA #0
+      STA move_held
+      STA move_cooldown
+
+      ; If we just released movement keys while grounded, redraw to idle.
+      LDA last_move_held
+      BEQ no_key_no_redraw
+      LDA char_grounded
+      BEQ no_key_no_redraw
+      LDA #1
+      STA temp
+.no_key_no_redraw
+
 
      ; Keep facing, but sync last_anim_dir.
-     LDA anim_dir
-     STA last_anim_dir
+      LDA anim_dir
+      STA last_anim_dir
 
+     JMP return_redraw
 
-    CLC
-    RTS
  
 ; Input: X = negative INKEY number (as 8-bit value)
 ; Output: C=1 if pressed
@@ -394,8 +464,13 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
      STA anim_dir
  
  .key_held
-     ; If direction changed, force a redraw so we flip immediately.
-     LDA anim_dir
+      ; Mark that we are trying to move (used for idle pose selection).
+      LDA #1
+      STA move_held
+
+      ; If direction changed, force a redraw so we flip immediately.
+      LDA anim_dir
+
      CMP last_anim_dir
      BEQ move_tick
      STA last_anim_dir
@@ -422,13 +497,13 @@ RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
      JSR step_left_pixel
      BCC return_redraw
  .did_move
-      ; We moved: redraw, and advance animation every 2 pixels.
+      ; We moved: redraw, and advance animation every 4 pixels.
       LDA #1
       STA temp
  
       INC anim_cooldown
       LDA anim_cooldown
-      CMP #2
+      CMP #4
       BNE return_redraw
       LDA #0
       STA anim_cooldown

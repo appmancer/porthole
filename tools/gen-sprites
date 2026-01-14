@@ -167,6 +167,16 @@ def read_blocks(path: Path) -> list[list[list[str]]]:
         if len(b) not in (16, 32):
             raise ValueError(f"{path}: block {i} has {len(b)} rows (expected 16 or 32)")
 
+    # Overlay CSVs sometimes include a leading 16x32 "reference" block (composited
+    # sprite for visual checking) followed by four 16-row overlay blocks (x0..x3).
+    # We don't use the reference at runtime, so drop it to save CHDATA space.
+    if (
+        len(blocks) == 5
+        and len(blocks[0]) == 32
+        and all(len(b) == 16 for b in blocks[1:])
+    ):
+        blocks = blocks[1:]
+
     # Convenience: if a 16x32 sprite only provides a single reference block,
     # synthesize x0..x3 variants by shifting right by 0..3 pixels.
     # This keeps the movement pipeline (subpixel_offset 0..3) working without
@@ -207,15 +217,8 @@ def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], li
 
         out_index = block_index
         if spec.flip_x:
-            # For normal sprites, reversing block order matches subpixel phase.
-            # Overlay CSVs include a leading 16x32 "reference" block (composited sprite)
-            # followed by 4x 16-row overlay blocks. Keep the reference as x0 and only
-            # reverse the overlay blocks so x1..x4 remain usable.
-            if len(blocks) > 1 and len(blocks[0]) == 32 and all(len(b) == 16 for b in blocks[1:]):
-                if block_index != 0:
-                    out_index = len(blocks) - block_index
-            else:
-                out_index = (len(blocks) - 1) - block_index
+            # Reversing block order matches subpixel phase when mirroring.
+            out_index = (len(blocks) - 1) - block_index
 
         label = f"{spec.prefix}_x{out_index}"
         sprites_out.append((label, sprite_bytes))

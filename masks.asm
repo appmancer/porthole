@@ -25,6 +25,15 @@
     EQUW chell_run_l3_x2_mask
     EQUW chell_run_l3_x3_mask
 
+    EQUW chell_idle_r_x0_mask
+    EQUW chell_idle_r_x1_mask
+    EQUW chell_idle_r_x2_mask
+    EQUW chell_idle_r_x3_mask
+    EQUW chell_idle_l_x0_mask
+    EQUW chell_idle_l_x1_mask
+    EQUW chell_idle_l_x2_mask
+    EQUW chell_idle_l_x3_mask
+
     EQUW chell_jump_r_x0_mask
     EQUW chell_jump_r_x1_mask
     EQUW chell_jump_r_x2_mask
@@ -37,30 +46,30 @@
     EQUW test_sprite16x32_mask
 
 .overlay_mask_table
+    EQUW chell_rgun_r1_x0_mask
     EQUW chell_rgun_r1_x1_mask
     EQUW chell_rgun_r1_x2_mask
     EQUW chell_rgun_r1_x3_mask
-    EQUW chell_rgun_r1_x4_mask
+    EQUW chell_rgun_r2_x0_mask
     EQUW chell_rgun_r2_x1_mask
     EQUW chell_rgun_r2_x2_mask
     EQUW chell_rgun_r2_x3_mask
-    EQUW chell_rgun_r2_x4_mask
+    EQUW chell_rgun_r3_x0_mask
     EQUW chell_rgun_r3_x1_mask
     EQUW chell_rgun_r3_x2_mask
     EQUW chell_rgun_r3_x3_mask
-    EQUW chell_rgun_r3_x4_mask
+    EQUW chell_rgun_l1_x0_mask
     EQUW chell_rgun_l1_x1_mask
     EQUW chell_rgun_l1_x2_mask
     EQUW chell_rgun_l1_x3_mask
-    EQUW chell_rgun_l1_x4_mask
+    EQUW chell_rgun_l2_x0_mask
     EQUW chell_rgun_l2_x1_mask
     EQUW chell_rgun_l2_x2_mask
     EQUW chell_rgun_l2_x3_mask
-    EQUW chell_rgun_l2_x4_mask
+    EQUW chell_rgun_l3_x0_mask
     EQUW chell_rgun_l3_x1_mask
     EQUW chell_rgun_l3_x2_mask
     EQUW chell_rgun_l3_x3_mask
-    EQUW chell_rgun_l3_x4_mask
 
 ; Masks for generated character sprites.
 ; Chell masks are now loaded into sideways RAM at runtime (see `main.asm`).
