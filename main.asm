@@ -20,6 +20,7 @@ ORG &70
 .char_vy            SKIP 1    ; Signed vy in 8px steps
 .char_grounded      SKIP 1    ; 0/1: standing on solid
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
+.jump_held          SKIP 1    ; 0/1: RETURN currently held
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
@@ -51,10 +52,11 @@ ROMSEL    = &FE30          ; Master paged ROM/SWRAM bank select
 CHELL_SWRAM_BANK_DEFAULT = 4
 CHELLDATA_BUF         = &7B00  ; Temp buffer in screen scratch
 
-GRAVITY_ACCEL        = 1      ; vy += 1 per gravity tick (8px steps)
-GRAVITY_PERIOD       = 2      ; apply gravity every N frames
-TERMINAL_VELOCITY    = 2      ; max falling speed (8px steps)
-JUMP_VELOCITY        = &FF    ; -1 (jump up 8px per frame initially)
+GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
+GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
+GRAVITY_DOWN_PERIOD         = 1      ; gravity tick period while falling
+TERMINAL_VELOCITY_DOWN      = 4      ; max falling speed (8px steps)
+JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
 
 .start
     ; PROGRAM sets MODE 5, but reassert it here for safety.
@@ -116,6 +118,7 @@ JUMP_VELOCITY        = &FF    ; -1 (jump up 8px per frame initially)
     STA char_vy
     STA char_grounded
     STA gravity_cooldown
+    STA jump_held
     STA anim_frame
     STA move_cooldown
     STA anim_cooldown
@@ -257,23 +260,28 @@ JUMP_VELOCITY        = &FF    ; -1 (jump up 8px per frame initially)
      LDA #0
      STA temp                  ; redraw flag
 
-     ; Update grounded state (used for jump gating and pose selection).
-     JSR is_char_grounded
-     BCC set_not_grounded
-     LDA #1
-     STA char_grounded
-     JMP check_jump
-.set_not_grounded
-     LDA #0
-     STA char_grounded
-
-.check_jump
-     ; Jump on RETURN when grounded.
-     LDA char_grounded
-     BEQ after_jump
+     ; Jump on RETURN (edge-triggered) when grounded.
      LDX #&B6            ; INKEY(-74) = RETURN
      JSR is_key_pressed
-     BCC after_jump
+     BCS jump_pressed
+
+     ; Key not pressed: clear latch.
+     LDA #0
+     STA jump_held
+     JMP after_jump
+
+.jump_pressed
+     ; If still held from last frame, do nothing.
+     LDA jump_held
+     BNE after_jump
+     LDA #1
+     STA jump_held
+
+     ; Only start a jump if grounded and not already moving vertically.
+     LDA char_grounded
+     BEQ after_jump
+     LDA char_vy
+     BNE after_jump
 
      ; Start jump: upward velocity.
      LDA #JUMP_VELOCITY
@@ -281,8 +289,8 @@ JUMP_VELOCITY        = &FF    ; -1 (jump up 8px per frame initially)
      LDA #0
      STA char_grounded
 
-     ; Delay gravity a little so the jump is visible.
-     LDA #(GRAVITY_PERIOD-1)
+     ; Delay next gravity tick slightly so the jump starts cleanly.
+     LDA #(GRAVITY_UP_PERIOD-1)
      STA gravity_cooldown
 
      LDA #1
@@ -591,19 +599,12 @@ JUMP_VELOCITY        = &FF    ; -1 (jump up 8px per frame initially)
     JMP apply_gravity_only
 
 .apply_move_up
-    ; X = abs(vy)
-    LDA char_vy
-    EOR #&FF
-    CLC
-    ADC #1
-    TAX
-.move_up_loop
+    ; Move upward stripe-by-stripe (1 stripe per frame).
+    ; This avoids "teleport" jumps when vy is large.
     JSR step_up_8
     BCC hit_ceiling
     LDA #1
     STA temp
-    DEX
-    BNE move_up_loop
     JMP apply_gravity_only
 
 .hit_ground
@@ -632,18 +633,29 @@ JUMP_VELOCITY        = &FF    ; -1 (jump up 8px per frame initially)
     JMP apply_return
 
 .do_gravity_tick
-    LDA #(GRAVITY_PERIOD-1)
+    ; Use a slower tick while rising (floatier jump), but always tick while
+    ; falling so you can build momentum by dropping.
+    LDA char_vy
+    BMI gravity_rising
+
+    LDA #(GRAVITY_DOWN_PERIOD-1)
+    STA gravity_cooldown
+    JMP gravity_apply
+
+.gravity_rising
+    LDA #(GRAVITY_UP_PERIOD-1)
     STA gravity_cooldown
 
+.gravity_apply
     LDA char_vy
     CLC
     ADC #GRAVITY_ACCEL
 
-    ; Clamp positive vy to terminal velocity.
+    ; Clamp positive vy to the (higher) falling terminal velocity.
     BMI store_vy
-    CMP #TERMINAL_VELOCITY
+    CMP #TERMINAL_VELOCITY_DOWN
     BCC store_vy
-    LDA #TERMINAL_VELOCITY
+    LDA #TERMINAL_VELOCITY_DOWN
 
 .store_vy
     STA char_vy
