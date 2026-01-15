@@ -39,8 +39,8 @@ ORG &70
  .last_move_held          SKIP 1    ; Previous move_held (for pose redraw)
  .move_cooldown           SKIP 1    ; Frames until next move
  .anim_cooldown           SKIP 1    ; Movement counter for anim
- 
- .save_under_count         SKIP 1    ; Number of active save-under slots (0..4)
+
+  .save_under_count         SKIP 1    ; Number of active save-under slots (0..4)
 
 
 .save_under_screen_low    SKIP 4    ; Saved screen_ptr low per slot
@@ -762,6 +762,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 ; Compute current character Y (top edge) in pixels.
 ; Output: A = y (0..255)
 .calc_char_y
+    ; y = tile_y*16 + char_y_offset
     LDA char_tile_pos
     AND #&F0
     CLC
@@ -773,21 +774,31 @@ CHELL_JUMP_LEFT_BASE        = 36
 .will_collide_left
     JSR calc_char_x
     BEQ collide_left
-    SEC
-    SBC #1
+
+    ; Centerline walls: allow 4px overlap into solid tiles.
+    ; Instead of testing the pixel just outside the left edge (x-1), test
+    ; 4px inside it: (x-1)+4 = x+3.
+    CLC
+    ADC #3
     TAX
 
+    ; Sample near vertical centerlines of the wall tiles.
+    ; (This avoids foot/head edge jitter when straddling stripes.)
     JSR calc_char_y
+    CLC
+    ADC #8
     STA temp_y
 
+    ; test at y+8 (top tile centerline)
     LDY temp_y
     JSR is_solid
     BCS collide_left
 
+    ; test at y+24 (bottom tile centerline)
     LDY temp_y
     TYA
     CLC
-    ADC #31
+    ADC #16
     TAY
     JSR is_solid
     BCS collide_left
@@ -802,24 +813,37 @@ CHELL_JUMP_LEFT_BASE        = 36
 ; Output: C=1 if collision.
 .will_collide_right
     JSR calc_char_x
+
+    ; Centerline walls, nose-based:
+    ; Allow a little more overlap on the right so collision matches Chell's
+    ; visible "nose" rather than the full 16px bounding box.
+    ;
+    ; Instead of testing just outside the right edge (x+16), test further
+    ; inside the sprite.
     CLC
-    ADC #16              ; test new right edge (x+16)
+    ADC #10              ; test point 6px inside right edge
     BCS collide_right    ; overflow => beyond 255 (treat as solid)
     CMP #128
     BCS collide_right
     TAX
 
+    ; Sample near vertical centerlines of the wall tiles.
+    ; (This avoids foot/head edge jitter when straddling stripes.)
     JSR calc_char_y
+    CLC
+    ADC #8
     STA temp_y
 
+    ; test at y+8 (top tile centerline)
     LDY temp_y
     JSR is_solid
     BCS collide_right
 
+    ; test at y+24 (bottom tile centerline)
     LDY temp_y
     TYA
     CLC
-    ADC #31
+    ADC #16
     TAY
     JSR is_solid
     BCS collide_right
@@ -958,28 +982,29 @@ CHELL_JUMP_LEFT_BASE        = 36
     RTS
 
 ; Return C=1 if character is standing on solid.
-; Tests a pixel just below the feet at left and right edges.
 .is_char_grounded
-    ; x = left edge
+    ; x = left and right sample points (x+4 and x+11)
     JSR calc_char_x
+    CLC
+    ADC #4
     STA temp
 
-    ; y = top
+    ; y_test = (y + 32) (just below feet edge)
     JSR calc_char_y
     CLC
     ADC #32
     BCS grounded_true
     TAY
 
-    ; left foot
+    ; left foot center
     LDX temp
     JSR is_solid
     BCS grounded_true
 
-    ; right foot (x+15)
+    ; right foot center (x+7)
     LDA temp
     CLC
-    ADC #15
+    ADC #7
     CMP #128
     BCS grounded_true
     TAX
@@ -1052,26 +1077,29 @@ CHELL_JUMP_LEFT_BASE        = 36
 
 ; Return C=1 if moving down 8px would collide.
 .will_collide_down_8
-    ; x = left edge
+    ; x sample points (x+4 and x+11)
     JSR calc_char_x
+    CLC
+    ADC #4
     STA temp
 
-    ; y_test = (y + 8) + 31
+    ; y_test = (y + 8) + 31 (just below feet edge after stepping down)
+    ; Keep vertical landing aligned to the 8px stripe grid.
     JSR calc_char_y
     CLC
     ADC #39
     BCS collide_down
     TAY
 
-    ; left bottom
+    ; left foot center
     LDX temp
     JSR is_solid
     BCS collide_down
 
-    ; right bottom
+    ; right foot center (x+7)
     LDA temp
     CLC
-    ADC #15
+    ADC #7
     CMP #128
     BCS collide_down
     TAX
@@ -1086,11 +1114,14 @@ CHELL_JUMP_LEFT_BASE        = 36
 
 ; Return C=1 if moving up 8px would collide.
 .will_collide_up_8
-    ; x = left edge
+    ; x sample points (x+4 and x+11)
     JSR calc_char_x
+    CLC
+    ADC #4
     STA temp
 
-    ; y_test = (y - 8)
+    ; y_test = (y - 8) (top edge after stepping up)
+    ; (Ceiling contact still needs to match the stripe grid.)
     JSR calc_char_y
     CMP #8
     BCC collide_up
@@ -1098,15 +1129,15 @@ CHELL_JUMP_LEFT_BASE        = 36
     SBC #8
     TAY
 
-    ; left top
+    ; left head center
     LDX temp
     JSR is_solid
     BCS collide_up
 
-    ; right top
+    ; right head center (x+7)
     LDA temp
     CLC
-    ADC #15
+    ADC #7
     CMP #128
     BCS collide_up
     TAX
@@ -1593,6 +1624,27 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA screen_ptr
     LDA tile_row_screen_table+1,Y
     STA screen_ptr+1
+
+    ; Apply a visual centerline bias without affecting physics.
+    ;
+    ; Convention:
+    ; - Floors want +8 (stand into the tile)
+    ; - Ceilings want -8 (hit head into the tile)
+    ;
+    ; We approximate using vertical velocity:
+    ; - Falling/grounded -> +8
+    ; - Rising -> -8
+    ;
+    ; Then add the normal char_y_offset (+8 within cell row).
+    LDA char_vy
+    BMI ybias_up
+.ybias_down
+    INC screen_ptr+1
+    JMP ybias_done
+.ybias_up
+    ; -8 is one stripe up: decrement high byte.
+    DEC screen_ptr+1
+.ybias_done
 
     ; Optional +8 scanline offset (1 stripe) within the 16px cell row.
     LDA char_y_offset
