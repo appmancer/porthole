@@ -143,6 +143,20 @@ Reference material:
 
 Timing detail: rendering is performed **immediately after `wait_vsync`**, using the *previous frame’s* `dirty_flag/state` (one-frame latency). This gives the blitters maximum time before scanout and dramatically reduces visible tearing/flicker.
 
+### 2.5D surface convention (planned)
+
+Although gameplay movement is strictly 2D, the world is treated as having visible surfaces (floor, walls, ceiling) for portal placement.
+
+The guiding convention we want (not fully implemented yet): collision and placement should feel like they occur on the **centerline of the solid tile**, rather than on the tile boundary.
+
+- Tile size: 167 pixels.
+- Surface centerline: `top_of_tile + 8` (and similarly `left_of_tile + 8`, etc.).
+- Chell (and floor objects like cubes/buttons) should visually sit on these centerlines:
+  - feet on floor centerline
+  - head hits ceiling centerline
+  - nose meets wall centerline
+- Portals are the same width/height as a tile (span 16px along the surface).
+
 ### Save-under / background restore
 
 The renderer uses a restore strategy inspired by classic engines:
