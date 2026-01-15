@@ -159,19 +159,22 @@ CHELL_JUMP_LEFT_BASE        = 36
     JSR draw_character_current
  
  .main_loop
-     ; Pace the loop (reduces tearing/flicker).
-     JSR wait_vsync
+      ; Pace the loop (reduces tearing/flicker).
+      JSR wait_vsync
 
-     ; Sample input once per frame; gameplay consumes only key bits.
-     JSR sample_keys
+      ; Render previous frame immediately after VSYNC.
+      LDA dirty_flag
+      BEQ main_skip_render
+      JSR render_chell
+.main_skip_render
+
+      ; Sample input once per frame; gameplay consumes only key bits.
+      JSR sample_keys
  
-     JSR update_chell
+      ; Update state for next frame.
+      JSR update_chell
+      JMP main_loop
 
-     LDA dirty_flag
-     BEQ main_loop
-
-     JSR render_chell
-     JMP main_loop
 
 ; --- Update pipeline ---
 ; Updates Chell state from input and physics.
