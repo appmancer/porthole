@@ -21,9 +21,12 @@ ORG &70
 .char_grounded      SKIP 1    ; 0/1: standing on solid
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
 .rise_cooldown      SKIP 1    ; Frames until next upward step
-.jump_held          SKIP 1    ; 0/1: RETURN currently held
+.keys_held          SKIP 1    ; Bitfield: held keys this frame
+.keys_pressed       SKIP 1    ; Bitfield: edge-trigger keys (held & ~prev)
+.keys_prev          SKIP 1    ; Previous frame's keys_held
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
+
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
 .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
 .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
@@ -129,7 +132,9 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA char_grounded
     STA gravity_cooldown
     STA rise_cooldown
-    STA jump_held
+    STA keys_held
+    STA keys_pressed
+    STA keys_prev
     STA anim_frame
     STA move_held
     STA last_move_held
@@ -157,7 +162,11 @@ CHELL_JUMP_LEFT_BASE        = 36
      ; Pace the loop (reduces tearing/flicker).
      JSR wait_vsync
 
+     ; Sample input once per frame; gameplay consumes only key bits.
+     JSR sample_keys
+ 
      JSR update_chell
+
      LDA dirty_flag
      BEQ main_loop
 
@@ -358,21 +367,9 @@ CHELL_JUMP_LEFT_BASE        = 36
 
 
      ; Jump on RETURN (edge-triggered) when grounded.
-     LDX #&B6            ; INKEY(-74) = RETURN
-     JSR is_key_pressed
-     BCS jump_pressed
-
-     ; Key not pressed: clear latch.
-     LDA #0
-     STA jump_held
-     JMP after_jump
-
-.jump_pressed
-     ; If still held from last frame, do nothing.
-     LDA jump_held
-     BNE after_jump
-     LDA #1
-     STA jump_held
+     LDA keys_pressed
+     AND #4
+     BEQ after_jump
 
      ; Only start a jump if grounded and not already moving vertically.
      LDA char_grounded
@@ -382,19 +379,12 @@ CHELL_JUMP_LEFT_BASE        = 36
 
      ; Capture jump direction from held movement key.
      ; (This ensures "jump left" even if move cooldown delays a step.)
-     LDX #&E6            ; INKEY(-26) = Left
-     JSR is_key_pressed
-     BCS jump_face_left
-     LDX #&9E            ; INKEY(-98) = 'Z'
-     JSR is_key_pressed
-     BCS jump_face_left
-
-     LDX #&86            ; INKEY(-122) = Right
-     JSR is_key_pressed
-     BCS jump_face_right
-     LDX #&BD            ; INKEY(-67) = 'X'
-     JSR is_key_pressed
-     BCS jump_face_right
+     LDA keys_held
+     AND #1
+     BNE jump_face_left
+     LDA keys_held
+     AND #2
+     BNE jump_face_right
      JMP jump_dir_done
 
 .jump_face_left
@@ -433,22 +423,13 @@ CHELL_JUMP_LEFT_BASE        = 36
 .after_jump
  
     ; Prefer left if both held.
-    ; Also accept cursor keys for convenience.
-    LDX #&E6            ; INKEY(-26) = Left
-    JSR is_key_pressed
-    BCS key_left
- 
-    LDX #&9E            ; INKEY(-98) = 'Z'
-    JSR is_key_pressed
-    BCS key_left
- 
-    LDX #&86            ; INKEY(-122) = Right
-    JSR is_key_pressed
-    BCS key_right
- 
-    LDX #&BD            ; INKEY(-67) = 'X'
-    JSR is_key_pressed
-    BCS key_right
+    LDA keys_held
+    AND #1
+    BNE key_left
+
+    LDA keys_held
+    AND #2
+    BNE key_right
  
  .no_key_held
       ; No key held: stop movement, but keep animation phase.
@@ -474,6 +455,68 @@ CHELL_JUMP_LEFT_BASE        = 36
      JMP return_redraw
 
  
+; --- Input sampling ---
+;
+; keys_held bits (this repo conventions):
+;   bit0: left  (Z or cursor left)
+;   bit1: right (X or cursor right)
+;   bit2: jump  (RETURN)
+;
+; Sample keyboard once this frame and build:
+;   keys_held    = held bits
+;   keys_pressed = newly pressed this frame (edge)
+;   keys_prev    = last frame's keys_held
+.sample_keys
+    ; Start with no bits set.
+    LDA #0
+    STA keys_held
+
+    ; Jump (RETURN)
+    LDX #&B6            ; INKEY(-74) = RETURN
+    JSR is_key_pressed
+    BCC sample_no_jump
+    LDA keys_held
+    ORA #4
+    STA keys_held
+.sample_no_jump
+
+    ; Left (cursor left or Z)
+    LDX #&E6            ; INKEY(-26) = Left
+    JSR is_key_pressed
+    BCS sample_set_left
+    LDX #&9E            ; INKEY(-98) = 'Z'
+    JSR is_key_pressed
+    BCC sample_no_left
+.sample_set_left
+    LDA keys_held
+    ORA #1
+    STA keys_held
+.sample_no_left
+
+    ; Right (cursor right or X)
+    LDX #&86            ; INKEY(-122) = Right
+    JSR is_key_pressed
+    BCS sample_set_right
+    LDX #&BD            ; INKEY(-67) = 'X'
+    JSR is_key_pressed
+    BCC sample_no_right
+.sample_set_right
+    LDA keys_held
+    ORA #2
+    STA keys_held
+.sample_no_right
+
+    ; keys_pressed = keys_held & ~keys_prev
+    LDA keys_prev
+    EOR #&FF
+    AND keys_held
+    STA keys_pressed
+
+    ; Update previous snapshot for next frame.
+    LDA keys_held
+    STA keys_prev
+    RTS
+
 ; Input: X = negative INKEY number (as 8-bit value)
 ; Output: C=1 if pressed
 .is_key_pressed
