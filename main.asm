@@ -24,6 +24,7 @@ ORG &70
 .keys_held          SKIP 1    ; Bitfield: held keys this frame
 .keys_pressed       SKIP 1    ; Bitfield: edge-trigger keys (held & ~prev)
 .keys_prev          SKIP 1    ; Previous frame's keys_held
+.aim_held           SKIP 1    ; 0=none, 1=up, 2=down
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 
@@ -170,6 +171,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 
       ; Sample input once per frame; gameplay consumes only key bits.
       JSR sample_keys
+
  
       ; Update state for next frame.
       JSR update_chell
@@ -223,9 +225,11 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA chell_bank
     STA ROMSEL
 
-    ; Airborne: draw jump pose only.
-    LDA char_grounded
-    BNE draw_grounded
+     ; Airborne: draw jump pose only.
+     ; (Aim is held-only, and currently only affects overlay.)
+     LDA char_grounded
+     BNE draw_grounded
+
 
     ; jump_base = CHELL_JUMP_RIGHT_BASE or CHELL_JUMP_LEFT_BASE
     LDA anim_dir
@@ -242,7 +246,7 @@ CHELL_JUMP_LEFT_BASE        = 36
      LDA char_sprite_index
      JSR render_character_sprite
 
-     ; Jump: draw gun overlay frame 1 (index base 0/12).
+     ; Jump: always draw gun forward overlay (no aim cycling here).
      LDA anim_dir
      BNE jump_overlay_right
      LDA #CHELL_RUN_LEFT_BASE
@@ -275,29 +279,34 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA char_sprite_index
     JSR render_character_sprite
 
-    ; Idle uses the gun overlay too (reuse run frame 1 overlay).
-    LDA anim_dir
-    BNE idle_overlay_right
-    LDA #CHELL_RUN_LEFT_BASE
-    BNE idle_overlay_base_ok
+     ; Idle: always draw gun forward overlay (no aim cycling here).
+     LDA anim_dir
+     BNE idle_overlay_right
+     LDA #CHELL_RUN_LEFT_BASE
+     BNE idle_overlay_base_ok
 .idle_overlay_right
-    LDA #0
+     LDA #0
 .idle_overlay_base_ok
-    CLC
-    ADC char_pixel_offset
-    JSR render_overlay_sprite
+     CLC
+     ADC char_pixel_offset
+     JSR render_overlay_sprite
+
 
     JMP draw_done
 
-.draw_running
-    ; Index = run_frame*4 + subpixel_offset
-    ; run_frame cycles 0,1,0,2 (i.e. 1,2,1,3)
-    ; Facing selects between right-facing (0..11) and left-facing (12..23).
-    LDX anim_frame
-    LDA run_frame_seq,X
-    ASL A
-    ASL A
-    STA char_sprite_index
+  .draw_running
+     ; Running: animate body + aim overlay.
+
+ .draw_running_go
+     ; Index = run_frame*4 + subpixel_offset
+     ; run_frame cycles 0,1,0,2 (i.e. 1,2,1,3)
+     ; Facing selects between right-facing (0..11) and left-facing (12..23).
+     LDX anim_frame
+     LDA run_frame_seq,X
+     ASL A
+     ASL A
+     STA char_sprite_index
+
 
     ; If facing left, add run-left base.
     LDA anim_dir
@@ -318,15 +327,44 @@ CHELL_JUMP_LEFT_BASE        = 36
  
      ; Overlay index must be computed independently of body sprite index.
      ; Overlay table is 24 entries:
-     ;   right: r1/r2/r3 x0..x3 = 0..11
-     ;   left:  l1/l2/l3 x0..x3 = 12..23
-     ; We cycle overlays with the same run_frame_seq as the body.
-     LDX anim_frame
-     LDA run_frame_seq,X
+     ;   per direction: 3 aim frames (forward/down/up) x 4 subpixel = 12
+     ;   right: forward/down/up x0..x3 = 0..11
+     ;   left:  forward/down/up x0..x3 = 12..23
+     ; Overlay behaviour:
+     ; - aim_held=0 (forward): cycle overlay with run animation.
+     ; - aim_held=1 (up) or 2 (down): fixed overlay frame.
+     ; Overlay table per direction: 3 aim frames (forward/down/up) x 4 subpixel.
+
+     ; First compute a base within the direction: (aim_frame*4).
+     ; aim_frame mapping: forward=0, down=1, up=2
+     LDA aim_held
+     BEQ run_overlay_aimframe_ok
+     CMP #2
+     BNE run_overlay_aim_up
+     LDA #1
+     BNE run_overlay_aimframe_ok
+.run_overlay_aim_up
+     LDA #2
+.run_overlay_aimframe_ok
      ASL A
      ASL A
      STA temp
 
+     ; If not aiming, add run-phase cycling (0/4/8).
+     LDA aim_held
+     BNE run_overlay_have_index
+
+     LDX anim_frame
+     LDA run_frame_seq,X
+     ASL A
+     ASL A
+     CLC
+     ADC temp
+     STA temp
+
+.run_overlay_have_index
+
+     ; Facing left adds 12.
      LDA anim_dir
      BNE overlay_run_right
      LDA temp
@@ -340,12 +378,14 @@ CHELL_JUMP_LEFT_BASE        = 36
      ADC char_pixel_offset
      JSR render_overlay_sprite
  
- .draw_done
-     ; Restore previous ROM selection and re-enable IRQs.
-     LDA saved_romsel
-     STA ROMSEL
-     CLI
-     RTS
+
+  .draw_done
+      ; Restore previous ROM selection and re-enable IRQs.
+      LDA saved_romsel
+      STA ROMSEL
+      CLI
+      RTS
+
  
   
  ; Poll Z/X for left/right movement (single-pixel).
@@ -428,11 +468,14 @@ CHELL_JUMP_LEFT_BASE        = 36
     ; Prefer left if both held.
     LDA keys_held
     AND #1
-    BNE key_left
+    BEQ check_right
+    JMP key_left
 
+.check_right
     LDA keys_held
     AND #2
-    BNE key_right
+    BEQ no_key_held
+    JMP key_right
  
  .no_key_held
       ; No key held: stop movement, but keep animation phase.
@@ -510,6 +553,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 .sample_no_right
 
     ; keys_pressed = keys_held & ~keys_prev
+
     LDA keys_prev
     EOR #&FF
     AND keys_held
@@ -518,7 +562,47 @@ CHELL_JUMP_LEFT_BASE        = 36
     ; Update previous snapshot for next frame.
     LDA keys_held
     STA keys_prev
-    RTS
+
+    ; --- Aim sampling ---
+    ; aim_held: 0=none, 1=up, 2=down
+    LDA #0
+    STA aim_held
+
+    ; Prefer up if both held.
+    ; ':' = INKEY(-73)
+    LDX #&B7
+    JSR is_key_pressed
+    BCS sample_set_aim_up
+
+    ; cursor up = 138 (see BBC User Guide sample)
+    ; => INKEY(-118)
+    LDX #&8A
+    JSR is_key_pressed
+    BCC sample_check_aim_down
+
+.sample_set_aim_up
+    LDA #1
+    STA aim_held
+    JMP sample_aim_done
+
+.sample_check_aim_down
+    ; '/' = INKEY(-105)
+    LDX #&97
+    JSR is_key_pressed
+    BCS sample_set_aim_down
+
+    ; cursor down = 139 (see BBC User Guide sample)
+    ; => INKEY(-117)
+    LDX #&8B
+    JSR is_key_pressed
+    BCC sample_aim_done
+
+.sample_set_aim_down
+    LDA #2
+    STA aim_held
+
+.sample_aim_done
+
 
 ; Input: X = negative INKEY number (as 8-bit value)
 ; Output: C=1 if pressed
