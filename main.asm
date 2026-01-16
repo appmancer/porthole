@@ -50,6 +50,20 @@ ORG &70
 .cube_byte_offset    SKIP 1    ; Cube byte offset within cell (0/8)
 .char_sprite_index  SKIP 1    ; Stable sprite index
 
+.reticle_cell_x      SKIP 1    ; 0..7 (portal grid X)
+.reticle_cell_y      SKIP 1    ; 0..15 (portal grid Y)
+.reticle_state       SKIP 1    ; 0=blocked, 1=portalable
+.reticle_active      SKIP 1    ; 0/1: draw reticle
+.reticle_prev_active SKIP 1    ; previous frame reticle_active
+
+.chell_dirty         SKIP 1    ; 0/1: Chell moved/changed last update
+.reticle_dirty       SKIP 1    ; 0/1: reticle moved/changed last update
+
+.chell_prev_ptr      SKIP 2    ; previous Chell screen_ptr
+.reticle_prev_ptr    SKIP 2    ; previous reticle screen_ptr
+.chell_has_under     SKIP 1    ; 0/1: have valid Chell save-under
+.reticle_has_under   SKIP 1    ; 0/1: have valid reticle save-under
+
 ORG &1900
 
 CRTC_ADDR = &FE00
@@ -141,7 +155,25 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA last_move_held
     STA move_cooldown
     STA anim_cooldown
+    ; save-under pool removed; leave count unused
     STA save_under_count
+
+    ; Reticle starts inactive.
+    LDA #0
+    STA reticle_active
+    STA reticle_prev_active
+    STA reticle_cell_x
+    STA reticle_cell_y
+    STA reticle_state
+
+    STA chell_dirty
+    STA reticle_dirty
+    STA chell_prev_ptr
+    STA chell_prev_ptr+1
+    STA reticle_prev_ptr
+    STA reticle_prev_ptr+1
+    STA chell_has_under
+    STA reticle_has_under
 
     ; Default: face right.
     LDA #1
@@ -154,10 +186,21 @@ CHELL_JUMP_LEFT_BASE        = 36
     ; Build collision/material plane from the tilemap.
     JSR build_material_planes_from_tilemap
 
-    ; Draw the initial sprite once (allocates save-under slot).
+    ; Draw the initial sprite once (allocates Chell save-under).
     JSR update_screen_ptr_from_char
-    JSR save_playfield_rect
+    JSR save_chell_under
     JSR draw_character_current
+
+    LDA screen_ptr
+    STA chell_prev_ptr
+    LDA screen_ptr+1
+    STA chell_prev_ptr+1
+    LDA #1
+    STA chell_has_under
+
+    ; Mark reticle as having no valid under yet.
+    LDA #0
+    STA reticle_has_under
  
  .main_loop
       ; Pace the loop (reduces tearing/flicker).
@@ -169,44 +212,149 @@ CHELL_JUMP_LEFT_BASE        = 36
       JSR render_chell
 .main_skip_render
 
-      ; Sample input once per frame; gameplay consumes only key bits.
-      JSR sample_keys
+       ; Sample input once per frame; gameplay consumes only key bits.
+       JSR sample_keys
 
- 
-      ; Update state for next frame.
-      JSR update_chell
-      JMP main_loop
+       ; Update state for next frame.
+       JSR update_chell
+       JMP main_loop
 
 
 ; --- Update pipeline ---
 ; Updates Chell state from input and physics.
 ; Sets dirty_flag if redraw is needed.
-.update_chell
-     LDA #0
-     STA dirty_flag
+  .update_chell
+       ; Reset per-object dirty flags.
+       LDA #0
+       STA chell_dirty
+       STA reticle_dirty
 
-     ; Input -> update horizontal movement/anim.
-     JSR poll_move_keys
-     BCC update_skip_dirty_move
-     LDA #1
-     STA dirty_flag
+       ; Track previous reticle_active so we can detect hide/show transitions.
+       LDA reticle_active
+       STA reticle_prev_active
+
+       ; Reticle mode is held (SHIFT).
+       LDA keys_held
+       AND #8
+       BEQ update_normal_mode
+
+       ; Reticle active while SHIFT held.
+       LDA #1
+       STA reticle_active
+
+       JSR poll_reticle_keys
+       BCC reticle_no_dirty
+       LDA #1
+       STA reticle_dirty
+.reticle_no_dirty
+       JMP update_apply_gravity
+
+.update_normal_mode
+       ; If we just released SHIFT, deactivate reticle and mark it dirty so render
+       ; can restore its last rectangle.
+       LDA reticle_active
+       BEQ normal_mode_skip_hide
+       LDA #0
+       STA reticle_active
+
+       LDA reticle_prev_active
+       BEQ normal_mode_skip_hide
+       LDA #1
+       STA reticle_dirty
+.normal_mode_skip_hide
+
+       ; Normal mode: input -> update horizontal movement/anim.
+       JSR poll_move_keys
+       BCC update_skip_dirty_move
+       LDA #1
+       STA chell_dirty
 .update_skip_dirty_move
 
-     ; Physics -> update vertical position.
-     JSR apply_gravity
-     BCC update_done
-     LDA #1
-     STA dirty_flag
-.update_done
-     RTS
+.update_apply_gravity
+       ; Physics -> update vertical position.
+       JSR apply_gravity
+       BCC update_finish
+       LDA #1
+       STA chell_dirty
+
+.update_finish
+       ; Global dirty_flag is OR of both.
+       LDA chell_dirty
+       ORA reticle_dirty
+       STA dirty_flag
+       RTS
 
 ; --- Render pipeline ---
-; Redraws Chell using save-under.
+; Redraws moving objects using per-object save-under.
+; Uses chell_dirty/reticle_dirty computed in the previous update.
 .render_chell
-     JSR restore_playfield_rect
+     ; Handle reticle deactivation: restore last rect.
+     LDA reticle_active
+     BNE render_reticle_maybe
+     LDA reticle_prev_active
+     BEQ render_reticle_maybe
+
+     ; Reticle just turned off.
+     LDA reticle_has_under
+     BEQ render_reticle_maybe
+     JSR restore_reticle_under
+     LDA #0
+     STA reticle_has_under
+
+.render_reticle_maybe
+
+     ; If Chell changed, restore+draw Chell first (reticle depends on it).
+     LDA chell_dirty
+     BEQ render_skip_chell
+
+     LDA chell_has_under
+     BEQ chell_restore_done
+     JSR restore_chell_under
+.chell_restore_done
+
      JSR update_screen_ptr_from_char
-     JSR save_playfield_rect
+     JSR save_chell_under
      JSR draw_character_current
+
+     ; Record Chell screen_ptr for next restore.
+     LDA screen_ptr
+     STA chell_prev_ptr
+     LDA screen_ptr+1
+     STA chell_prev_ptr+1
+     LDA #1
+     STA chell_has_under
+
+.render_skip_chell
+
+     ; Reticle needs redraw if it moved or Chell moved (background under reticle changed).
+     LDA reticle_active
+     BEQ render_done
+
+     LDA reticle_dirty
+     ORA chell_dirty
+     BEQ render_done
+
+     ; If reticle moved, restore old rect.
+     LDA reticle_dirty
+     BEQ reticle_no_restore
+     LDA reticle_has_under
+     BEQ reticle_no_restore
+     JSR restore_reticle_under
+.reticle_no_restore
+
+     JSR update_screen_ptr_from_reticle
+     JSR save_reticle_under
+     JSR draw_reticle_current
+
+     ; Record reticle screen_ptr for next restore.
+     LDA screen_ptr
+     STA reticle_prev_ptr
+     LDA screen_ptr+1
+     STA reticle_prev_ptr+1
+     LDA #1
+     STA reticle_has_under
+
+.render_done
      RTS
 
 
@@ -380,17 +528,208 @@ CHELL_JUMP_LEFT_BASE        = 36
  
 
   .draw_done
-      ; Restore previous ROM selection and re-enable IRQs.
-      LDA saved_romsel
-      STA ROMSEL
-      CLI
-      RTS
+       ; Restore previous ROM selection and re-enable IRQs.
+       LDA saved_romsel
+       STA ROMSEL
+       CLI
+       RTS
+
+; Draw the current reticle at screen_ptr.
+; Reticle sprites live in Chell SWRAM, so we must page the bank in.
+.draw_reticle_current
+    SEI
+    LDA ROMSEL
+    STA saved_romsel
+
+    LDA chell_bank
+    STA ROMSEL
+
+    LDA reticle_state
+    JSR render_reticle_sprite
+
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
+    RTS
 
  
   
- ; Poll Z/X for left/right movement (single-pixel).
+; Poll reticle movement while SHIFT is held.
+; Z/X/:/ move reticle in portal-grid cells.
+; Output: C=1 if redraw needed.
+.poll_reticle_keys
+    LDA #0
+    STA temp
 
-; Uses OSBYTE 129 (INKEY) "scan for a particular key":
+    ; Ensure reticle is active.
+    LDA reticle_active
+    BNE reticle_already_active
+    LDA #1
+    STA reticle_active
+    LDA #1
+    STA temp
+.reticle_already_active
+
+    ; Entering reticle mode: snap reticle to Chell gun position.
+    LDA keys_pressed
+    AND #8
+    BEQ reticle_skip_snap
+
+    ; x = calc_char_x + 8 (roughly Chell center)
+    JSR calc_char_x
+    CLC
+    ADC #8
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CMP #8
+    BCC reticle_snap_x_ok
+    LDA #7
+.reticle_snap_x_ok
+    STA reticle_cell_x
+
+    ; y = calc_char_y + 16 (roughly mid-body)
+    JSR calc_char_y
+    CLC
+    ADC #16
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CMP #16
+    BCC reticle_snap_y_ok
+    LDA #15
+.reticle_snap_y_ok
+    STA reticle_cell_y
+
+    LDA #1
+    STA temp
+.reticle_skip_snap
+
+    ; Chell stays idle (stop horizontal stepping)
+    LDA move_held
+    STA last_move_held
+    LDA #0
+    STA move_held
+    STA move_cooldown
+
+    ; Reticle movement is step-per-press (no auto-repeat).
+
+    ; Reticle left
+    LDA keys_pressed
+    AND #1
+    BEQ reticle_check_right
+    LDA reticle_cell_x
+    BEQ reticle_check_right
+    DEC reticle_cell_x
+    LDA #1
+    STA temp
+
+.reticle_check_right
+    ; Reticle right
+    LDA keys_pressed
+    AND #2
+    BEQ reticle_check_up
+    LDA reticle_cell_x
+    CMP #7
+    BEQ reticle_check_up
+    INC reticle_cell_x
+    LDA #1
+    STA temp
+
+.reticle_check_up
+    ; Reticle up
+    LDA keys_pressed
+    AND #16
+    BEQ reticle_check_down
+    LDA reticle_cell_y
+    BEQ reticle_check_down
+    DEC reticle_cell_y
+    LDA #1
+    STA temp
+
+.reticle_check_down
+    ; Reticle down
+    LDA keys_pressed
+    AND #32
+    BEQ reticle_update_state
+    LDA reticle_cell_y
+    CMP #15
+    BEQ reticle_update_state
+    INC reticle_cell_y
+    LDA #1
+    STA temp
+
+ .reticle_update_state
+    ; Update reticle_state from portalability (no LOS yet).
+    ; We treat a portal cell as portalable if both underlying 8x16 tiles are portalable.
+
+    ; y = cell_y*16 + 8
+    LDY reticle_cell_y
+    LDA times16_table,Y
+    CLC
+    ADC #8
+    TAY
+
+    ; x_left = cell_x*16 + 4
+    LDY reticle_cell_x
+    LDA times16_table,Y
+    CLC
+    ADC #4
+    TAX
+
+    JSR is_portalable
+    BCC reticle_set_blocked
+
+    ; x_right = cell_x*16 + 12
+    LDY reticle_cell_x
+    LDA times16_table,Y
+    CLC
+    ADC #12
+    TAX
+
+    ; Y must still be y_center
+    LDY reticle_cell_y
+    LDA times16_table,Y
+    CLC
+    ADC #8
+    TAY
+
+    JSR is_portalable
+    BCC reticle_set_blocked
+
+.reticle_set_green
+    LDA reticle_state
+    CMP #1
+    BEQ reticle_done
+    LDA #1
+    STA reticle_state
+    LDA #1
+    STA temp
+    JMP reticle_done
+
+.reticle_set_blocked
+    LDA reticle_state
+    BEQ reticle_done
+    LDA #0
+    STA reticle_state
+    LDA #1
+    STA temp
+
+.reticle_done
+    LDA temp
+    BEQ reticle_no_redraw
+    SEC
+    RTS
+.reticle_no_redraw
+    CLC
+    RTS
+
+
+ ; Poll Z/X for left/right movement (single-pixel).
+ 
+ ; Uses OSBYTE 129 (INKEY) "scan for a particular key":
 ;   On entry:  Y=&FF, X=&80..&FF (negative INKEY number)
 ;   On exit:   XY=&FFFF if pressed, else XY=&0000
 ; Horizontal position is represented as:
@@ -503,10 +842,13 @@ CHELL_JUMP_LEFT_BASE        = 36
  
 ; --- Input sampling ---
 ;
-; keys_held bits (this repo conventions):
-;   bit0: left  (Z or cursor left)
-;   bit1: right (X or cursor right)
-;   bit2: jump  (RETURN)
+ ; keys_held bits (this repo conventions):
+ ;   bit0: left        (Z or cursor left)
+ ;   bit1: right       (X or cursor right)
+ ;   bit2: jump        (RETURN)
+ ;   bit3: reticle     (SHIFT held)
+ ;   bit4: reticle up  (':' / cursor up)
+ ;   bit5: reticle down('/' / cursor down)
 ;
 ; Sample keyboard once this frame and build:
 ;   keys_held    = held bits
@@ -539,20 +881,61 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA keys_held
 .sample_no_left
 
-    ; Right (cursor right or X)
-    LDX #&86            ; INKEY(-122) = Right
-    JSR is_key_pressed
-    BCS sample_set_right
-    LDX #&BD            ; INKEY(-67) = 'X'
-    JSR is_key_pressed
-    BCC sample_no_right
-.sample_set_right
-    LDA keys_held
-    ORA #2
-    STA keys_held
-.sample_no_right
+     ; Right (cursor right or X)
+     LDX #&86            ; INKEY(-122) = Right
+     JSR is_key_pressed
+     BCS sample_set_right
+     LDX #&BD            ; INKEY(-67) = 'X'
+     JSR is_key_pressed
+     BCC sample_no_right
+ .sample_set_right
+     LDA keys_held
+     ORA #2
+     STA keys_held
+ .sample_no_right
 
-    ; keys_pressed = keys_held & ~keys_prev
+     ; SHIFT (reticle mode)
+     JSR is_shift_pressed
+     BCC sample_no_shift
+     LDA keys_held
+     ORA #8
+     STA keys_held
+ .sample_no_shift
+
+     ; Reticle up (':' or cursor up)
+     ; ':' = INKEY(-73)
+     LDX #&B7
+     JSR is_key_pressed
+     BCS sample_set_reticle_up
+
+     ; cursor up = 138 => INKEY(-118)
+     LDX #&8A
+     JSR is_key_pressed
+     BCC sample_no_reticle_up
+ .sample_set_reticle_up
+     LDA keys_held
+     ORA #16
+     STA keys_held
+ .sample_no_reticle_up
+
+     ; Reticle down ('/' or cursor down)
+     ; '/' = INKEY(-105)
+     LDX #&97
+     JSR is_key_pressed
+     BCS sample_set_reticle_down
+
+     ; cursor down = 139 => INKEY(-117)
+     LDX #&8B
+     JSR is_key_pressed
+     BCC sample_no_reticle_down
+ .sample_set_reticle_down
+     LDA keys_held
+     ORA #32
+     STA keys_held
+ .sample_no_reticle_down
+ 
+     ; keys_pressed = keys_held & ~keys_prev
+
 
     LDA keys_prev
     EOR #&FF
@@ -563,58 +946,82 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA keys_held
     STA keys_prev
 
-    ; --- Aim sampling ---
-    ; aim_held: 0=none, 1=up, 2=down
-    LDA #0
-    STA aim_held
+     ; --- Aim sampling ---
+     ; aim_held: 0=none, 1=up, 2=down
+     ; While SHIFT is held (reticle mode), aim keys are repurposed.
+     LDA #0
+     STA aim_held
 
-    ; Prefer up if both held.
-    ; ':' = INKEY(-73)
-    LDX #&B7
-    JSR is_key_pressed
-    BCS sample_set_aim_up
+     LDA keys_held
+     AND #8
+     BNE sample_aim_done
 
-    ; cursor up = 138 (see BBC User Guide sample)
-    ; => INKEY(-118)
-    LDX #&8A
-    JSR is_key_pressed
-    BCC sample_check_aim_down
+     ; Prefer up if both held.
+     ; ':' = INKEY(-73)
+     LDX #&B7
+     JSR is_key_pressed
+     BCS sample_set_aim_up
 
-.sample_set_aim_up
-    LDA #1
-    STA aim_held
-    JMP sample_aim_done
+     ; cursor up = 138 (see BBC User Guide sample)
+     ; => INKEY(-118)
+     LDX #&8A
+     JSR is_key_pressed
+     BCC sample_check_aim_down
 
-.sample_check_aim_down
-    ; '/' = INKEY(-105)
-    LDX #&97
-    JSR is_key_pressed
-    BCS sample_set_aim_down
+ .sample_set_aim_up
+     LDA #1
+     STA aim_held
+     JMP sample_aim_done
 
-    ; cursor down = 139 (see BBC User Guide sample)
-    ; => INKEY(-117)
-    LDX #&8B
-    JSR is_key_pressed
-    BCC sample_aim_done
+ .sample_check_aim_down
+     ; '/' = INKEY(-105)
+     LDX #&97
+     JSR is_key_pressed
+     BCS sample_set_aim_down
 
-.sample_set_aim_down
-    LDA #2
-    STA aim_held
+     ; cursor down = 139 (see BBC User Guide sample)
+     ; => INKEY(-117)
+     LDX #&8B
+     JSR is_key_pressed
+     BCC sample_aim_done
 
-.sample_aim_done
+ .sample_set_aim_down
+     LDA #2
+     STA aim_held
+
+ .sample_aim_done
 
 
-; Input: X = negative INKEY number (as 8-bit value)
-; Output: C=1 if pressed
-.is_key_pressed
+ ; Input: X = negative INKEY number (as 8-bit value)
+ ; Output: C=1 if pressed
+ .is_key_pressed
+     LDY #&FF
+     LDA #129
+     JSR OSBYTE
+     CPX #&FF
+     BNE key_not_pressed
+     SEC
+     RTS
+ .key_not_pressed
+     CLC
+     RTS
+
+; Return C=1 if SHIFT key is held.
+; Uses OSBYTE &CA (202) "keyboard status byte".
+; Returned status (old value) is in X:
+; - bit 3 set if SHIFT is pressed.
+.is_shift_pressed
+    LDA #&CA
+    LDX #0
     LDY #&FF
-    LDA #129
     JSR OSBYTE
-    CPX #&FF
-    BNE key_not_pressed
+
+    TXA
+    AND #8
+    BEQ shift_not_pressed
     SEC
     RTS
-.key_not_pressed
+.shift_not_pressed
     CLC
     RTS
  
@@ -1673,6 +2080,36 @@ CHELL_JUMP_LEFT_BASE        = 36
     BCC update_screen_done
     INC screen_ptr+1
 .update_screen_done
+    RTS
+
+; Update screen_ptr from reticle portal-grid cell.
+; Portal grid is 16x16 pixels, so X uses tile_x = reticle_cell_x*2.
+.update_screen_ptr_from_reticle
+    ; tile_y = reticle_cell_y
+    LDA reticle_cell_y
+    STA temp_y
+
+    ; Look up screen base for this tile row
+    ASL A
+    TAY
+    LDA tile_row_screen_table,Y
+    STA screen_ptr
+    LDA tile_row_screen_table+1,Y
+    STA screen_ptr+1
+
+    ; tile_x = reticle_cell_x * 2
+    LDA reticle_cell_x
+    ASL A
+    TAY
+
+    ; Add tile_x * 16
+    LDA times16_table,Y
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC reticle_screen_done
+    INC screen_ptr+1
+.reticle_screen_done
     RTS
 
 ; Update screen_ptr from cube_tile_pos.

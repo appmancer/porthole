@@ -184,6 +184,142 @@ If we later need other mechanics (deadly, bouncy, one-way, etc.), we add more pl
 - `is_solid(x,y)` reads `solid` plane bit.
 - `is_portalable(x,y)` reads `portalable` plane bit.
 
+## Portal Reticle + Line Of Sight (Plan)
+
+### Summary
+
+We want portal placement to be a *decision/puzzle*, not a precision movement test.
+
+Because Chell only moves left/right, we add a SHIFT-held reticle mode to allow aiming at any portalable surface (including high placements on “back wall/flats” type surfaces).
+
+### Controls
+
+- Normal mode: `Z/X` move Chell left/right.
+- Reticle mode: hold **SHIFT** to control a portal reticle.
+  - While SHIFT held:
+    - `Z/X` move reticle left/right
+    - cursor `Up/Down` move reticle up/down
+
+(We still keep “quick shot” aiming available while jumping/falling; reticle mode is for deliberate placements.)
+
+### Reticle snapping
+
+- Reticle snaps to a **16×16 portal grid**.
+- Because the renderer’s base cell grid is 8×16, a 16×16 portal grid means:
+  - X steps are 16px (2 tiles/cells)
+  - Y steps are 16px (1 tile/cell)
+
+### Reticle visuals (size)
+
+- Reticle should be small enough to not obscure the target surface, but large enough to read in MODE 5.
+- We snap to a 16×16 portal grid, so we can represent the cell center cleanly.
+- Recommended: **8×8 crosshair** centered on the portal-cell center `(cell_x*16+8, cell_y*16+8)`.
+  - This avoids needing a full 16×16 sprite.
+  - If we want clearer “cell framing”, add an optional faint 16×16 outline later.
+
+### Development plan
+
+Stage 0: Input + state (no rendering)
+
+- Add a `reticle_active` boolean (SHIFT held), plus `reticle_cell_x` (0..7) and `reticle_cell_y` (0..15).
+- On first entry into reticle mode, initialize reticle position from Chell’s gun position (snap to portal grid) so the reticle starts “where the player is looking”, not at an arbitrary corner.
+- While reticle mode is active:
+  - `Z/X` move `reticle_cell_x` left/right (clamped 0..7)
+  - cursor `Up/Down` move `reticle_cell_y` up/down (clamped 0..15)
+- Ensure we retain “quick shot” behaviour outside reticle mode (so portals can be fired while jumping/falling without entering reticle mode).
+
+Stage 1: Reticle rendering (no portal placement yet)
+
+- Reticle must not leave trails. Use the existing save-under mechanism:
+  - At start of each frame, restore all previous save-under rectangles once.
+  - Save-under and draw Chell.
+  - Save-under and draw the reticle.
+- Reticle sprite assets: two 8×8 masked sprites (valid/invalid). (User to supply red/green versions.)
+- Reticle screen position:
+  - Convert `reticle_cell_x/reticle_cell_y` to pixel coordinates.
+  - Draw centered within the portal cell (see “Reticle visuals”).
+
+Stage 2: Placement validity (ignoring LOS)
+
+- Define what “portalable” means for this stage:
+  - Either derived from tile type (e.g. brick tiles are portalable), or a separate portalable plane.
+  - For now, treat this as a plug-in query `is_portalable_surface_at(cell_x, cell_y, orientation)`.
+- Add a `reticle_state` enum for feedback:
+  - `RETICLE_INVALID_SURFACE`
+  - `RETICLE_VALID_SURFACE_NO_LOS`
+  - `RETICLE_VALID_SURFACE_AND_LOS`
+- Compute the placement footprint from the portal size:
+  - Portals span 16px along the surface.
+  - When checking placement, validate the whole footprint (not just the anchor cell).
+
+Stage 3: Line-of-sight raycast
+
+Rules (agreed):
+
+- Only the tile world blocks LOS (floors/ceilings/walls). Dynamic objects never block LOS.
+- LOS is evaluated against the full visible tile field (screens may show two rooms at once).
+- LOS succeeds if Chell can see either the **top** or **bottom** sample point of the target portal cell.
+
+Implementation outline:
+
+- Define start point `(gun_x, gun_y)`.
+- Define target points for the portal cell:
+  - top sample: `(target_x, cell_y*16 + 1)`
+  - bottom sample: `(target_x, cell_y*16 + 15)`
+  - Where `target_x = cell_x*16 + 8` (center).
+- Perform a grid raycast for each sample (integer DDA / Bresenham style).
+  - Step across the underlying **collision tiles** (8×16) and query solidity.
+  - A ray is blocked if it enters a solid tile before reaching the target.
+- Reticle is “green” only if placement is valid AND LOS passes.
+
+Stage 4: “Enter portal” intent (back wall / flats concern)
+
+Open question (agreed to document first): if the back wall/far plane can host portals, how do we prevent accidental entry when Chell runs past?
+
+Candidate policies:
+
+- Require an explicit “enter” input while overlapping a portal (e.g. hold `Up` or press `RETURN`).
+- Treat far-plane portals as a separate interaction mode (enter/exit toggles plane).
+- Add a small “deadzone” so simply crossing the portal’s X-range doesn’t trigger; require being centered and pressing a direction.
+
+### Validity feedback
+
+- Reticle indicates at least:
+  - placeable + LOS (e.g. “green” or solid)
+  - not placeable (e.g. “red” or hollow)
+  - blocked by LOS (e.g. “X” overlay)
+
+### LOS rules (agreed)
+
+- Floors, ceilings, and walls all block LOS.
+- Only the tile world blocks LOS; dynamic objects (cubes/buttons) do not.
+- Some screens may show two rooms at once; LOS is evaluated against the **full visible tile field**.
+
+### LOS condition (agreed)
+
+- For a target tile, Chell has LOS if she has clear line-of-sight to **either**:
+  - the top sample point of the tile, OR
+  - the bottom sample point of the tile.
+
+This makes portal placement tolerant: if the top edge is visible, you can still place a portal even if the lower edge is occluded (and vice versa).
+
+### LOS algorithm (concept)
+
+- Define a start point at Chell’s portal gun position `(gun_x, gun_y)`.
+- Define two target points at the reticle location:
+  - `(target_x, target_y_top)`
+  - `(target_x, target_y_bottom)`
+- Perform a 2D tile-grid raycast for each target point (integer DDA / Bresenham stepping across tiles).
+- A ray is blocked if it hits any `solid` tile before reaching the target.
+- LOS passes if either ray reaches the target unblocked.
+
+### Open questions
+
+- Entering “back wall” portals: how do we capture player intent so Chell doesn’t accidentally enter while just running past?
+  - Candidates: require an explicit “enter” input while overlapping, or use a direction modifier (e.g. hold Up), or treat back-wall portals as a separate interaction mode.
+- How do we choose the portal surface normal under the reticle (wall/floor/ceiling/back wall) when multiple surfaces overlap in screen space?
+- How should reticle mode interact with jumping/falling (can the player hold SHIFT midair, does it freeze Chell horizontal movement, etc.)?
+
 ## Next Implementation Steps
 
 1) Define memory layout for `solid` and `portalable` planes (8KB working-set).

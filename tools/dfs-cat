@@ -48,58 +48,92 @@ def parse_catalogue(image: bytes) -> list[DFSEntry]:
         raise ValueError("Image too small for DFS catalogue")
 
     cat = image[:CATALOGUE_SIZE]
-    file_count = cat[0x105] & 0x1F
+    header_count = cat[0x105] & 0x1F
+
+    # Some discs have a bogus header count; fall back to scanning the name table.
+    scanned_count = 0
+    for i in range(31):
+        nraw = cat[0x008 + 8 * i : 0x008 + 8 * i + 8]
+        if nraw.rstrip(b" \x00") == b"":
+            break
+        scanned_count += 1
+
+    file_count = scanned_count or header_count
 
     entries: list[DFSEntry] = []
     for i in range(file_count):
         # Names live at 0x008.. (first 8 bytes are disk title).
         # Two formats exist in the wild:
-        # - Classic DFS: first char is directory (optionally with lock bit set).
+        # - Classic DFS: 7-char name + directory (bit7=locked).
         # - Some images (including SpyCat here): 7-char name + 1-byte attribute.
         nraw = cat[0x008 + 8 * i : 0x008 + 8 * i + 8]
         nd = nraw.decode("latin1")
 
+        dir_chars = "$0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+        # Default: assume name+attr, directory "$".
+        directory = "$"
+        name = nd[0:7].rstrip(" ")
         attr = nd[7]
         locked = (ord(attr) & 0x80) != 0 or attr == "\xa4"
 
-        # Default directory when absent.
-        directory = "$"
-        name = nd[0:7].rstrip(" ")
+        # Classic DFS images store directory as the 8th byte (often with lock bit).
+        dir8 = chr(ord(nd[7]) & 0x7F)
+        if dir8 in dir_chars:
+            directory = dir8
+            name = nd[0:7].rstrip(" ")
+            locked = (ord(nd[7]) & 0x80) != 0
+
+        # Some catalogues store directory as the first byte instead.
+        dir0 = chr(ord(nd[0]) & 0x7F)
+        if dir0 in dir_chars and dir8 not in dir_chars:
+            directory = dir0
+            name = nd[1:8].rstrip(" ")
+            locked = (ord(nd[0]) & 0x80) != 0
 
         # Metadata lives at 0x108.. in the second catalogue sector.
         m = cat[0x108 + 8 * i : 0x108 + 8 * i + 8]
-
-        # NOTE: Some discs set the "locked" bit in the directory character.
-        # We display lock based on that bit.
 
         load_lo = _read_u16_le(m[0:2])
         exec_lo = _read_u16_le(m[2:4])
         len_lo = _read_u16_le(m[4:6])
 
-        load_hi = m[6] & 0x0F
-        exec_hi = (m[6] >> 4) & 0x0F
-        # DFS packs extra bits into the last two bytes.
-        # m[6] high nibble: exec high bits
-        # m[6] low nibble:  load high bits
-        # m[7] bits 0-3:    length high bits
-        # m[7] bits 4-5:    start sector high bits
-        # m[7] bits 6-7:    unused here
-        len_hi = m[7] & 0x0F
-        start_hi = (m[7] >> 4) & 0x03
-        start_lo = m[7]  # start sector low 8 bits
-        start_sector = (start_hi << 8) | start_lo
+        def _bounds_ok(start_sector: int, length: int) -> bool:
+            start = start_sector * SECTOR_SIZE
+            end = start + length
+            return end <= len(image)
 
-        load = load_lo | (load_hi << 16)
-        exec_addr = exec_lo | (exec_hi << 16)
-        length = len_lo | (len_hi << 16)
+        # Common 40-track discs use a simple layout:
+        # - 16-bit length
+        # - 8-bit start sector
+        # - load/exec high nibbles packed into m[6]
+        load_b = load_lo | ((m[6] & 0x0F) << 16)
+        exec_b = exec_lo | (((m[6] >> 4) & 0x0F) << 16)
+        start_sector_b = m[7]
+        length_b = len_lo
 
-        # In standard DFS, length is 18-bit: low 16 bits + high nibble in m[7].
-        # Some discs ignore the high nibble and store only 16-bit lengths. We treat a
-        # high nibble as valid only if it keeps the file within the image.
-        start = start_sector * SECTOR_SIZE
-        end = start + length
-        if end > len(image):
-            length = len_lo
+        # Standard DFS packs high bits into m[6].
+        load_a = load_lo | ((m[6] & 0x03) << 16)
+        exec_a = exec_lo | (((m[6] >> 2) & 0x03) << 16)
+        length_a = len_lo | (((m[6] >> 4) & 0x03) << 16)
+        start_sector_a = m[7] | (((m[6] >> 6) & 0x03) << 8)
+
+        if _bounds_ok(start_sector_b, length_b):
+            load = load_b
+            exec_addr = exec_b
+            start_sector = start_sector_b
+            length = length_b
+        elif _bounds_ok(start_sector_a, length_a):
+            load = load_a
+            exec_addr = exec_a
+            start_sector = start_sector_a
+            length = length_a
+        else:
+            # Fall back to 16-bit length and raw start byte.
+            load = load_b
+            exec_addr = exec_b
+            start_sector = start_sector_b
+            length = length_b
 
         entries.append(
             DFSEntry(

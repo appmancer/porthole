@@ -96,6 +96,12 @@ EQUW chell_rgun_l3_x1
 EQUW chell_rgun_l3_x2
 EQUW chell_rgun_l3_x3
 
+; Reticle sprites (16x16). Generated from `sprites/Reticles - Reference.csv`.
+; reticle_x0 = blocked/unportalable, reticle_x1 = portalable.
+.reticle_sprite_table
+EQUW reticle_x0
+EQUW reticle_x1
+
 ; Wide 8x16 tile sprite data
 .sprite_data
 .largebrick ; &1

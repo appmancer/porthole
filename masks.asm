@@ -66,10 +66,15 @@
     EQUW chell_rgun_l2_x1_mask
     EQUW chell_rgun_l2_x2_mask
     EQUW chell_rgun_l2_x3_mask
-    EQUW chell_rgun_l3_x0_mask
-    EQUW chell_rgun_l3_x1_mask
-    EQUW chell_rgun_l3_x2_mask
-    EQUW chell_rgun_l3_x3_mask
+EQUW chell_rgun_l3_x0_mask
+EQUW chell_rgun_l3_x1_mask
+EQUW chell_rgun_l3_x2_mask
+EQUW chell_rgun_l3_x3_mask
+
+.reticle_mask_table
+EQUW reticle_x0_mask
+EQUW reticle_x1_mask
+
 
 ; Masks for generated character sprites.
 ; Chell masks are now loaded into sideways RAM at runtime (see `main.asm`).

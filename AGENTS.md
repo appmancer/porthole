@@ -105,3 +105,20 @@ Environment overrides used by the tools:
 Do not manually add a `!BOOT` file to the DFS image when using beebasm `-boot`, as it auto-creates `!Boot` and will fail with:
 
 `File already exists on DFS disc image.`
+
+## Engine invariants (long-running)
+
+These are project-level rules that should remain true even as features evolve.
+
+- **Update vs render contract**: update computes all gameplay state; render consumes only computed state.
+- **VSync-first rendering**: render immediately after `wait_vsync` (one-frame latency is OK) to maximise time before scanout.
+- **Top-of-screen is time-critical**: if drawing/restore work runs into scanout, artifacts appear first near the top rows.
+- **Save-under overlap rule**: if you use a pool of save-under rectangles, restore newest-first (LIFO) to avoid resurrecting pixels from overlapped sprites.
+- **Scratch RAM contract**: `&7800..&7FFF` may be used as workspace, but avoid MOS clears and don’t change CRTC start-address scrolling without revisiting.
+
+## Token-safe workflow (tooling constraint)
+
+Large tool outputs can trigger TPM rate limits. Prefer small, incremental iterations:
+
+- Keep terminal output small (avoid full `git diff` dumps; prefer `--stat`).
+- When reverse engineering, extract small chunks and record findings in a repo file (e.g. `nevyron_notes.md`) instead of pasting long disassemblies into chat.

@@ -318,7 +318,46 @@
 
     RTS
 
-; Sprite blit used by Spycat-format character sprites.
+; Render a 16x16 reticle sprite with mask.
+; Input: A = reticle state index (0=blocked/unportalable, 1=portalable).
+; Drawn at `screen_ptr` with no built-in offset.
+.render_reticle_sprite
+    ; Preserve input index before clobbering A.
+    STA temp
+
+    ; preserve screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+
+    ; Restore our index (original A)
+    LDA temp
+
+    ASL A
+    TAX
+
+    LDA reticle_sprite_table,X
+    STA sprite_ptr
+    LDA reticle_sprite_table+1,X
+    STA sprite_ptr+1
+
+    LDA reticle_mask_table,X
+    STA mask_ptr
+    LDA reticle_mask_table+1,X
+    STA mask_ptr+1
+
+    JSR plot_sprite16x16_masked_striped
+
+    ; restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+
+    RTS
+ 
+ ; Sprite blit used by Spycat-format character sprites.
 ; Data: 4 stripes × 32 bytes/stripe (8 scanlines × 4 bytes/scanline).
 ; Screen: each stripe is 8 scanlines below the previous one.
 ;
@@ -562,175 +601,190 @@
 
 
 
-SAVE_UNDER_POOL_BASE      = &7800
-SAVE_UNDER_SLOT_SIZE      = 128
-SAVE_UNDER_MAX_SLOTS      = 4
+; Dedicated save-under buffers in screen scratch.
+; We avoid the general pool so we can restore/draw per object (and skip work
+; entirely when an object hasn't moved).
+CHELL_SAVE_UNDER_BASE     = &7800   ; 16x32 = 128 bytes
+RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
 
 ; 256-byte solid-tile plane (16x16 tiles) stored in screen scratch.
 ; 0 = empty, nonzero = solid.
 SOLID_TILE_PLANE          = &7A00
 
-; Save-under pool (4 slots × 128 bytes).
+; Save-under helpers.
 ;
-; Each slot stores a 16x32 rectangle in our striped order:
-; - 4 stripes
-; - 32 bytes per stripe
-; Slots are stored contiguously (not spaced by 256-byte scanline stride).
+; These copy raw screen bytes into a contiguous buffer and restore them later.
+; This is intentionally separate from sprite masking.
 ;
-; `save_under_count` and per-slot screen pointers live in ZP (main.asm).
+; Chell: 16x32 -> 4 stripes x 32 bytes.
+; Reticle: 16x16 -> 2 stripes x 32 bytes.
 
-; Save the 16x32 sprite rectangle (4 bytes wide × 32 scanlines) under `screen_ptr`.
-; Allocates the next free slot and records its destination address.
-;
-; If the pool is full, the save is skipped (sprite may leave trails).
-.save_playfield_rect
-    LDA save_under_count
-    CMP #SAVE_UNDER_MAX_SLOTS
-    BCS save_under_full
-
-    TAX                         ; X = slot
-    INC save_under_count
-
-    ; Record destination screen pointer for restore.
-    LDA screen_ptr
-    STA save_under_screen_low,X
-    LDA screen_ptr+1
-    STA save_under_screen_high,X
-
-    ; temp_mask_ptr := source pointer (screen)
+; Save 16x32 under screen_ptr into CHELL_SAVE_UNDER_BASE.
+.save_chell_under
+    ; temp_mask_ptr := source screen
     LDA screen_ptr
     STA temp_mask_ptr
     LDA screen_ptr+1
     STA temp_mask_ptr+1
 
-    ; sprite_ptr := slot buffer base
-    LDA #<(SAVE_UNDER_POOL_BASE)
+    ; sprite_ptr := dest buffer
+    LDA #<(CHELL_SAVE_UNDER_BASE)
     STA sprite_ptr
-    LDA #>(SAVE_UNDER_POOL_BASE)
+    LDA #>(CHELL_SAVE_UNDER_BASE)
     STA sprite_ptr+1
 
-    ; slot*128: low = (slot&1)*&80, high += slot>>1
-    TXA
-    LSR A
-    CLC
-    ADC sprite_ptr+1
-    STA sprite_ptr+1
-
-    TXA
-    AND #1
-    BEQ save_slot_ptr_ok
-    LDA #&80
-    STA sprite_ptr
-.save_slot_ptr_ok
-
-    ; Copy 4 stripes.
     LDY #0
-    STY temp                  ; stripe counter
-.save_stripe_loop
+    STY temp
+.save_chell_stripe
     LDY #0
-.save_row_bytes
+.save_chell_bytes
     LDA (temp_mask_ptr),Y
     STA (sprite_ptr),Y
     INY
     CPY #32
-    BNE save_row_bytes
+    BNE save_chell_bytes
 
-    ; Next stripe on screen: move down 8 scanlines.
-    ; MODE 5 has 256-byte interleave per 8 scanlines, so this is +&0100.
-    ; (tile rows are 16 scanlines high, so `tile_row_screen_table` steps by +512.)
     INC temp_mask_ptr+1
 
-    ; Next stripe in save-under buffer (+32 bytes)
     LDA sprite_ptr
     CLC
     ADC #32
     STA sprite_ptr
-    BCC save_next_stripe
+    BCC save_chell_next
     INC sprite_ptr+1
-.save_next_stripe
+.save_chell_next
 
     INC temp
     LDA temp
     CMP #4
-    BNE save_stripe_loop
+    BNE save_chell_stripe
 
-.save_under_full
     RTS
 
-; Restore all saved rectangles from last frame and reset the pool.
-;
-; Restore order matters when objects overlap.
-; We restore in the same order the slots were allocated (oldest first), so that
-; later objects' saved-under data (which may include earlier objects) wins.
-.restore_playfield_rect
-    LDA save_under_count
-    BEQ restore_done
-    STA temp_y
-
-    LDX #0
-.restore_slot_loop
-    ; temp_mask_ptr := destination screen pointer for this slot
-    LDA save_under_screen_low,X
+; Restore 16x32 from CHELL_SAVE_UNDER_BASE to chell_prev_ptr.
+.restore_chell_under
+    ; temp_mask_ptr := dest screen
+    LDA chell_prev_ptr
     STA temp_mask_ptr
-    LDA save_under_screen_high,X
+    LDA chell_prev_ptr+1
     STA temp_mask_ptr+1
 
-    ; sprite_ptr := slot buffer base
-    LDA #<(SAVE_UNDER_POOL_BASE)
+    ; sprite_ptr := src buffer
+    LDA #<(CHELL_SAVE_UNDER_BASE)
     STA sprite_ptr
-    LDA #>(SAVE_UNDER_POOL_BASE)
+    LDA #>(CHELL_SAVE_UNDER_BASE)
     STA sprite_ptr+1
 
-    TXA
-    LSR A
-    CLC
-    ADC sprite_ptr+1
-    STA sprite_ptr+1
-
-    TXA
-    AND #1
-    BEQ restore_slot_ptr_ok
-    LDA #&80
-    STA sprite_ptr
-.restore_slot_ptr_ok
-
-    ; Copy 4 stripes.
     LDY #0
-    STY temp                  ; stripe counter
-.restore_stripe_loop
+    STY temp
+.restore_chell_stripe
     LDY #0
-.restore_row_bytes
+.restore_chell_bytes
     LDA (sprite_ptr),Y
     STA (temp_mask_ptr),Y
     INY
     CPY #32
-    BNE restore_row_bytes
+    BNE restore_chell_bytes
 
-    ; Next stripe on screen: move down 8 scanlines (+&0100).
     INC temp_mask_ptr+1
 
-    ; Next stripe in buffer (+32 bytes)
     LDA sprite_ptr
     CLC
     ADC #32
     STA sprite_ptr
-    BCC restore_next_stripe
+    BCC restore_chell_next
     INC sprite_ptr+1
-.restore_next_stripe
+.restore_chell_next
 
     INC temp
     LDA temp
     CMP #4
-    BNE restore_stripe_loop
+    BNE restore_chell_stripe
 
-    INX
-    CPX temp_y
-    BNE restore_slot_loop
+    RTS
 
-    LDA #0
-    STA save_under_count
+; Save 16x16 under screen_ptr into RETICLE_SAVE_UNDER_BASE.
+.save_reticle_under
+    ; temp_mask_ptr := source screen
+    LDA screen_ptr
+    STA temp_mask_ptr
+    LDA screen_ptr+1
+    STA temp_mask_ptr+1
 
-.restore_done
+    ; sprite_ptr := dest buffer
+    LDA #<(RETICLE_SAVE_UNDER_BASE)
+    STA sprite_ptr
+    LDA #>(RETICLE_SAVE_UNDER_BASE)
+    STA sprite_ptr+1
+
+    LDY #0
+    STY temp
+.save_reticle_stripe
+    LDY #0
+.save_reticle_bytes
+    LDA (temp_mask_ptr),Y
+    STA (sprite_ptr),Y
+    INY
+    CPY #32
+    BNE save_reticle_bytes
+
+    INC temp_mask_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC save_reticle_next
+    INC sprite_ptr+1
+.save_reticle_next
+
+    INC temp
+    LDA temp
+    CMP #2
+    BNE save_reticle_stripe
+
+    RTS
+
+; Restore 16x16 from RETICLE_SAVE_UNDER_BASE to reticle_prev_ptr.
+.restore_reticle_under
+    ; temp_mask_ptr := dest screen
+    LDA reticle_prev_ptr
+    STA temp_mask_ptr
+    LDA reticle_prev_ptr+1
+    STA temp_mask_ptr+1
+
+    ; sprite_ptr := src buffer
+    LDA #<(RETICLE_SAVE_UNDER_BASE)
+    STA sprite_ptr
+    LDA #>(RETICLE_SAVE_UNDER_BASE)
+    STA sprite_ptr+1
+
+    LDY #0
+    STY temp
+.restore_reticle_stripe
+    LDY #0
+.restore_reticle_bytes
+    LDA (sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    CPY #32
+    BNE restore_reticle_bytes
+
+    INC temp_mask_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC restore_reticle_next
+    INC sprite_ptr+1
+.restore_reticle_next
+
+    INC temp
+    LDA temp
+    CMP #2
+    BNE restore_reticle_stripe
+
     RTS
 
 ; Build a 16x16 solid-tile plane from the current room tilemap.

@@ -33,43 +33,65 @@ def _parse_entries(image: bytes):
         raise ValueError("Image too small for DFS catalogue")
 
     cat = image[:CATALOGUE_SIZE]
-    file_count = cat[0x105] & 0x1F
+    header_count = cat[0x105] & 0x1F
+
+    scanned_count = 0
+    for i in range(31):
+        nraw = cat[0x008 + 8 * i : 0x008 + 8 * i + 8]
+        if nraw.rstrip(b" \x00") == b"":
+            break
+        scanned_count += 1
+
+    file_count = scanned_count or header_count
 
     entries = []
     for i in range(file_count):
         nraw = cat[0x008 + 8 * i : 0x008 + 8 * i + 8]
         nd = nraw.decode("latin1")
 
-        # See dfs-cat for format notes: assume 7-char name + attribute.
+        dir_chars = "$0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+        # Default: assume name+attr, directory "$".
         directory = "$"
         name = nd[0:7].rstrip(" ")
 
-        m = cat[0x108 + 8 * i : 0x108 + 8 * i + 8]
-        # Match the packing used in dfs-cat (standard DFS):
-        # - start sector: high bits in m[7] bits 4-5, low 8 bits in m[7]
-        # - length: low 16 bits in m[4:6], high nibble in m[7] bits 0-3
-        start_hi = (m[7] >> 4) & 0x03
-        start_lo = m[7]
-        start_sector = (start_hi << 8) | start_lo
+        # Classic DFS images store directory as the 8th byte (often with lock bit).
+        dir8 = chr(ord(nd[7]) & 0x7F)
+        if dir8 in dir_chars:
+            directory = dir8
+            name = nd[0:7].rstrip(" ")
 
-        # Some discs encode the start sector low byte in m[6]/m[7]
-        # differently; if the computed sector is implausible for a 200KB
-        # single-sided image, fall back to just m[7].
-        if start_sector >= (len(image) // SECTOR_SIZE):
-            start_sector = start_lo
+        # Some catalogues store directory as the first byte instead.
+        dir0 = chr(ord(nd[0]) & 0x7F)
+        if dir0 in dir_chars and dir8 not in dir_chars:
+            directory = dir0
+            name = nd[1:8].rstrip(" ")
+
+        m = cat[0x108 + 8 * i : 0x108 + 8 * i + 8]
 
         length_lo = _read_u16_le(m[4:6])
-        length = length_lo | ((m[7] & 0x0F) << 16)
 
-        # If the high nibble makes the length implausible for this image,
-        # fall back to the 16-bit length.
-        if start_sector * SECTOR_SIZE + length > len(image):
-            length = length_lo
+        # Prefer the 40-track/nibble-layout when it fits within the image.
+        start_sector_b = m[7]
+        length_b = length_lo
 
-        start = start_sector * SECTOR_SIZE
-        end = start + length
-        if end > len(image):
-            length = length_lo
+        start_sector_a = m[7] | (((m[6] >> 6) & 0x03) << 8)
+        length_a = length_lo | (((m[6] >> 4) & 0x03) << 16)
+
+        def _bounds_ok(start_sector: int, length: int) -> bool:
+            start = start_sector * SECTOR_SIZE
+            end = start + length
+            return end <= len(image)
+
+        if _bounds_ok(start_sector_b, length_b):
+            start_sector = start_sector_b
+            length = length_b
+        elif _bounds_ok(start_sector_a, length_a):
+            start_sector = start_sector_a
+            length = length_a
+        else:
+            start_sector = start_sector_b
+            length = length_b
 
         entries.append((f"{directory}.{name}", start_sector, length))
 

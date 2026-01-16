@@ -481,3 +481,13 @@
     EQUB &11,&11,&11,&11,&11,&11,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &EE,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&88,&88,&00,&00,&00
     EQUB &00,&00,&00,&00,&00,&00,&88,&CC,&FF,&77,&77,&77,&FF,&77,&77,&FF
+.reticle_x0_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&88,&88,&11,&11,&33,&33
+    EQUB &FF,&33,&11,&11,&88,&88,&CC,&CC,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&33,&33,&11,&11,&88,&88,&CC,&FF
+    EQUB &CC,&CC,&88,&88,&11,&11,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+.reticle_x1_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&88,&88,&11,&11,&33,&33
+    EQUB &FF,&33,&11,&11,&88,&88,&CC,&CC,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&33,&33,&11,&11,&88,&88,&CC,&FF
+    EQUB &CC,&CC,&88,&88,&11,&11,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
