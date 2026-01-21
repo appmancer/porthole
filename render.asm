@@ -440,9 +440,9 @@
 
     RTS
 
-; Masked version (Spycat-style): dst = (dst & mask) | pix
-; Requires: sprite_ptr = pix data, mask_ptr = mask data, screen_ptr = top-left screen
-.plot_sprite12x32_masked_striped
+ ; Masked version (Spycat-style): dst = (dst & mask) | pix
+ ; Requires: sprite_ptr = pix data, mask_ptr = mask data, screen_ptr = top-left screen
+ .plot_sprite12x32_masked_striped
     ; Preserve base pointers so we can restore them.
     LDA sprite_ptr
     STA temp_sprite_ptr
@@ -454,13 +454,36 @@
     STA temp_mask_ptr+1
 
     LDX #0
-.masked_stripe_loop
+ .masked_stripe_loop
     LDY #0
-.masked_row_bytes
+ .masked_row_bytes
+    ; Fast paths:
+    ; - mask==&00: fully opaque -> dst=pix
+    ; - mask==&FF and pix==&00: fully transparent -> skip
+    LDA (mask_ptr),Y
+    BEQ masked_opaque
+    CMP #&FF
+    BEQ masked_maybe_transparent
+
+    STA temp
     LDA (screen_ptr),Y
-    AND (mask_ptr),Y
+    AND temp
     ORA (sprite_ptr),Y
     STA (screen_ptr),Y
+    JMP masked_next_byte
+
+  .masked_opaque
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP masked_next_byte
+
+  .masked_maybe_transparent
+    LDA (sprite_ptr),Y
+    BEQ masked_next_byte
+    ORA (screen_ptr),Y
+    STA (screen_ptr),Y
+
+  .masked_next_byte
 
     INY
     CPY #32
@@ -557,10 +580,10 @@
 
     RTS
 
-; Masked version (Spycat-style): 16x16 (two stripes): dst = (dst & mask) | pix
-; Requires: sprite_ptr = pix data, mask_ptr = mask data
-;          screen_ptr = top-left screen address for stripe 0
-.plot_sprite16x16_masked_striped
+ ; Masked version (Spycat-style): 16x16 (two stripes): dst = (dst & mask) | pix
+ ; Requires: sprite_ptr = pix data, mask_ptr = mask data
+ ;          screen_ptr = top-left screen address for stripe 0
+ .plot_sprite16x16_masked_striped
     ; Preserve base pointers so we can restore them.
     LDA sprite_ptr
     STA temp_sprite_ptr
@@ -573,11 +596,31 @@
 
     ; Stripe 0: copy 32 bytes
     LDY #0
-.overlay_bytes0
+ .overlay_bytes0
+    LDA (mask_ptr),Y
+    BEQ overlay_opaque0
+    CMP #&FF
+    BEQ overlay_maybe_transparent0
+
+    STA temp
     LDA (screen_ptr),Y
-    AND (mask_ptr),Y
+    AND temp
     ORA (sprite_ptr),Y
     STA (screen_ptr),Y
+    JMP overlay_next0
+
+  .overlay_opaque0
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP overlay_next0
+
+  .overlay_maybe_transparent0
+    LDA (sprite_ptr),Y
+    BEQ overlay_next0
+    ORA (screen_ptr),Y
+    STA (screen_ptr),Y
+
+  .overlay_next0
     INY
     CPY #32
     BNE overlay_bytes0
@@ -603,11 +646,31 @@
 
     ; Stripe 1: copy 32 bytes
     LDY #0
-.overlay_bytes1
+ .overlay_bytes1
+    LDA (mask_ptr),Y
+    BEQ overlay_opaque1
+    CMP #&FF
+    BEQ overlay_maybe_transparent1
+
+    STA temp
     LDA (screen_ptr),Y
-    AND (mask_ptr),Y
+    AND temp
     ORA (sprite_ptr),Y
     STA (screen_ptr),Y
+    JMP overlay_next1
+
+  .overlay_opaque1
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP overlay_next1
+
+  .overlay_maybe_transparent1
+    LDA (sprite_ptr),Y
+    BEQ overlay_next1
+    ORA (screen_ptr),Y
+    STA (screen_ptr),Y
+
+  .overlay_next1
     INY
     CPY #32
     BNE overlay_bytes1

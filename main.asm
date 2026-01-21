@@ -50,6 +50,12 @@ ORG &70
 .cube_byte_offset    SKIP 1    ; Cube byte offset within cell (0/8)
 .char_sprite_index  SKIP 1    ; Stable sprite index
 
+; Precomputed render decisions for Chell (computed in update; used in render).
+.chell_new_ptr       SKIP 2    ; next screen_ptr for Chell
+.chell_body_index    SKIP 1    ; sprite index into character_sprite_table
+.chell_overlay_index SKIP 1    ; sprite index into overlay_sprite_table
+.last_aim_held       SKIP 1    ; previous aim_held (0/1/2)
+
 .reticle_cell_x      SKIP 1    ; 0..7 (portal grid X)
 .reticle_cell_y      SKIP 1    ; 0..15 (portal grid Y)
 .reticle_state       SKIP 1    ; 0=blocked, 1=portalable
@@ -171,6 +177,10 @@ CHELL_JUMP_LEFT_BASE        = 36
     ; save-under pool removed; leave count unused
     STA save_under_count
 
+    STA chell_body_index
+    STA chell_overlay_index
+    STA last_aim_held
+
     ; Reticle starts inactive.
     LDA #0
     STA reticle_active
@@ -200,7 +210,13 @@ CHELL_JUMP_LEFT_BASE        = 36
     JSR build_material_planes_from_tilemap
 
     ; Draw the initial sprite once (allocates Chell save-under).
-    JSR update_screen_ptr_from_char
+    ; Precompute render decisions, then draw from them.
+    JSR compute_chell_render_state
+    LDA chell_new_ptr
+    STA screen_ptr
+    LDA chell_new_ptr+1
+    STA screen_ptr+1
+
     JSR save_chell_under
     JSR draw_character_current
 
@@ -220,10 +236,10 @@ CHELL_JUMP_LEFT_BASE        = 36
        JSR wait_vsync
 
        ; Render previous frame immediately after VSYNC.
-       ; Incremental: only redraw Chell when dirty.
+       ; Incremental: redraw only what changed (Chell + reticle).
        LDA dirty_flag
        BEQ main_skip_render
-       JSR render_chell_simple
+       JSR render_frame_simple
  .main_skip_render
 
        ; Sample input once per frame; gameplay consumes only key bits.
@@ -234,19 +250,50 @@ CHELL_JUMP_LEFT_BASE        = 36
         JMP main_loop
 
 
- ; --- Render (incremental Chell only) ---
- ; Uses chell_dirty computed in the previous update.
- .render_chell_simple
-       LDA chell_dirty
-       BEQ render_chell_simple_done
+ ; --- Render (incremental frame) ---
+ ; Uses chell_dirty/reticle_dirty computed in the previous update.
+ ; Reticle redraw condition includes chell_dirty because Chell can move under it.
+ .render_frame_simple
+       ; Handle reticle deactivation: restore last rect.
+       LDA reticle_active
+       BNE render_reticle_active
+       LDA reticle_prev_active
+       BEQ render_restore_maybe
+       LDA reticle_has_under
+       BEQ render_restore_maybe
+       JSR restore_reticle_under
+       LDA #0
+       STA reticle_has_under
+       JMP render_restore_maybe
 
-       ; Restore previous background under Chell.
+ .render_reticle_active
+       ; If reticle will be redrawn, restore it first (LIFO peel) so we don't
+       ; resurrect old Chell pixels that were under the reticle.
+       LDA reticle_dirty
+       ORA chell_dirty
+       BEQ render_restore_maybe
+       LDA reticle_has_under
+       BEQ render_restore_maybe
+       JSR restore_reticle_under
+
+ .render_restore_maybe
+       ; Restore Chell under if it moved.
+       LDA chell_dirty
+       BEQ render_draw_maybe
        LDA chell_has_under
-       BEQ render_chell_simple_draw
+       BEQ render_draw_maybe
        JSR restore_chell_under
 
- .render_chell_simple_draw
-       JSR update_screen_ptr_from_char
+ .render_draw_maybe
+       ; Draw Chell if dirty.
+       LDA chell_dirty
+       BEQ render_draw_reticle_maybe
+
+       ; screen_ptr := precomputed new pointer
+       LDA chell_new_ptr
+       STA screen_ptr
+       LDA chell_new_ptr+1
+       STA screen_ptr+1
        JSR save_chell_under
        JSR draw_character_current
 
@@ -258,7 +305,27 @@ CHELL_JUMP_LEFT_BASE        = 36
        LDA #1
        STA chell_has_under
 
- .render_chell_simple_done
+ .render_draw_reticle_maybe
+       ; Draw reticle if active and needs redraw.
+       LDA reticle_active
+       BEQ render_frame_done
+       LDA reticle_dirty
+       ORA chell_dirty
+       BEQ render_frame_done
+
+       JSR update_screen_ptr_from_reticle
+       JSR save_reticle_under
+       JSR draw_reticle_current
+
+       ; Record reticle screen_ptr for next restore.
+       LDA screen_ptr
+       STA reticle_prev_ptr
+       LDA screen_ptr+1
+       STA reticle_prev_ptr+1
+       LDA #1
+       STA reticle_has_under
+
+ .render_frame_done
        RTS
 
 
@@ -319,10 +386,59 @@ CHELL_JUMP_LEFT_BASE        = 36
        LDA #1
        STA chell_dirty
 
- .update_finish
-        ; Dirty flag for next frame: Chell only.
+  .update_finish
+        ; Aim changes should trigger redraw while running (overlay changes).
+        LDA char_grounded
+        BEQ aim_change_done
+        LDA move_held
+        BEQ aim_change_done
+        LDA aim_held
+        CMP last_aim_held
+        BEQ aim_change_done
+        LDA #1
+        STA chell_dirty
+ .aim_change_done
+        LDA aim_held
+        STA last_aim_held
+
+        ; Precompute Chell render decisions for next frame.
         LDA chell_dirty
+        BEQ skip_precompute
+        JSR compute_chell_render_state
+ .skip_precompute
+
+        ; Dirty flag for next frame.
+        ; - If Chell is dirty, we must redraw Chell.
+        ; - If reticle is active and (reticle_dirty or chell_dirty), redraw reticle.
+        ; - If reticle just deactivated and had under saved, restore it.
+
+        LDA #0
         STA dirty_flag
+
+        LDA chell_dirty
+        BEQ df_skip_chell
+        LDA #1
+        STA dirty_flag
+ .df_skip_chell
+
+        LDA reticle_active
+        BEQ df_reticle_off
+        LDA reticle_dirty
+        ORA chell_dirty
+        BEQ df_done
+        LDA #1
+        STA dirty_flag
+        JMP df_done
+
+ .df_reticle_off
+        LDA reticle_prev_active
+        BEQ df_done
+        LDA reticle_has_under
+        BEQ df_done
+        LDA #1
+        STA dirty_flag
+
+ .df_done
         RTS
  
 
@@ -344,165 +460,19 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA chell_bank
     STA ROMSEL
 
-      ; Airborne: draw jump pose only.
-      ; (Aim is held-only, and currently only affects overlay.)
-      LDA char_grounded
-      BNE draw_grounded
-
-
-    ; jump_base = CHELL_JUMP_RIGHT_BASE or CHELL_JUMP_LEFT_BASE
-    LDA anim_dir
-    BNE jump_right
-    LDA #CHELL_JUMP_LEFT_BASE
-    BNE jump_base_ok
-.jump_right
-    LDA #CHELL_JUMP_RIGHT_BASE
-.jump_base_ok
-    CLC
-    ADC char_pixel_offset
-    STA char_sprite_index
-
-      LDA char_sprite_index
-      JSR render_character_sprite
-
-      ; Jump: always draw gun forward overlay (no aim cycling here).
-      LDA anim_dir
-      BNE jump_overlay_right
-      LDA #CHELL_RUN_LEFT_BASE
-      BNE jump_overlay_base_ok
- .jump_overlay_right
-      LDA #0
- .jump_overlay_base_ok
-      CLC
-      ADC char_pixel_offset
-      JSR render_overlay_sprite
-
-     JMP draw_done
-
-.draw_grounded
-    ; If no movement key held, use idle pose.
-    LDA move_held
-    BNE draw_running
-
-    LDA anim_dir
-    BNE idle_right
-    LDA #CHELL_IDLE_LEFT_BASE
-    BNE idle_base_ok
-.idle_right
-    LDA #CHELL_IDLE_RIGHT_BASE
-.idle_base_ok
-    CLC
-    ADC char_pixel_offset
-    STA char_sprite_index
-
-    LDA char_sprite_index
+    ; Body
+    LDA chell_body_index
     JSR render_character_sprite
 
-      ; Idle: always draw gun forward overlay (no aim cycling here).
-      LDA anim_dir
-      BNE idle_overlay_right
-      LDA #CHELL_RUN_LEFT_BASE
-      BNE idle_overlay_base_ok
- .idle_overlay_right
-      LDA #0
- .idle_overlay_base_ok
-      CLC
-      ADC char_pixel_offset
-      JSR render_overlay_sprite
+    ; Overlay
+    LDA chell_overlay_index
+    JSR render_overlay_sprite
 
-
-    JMP draw_done
-
-  .draw_running
-     ; Running: animate body + aim overlay.
-
- .draw_running_go
-     ; Index = run_frame*4 + subpixel_offset
-     ; run_frame cycles 0,1,0,2 (i.e. 1,2,1,3)
-     ; Facing selects between right-facing (0..11) and left-facing (12..23).
-     LDX anim_frame
-     LDA run_frame_seq,X
-     ASL A
-     ASL A
-     STA char_sprite_index
-
-
-    ; If facing left, add run-left base.
-    LDA anim_dir
-    BNE facing_right
-    LDA char_sprite_index
-    CLC
-    ADC #CHELL_RUN_LEFT_BASE
-    STA char_sprite_index
- .facing_right
- 
-     LDA char_sprite_index
-     CLC
-     ADC char_pixel_offset
-     STA char_sprite_index
- 
-     LDA char_sprite_index
-     JSR render_character_sprite
-
-      ; Overlay index must be computed independently of body sprite index.
-      ; Overlay table is 24 entries:
-      ;   per direction: 3 aim frames (forward/down/up) x 4 subpixel = 12
-      ;   right: forward/down/up x0..x3 = 0..11
-      ;   left:  forward/down/up x0..x3 = 12..23
-      ; Overlay behaviour:
-      ; - aim_held=0 (forward): cycle overlay with run animation.
-      ; - aim_held=1 (up) or 2 (down): fixed overlay frame.
-
-      ; First compute a base within the direction: (aim_frame*4).
-      ; aim_frame mapping: forward=0, down=1, up=2
-      LDA aim_held
-      BEQ run_overlay_aimframe_ok
-      CMP #2
-      BNE run_overlay_aim_up
-      LDA #1
-      BNE run_overlay_aimframe_ok
- .run_overlay_aim_up
-      LDA #2
- .run_overlay_aimframe_ok
-      ASL A
-      ASL A
-      STA temp
-
-      ; If not aiming, add run-phase cycling (0/4/8).
-      LDA aim_held
-      BNE run_overlay_have_index
-
-      LDX anim_frame
-      LDA run_frame_seq,X
-      ASL A
-      ASL A
-      CLC
-      ADC temp
-      STA temp
-
- .run_overlay_have_index
-
-      ; Facing left adds 12.
-      LDA anim_dir
-      BNE overlay_run_right
-      LDA temp
-      CLC
-      ADC #CHELL_RUN_LEFT_BASE
-      STA temp
- .overlay_run_right
-
-      LDA temp
-      CLC
-      ADC char_pixel_offset
-      JSR render_overlay_sprite
- 
-
-  .draw_done
-       ; Restore previous ROM selection and re-enable IRQs.
-       LDA saved_romsel
-       STA ROMSEL
-       CLI
-       RTS
+    ; Restore previous ROM selection and re-enable IRQs.
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
+    RTS
 
 ; Draw the current reticle at screen_ptr.
 ; Reticle sprites live in Chell SWRAM, so we must page the bank in.
@@ -520,6 +490,129 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA saved_romsel
     STA ROMSEL
     CLI
+    RTS
+
+
+; Compute render decisions for Chell (next screen pointer + sprite indices).
+; Output:
+; - chell_new_ptr = next screen address
+; - chell_body_index = character sprite index (0-based)
+; - chell_overlay_index = overlay sprite index (0-based)
+.compute_chell_render_state
+    ; Compute new screen pointer.
+    JSR update_screen_ptr_from_char
+    LDA screen_ptr
+    STA chell_new_ptr
+    LDA screen_ptr+1
+    STA chell_new_ptr+1
+
+    ; --- Body sprite index ---
+    ; Default to idle pose; overwritten below.
+    LDA char_grounded
+    BNE cs_grounded
+
+    ; Jump pose (airborne)
+    LDA anim_dir
+    BNE cs_jump_right
+    LDA #CHELL_JUMP_LEFT_BASE
+    BNE cs_body_base_ok
+ .cs_jump_right
+    LDA #CHELL_JUMP_RIGHT_BASE
+    BNE cs_body_base_ok
+
+ .cs_grounded
+    ; Grounded: idle or running
+    LDA move_held
+    BNE cs_running
+
+    ; Idle
+    LDA anim_dir
+    BNE cs_idle_right
+    LDA #CHELL_IDLE_LEFT_BASE
+    BNE cs_body_base_ok
+ .cs_idle_right
+    LDA #CHELL_IDLE_RIGHT_BASE
+    BNE cs_body_base_ok
+
+ .cs_running
+    ; Run frame base: run_frame_seq[anim_frame] * 4
+    LDX anim_frame
+    LDA run_frame_seq,X
+    ASL A
+    ASL A
+
+    ; Facing left adds run-left base.
+    LDX anim_dir
+    BNE cs_body_base_ok
+    CLC
+    ADC #CHELL_RUN_LEFT_BASE
+
+ .cs_body_base_ok
+    CLC
+    ADC char_pixel_offset
+    STA chell_body_index
+
+    ; --- Overlay sprite index ---
+    ; Jump/idle: always gun-forward overlay.
+    LDA char_grounded
+    BEQ cs_overlay_forward
+    LDA move_held
+    BEQ cs_overlay_forward
+
+    ; Running: aim-aware overlay.
+    ; Base within direction: aim_frame*4
+    ; aim_frame mapping: forward=0, down=1, up=2
+    LDA aim_held
+    BEQ cs_overlay_aimframe_ok
+    CMP #2
+    BNE cs_overlay_aim_up
+    LDA #1
+    BNE cs_overlay_aimframe_ok
+ .cs_overlay_aim_up
+    LDA #2
+ .cs_overlay_aimframe_ok
+    ASL A
+    ASL A
+    STA temp
+
+    ; If not aiming, add run-phase cycling (0/4/8).
+    LDA aim_held
+    BNE cs_overlay_have_index
+    LDX anim_frame
+    LDA run_frame_seq,X
+    ASL A
+    ASL A
+    CLC
+    ADC temp
+    STA temp
+ .cs_overlay_have_index
+
+    ; Facing left adds 12.
+    LDA anim_dir
+    BNE cs_overlay_dir_ok
+    LDA temp
+    CLC
+    ADC #CHELL_RUN_LEFT_BASE
+    STA temp
+ .cs_overlay_dir_ok
+
+    LDA temp
+    CLC
+    ADC char_pixel_offset
+    STA chell_overlay_index
+    RTS
+
+ .cs_overlay_forward
+    LDA anim_dir
+    BNE cs_overlay_forward_right
+    LDA #CHELL_RUN_LEFT_BASE
+    BNE cs_overlay_forward_ok
+ .cs_overlay_forward_right
+    LDA #0
+ .cs_overlay_forward_ok
+    CLC
+    ADC char_pixel_offset
+    STA chell_overlay_index
     RTS
 
  
