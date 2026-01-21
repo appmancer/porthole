@@ -57,6 +57,10 @@ rm -f "${OUT_SSD}"
 
 BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTHOLE" -boot PROGRAM)
 
+# Always emit a symbols file for tooling.
+mkdir -p .tmp
+BEEBASM_ARGS+=( -dd -labels .tmp/beebasm.labels )
+
 # Verbose beebasm listings are huge and can blow token budgets.
 if [[ "${VERBOSE}" == "1" ]]; then
   BEEBASM_ARGS+=( -v )

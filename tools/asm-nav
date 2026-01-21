@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""Small navigation helper for beebasm/6502.
+
+This is not a full LSP, but it provides the most useful operations with low
+friction and small outputs:
+
+- List/query zero-page variables from `main.asm`.
+- Query assembled label addresses from beebasm `-labels` output.
+- Find a symbol's references using ripgrep.
+
+Usage examples:
+
+  tools/asm-nav zp
+  tools/asm-nav zp current_room
+  tools/asm-nav addr current_room
+  tools/asm-nav addr render_tilemap
+  tools/asm-nav where 0x1900
+  tools/asm-nav refs is_solid --limit 40
+
+Notes:
+- Expects build to have generated `.tmp/beebasm.labels`.
+  If missing, run `./build.sh`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LABELS_FILE = REPO_ROOT / ".tmp" / "beebasm.labels"
+MAIN_ASM = REPO_ROOT / "main.asm"
+
+
+@dataclass(frozen=True)
+class Symbol:
+    name: str
+    addr: int
+
+
+def die(msg: str) -> None:
+    print(msg, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def parse_int(s: str) -> int:
+    s = s.strip().lower()
+    if s.startswith("&"):
+        return int(s[1:], 16)
+    if s.startswith("0x"):
+        return int(s[2:], 16)
+    return int(s, 10)
+
+
+def load_labels(path: Path) -> dict[str, int]:
+    if not path.exists():
+        die(f"Missing {path}. Run ./build.sh first.")
+
+    txt = path.read_text(encoding="utf-8", errors="replace").strip()
+
+    # beebasm supports multiple label dump formats.
+    # In this repo, we use `-dd -labels .tmp/beebasm.labels`, which emits a
+    # Python-ish structure like:
+    #   [{'.start':6400L,'.main_loop':6587L,...}]
+    # Fall back to classic "name = &xxxx" parsing if needed.
+
+    if txt.startswith("[{"):
+        import ast
+
+        # Strip the trailing 'L' on integers so literal_eval can parse.
+        txt2 = re.sub(r"(\d+)L\b", r"\1", txt)
+        try:
+            data = ast.literal_eval(txt2)
+        except Exception as e:
+            die(f"Failed to parse {path}: {e}")
+        if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+            die(f"Unexpected labels structure in {path}")
+        out: dict[str, int] = {}
+        for k, v in data[0].items():
+            if isinstance(k, str) and isinstance(v, int):
+                out[k] = v
+        return out
+
+    labels: dict[str, int] = {}
+    pat = re.compile(r"^\s*([^;\s]+)\s*=\s*(&[0-9A-Fa-f]{4})\s*$")
+    for line in txt.splitlines():
+        m = pat.match(line)
+        if not m:
+            continue
+        labels[m.group(1)] = parse_int(m.group(2))
+    return labels
+
+
+def parse_zp_vars(main_asm: Path) -> list[tuple[str, int, int]]:
+    """Return list of (name, addr, size) for ZP vars."""
+
+    txt = main_asm.read_text(encoding="utf-8", errors="replace").splitlines()
+
+    # Find ORG &70 block; stop at the next ORG that isn't &70.
+    org_re = re.compile(r"^\s*ORG\s+&([0-9A-Fa-f]{2,4})\s*$")
+    decl_re = re.compile(r"^\s*\.(\w+)\s+SKIP\s+(\d+)\b")
+
+    zp_start = None
+    for i, line in enumerate(txt):
+        m = org_re.match(line)
+        if m and int(m.group(1), 16) == 0x70:
+            zp_start = i + 1
+            break
+    if zp_start is None:
+        die(f"Couldn't find ORG &70 in {main_asm}")
+
+    addr = 0x70
+    out: list[tuple[str, int, int]] = []
+    for line in txt[zp_start:]:
+        m = org_re.match(line)
+        if m and int(m.group(1), 16) != 0x70:
+            break
+        m2 = decl_re.match(line)
+        if not m2:
+            continue
+        name = m2.group(1)
+        size = int(m2.group(2))
+        out.append((name, addr, size))
+        addr += size
+    return out
+
+
+def cmd_zp(args: argparse.Namespace) -> None:
+    zp = parse_zp_vars(MAIN_ASM)
+    if args.name:
+        name = args.name
+        for n, a, s in zp:
+            if n == name:
+                print(f"{n}  &{a:02X}  size={s}")
+                return
+        die(f"ZP var not found: {name}")
+
+    for n, a, s in zp:
+        print(f"&{a:02X}  {n}  ({s})")
+
+
+def cmd_addr(args: argparse.Namespace) -> None:
+    sym = args.symbol
+    # ZP first
+    zp = {n: a for n, a, _ in parse_zp_vars(MAIN_ASM)}
+    if sym in zp:
+        print(f"{sym} = &{zp[sym]:02X} (ZP)")
+        return
+
+    labels = load_labels(LABELS_FILE)
+    if sym in labels:
+        print(f"{sym} = &{labels[sym]:04X}")
+        return
+    # Try dot-prefixed name
+    if ("." + sym) in labels:
+        print(f".{sym} = &{labels['.' + sym]:04X}")
+        return
+
+    die(f"Symbol not found in ZP or labels: {sym}")
+
+
+def cmd_where(args: argparse.Namespace) -> None:
+    addr = parse_int(args.addr)
+    labels = load_labels(LABELS_FILE)
+    syms = [Symbol(n, a) for n, a in labels.items()]
+    syms.sort(key=lambda s: s.addr)
+
+    # Find last symbol <= addr
+    last = None
+    for s in syms:
+        if s.addr > addr:
+            break
+        last = s
+
+    if last is None:
+        print(f"&{addr:04X}: (no label below)")
+        return
+    delta = addr - last.addr
+    if delta == 0:
+        print(f"&{addr:04X}: {last.name}")
+    else:
+        print(f"&{addr:04X}: {last.name} + {delta} (base &{last.addr:04X})")
+
+
+def cmd_refs(args: argparse.Namespace) -> None:
+    sym = args.symbol
+    limit = args.limit
+    include = args.include
+
+    # Use ripgrep for speed.
+    cmd = ["rg", "-n", "--no-heading", sym, "--glob", include]
+    proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+    if proc.returncode not in (0, 1):
+        die(proc.stderr.strip() or "rg failed")
+
+    lines = proc.stdout.splitlines()
+    print(f"matches: {len(lines)}")
+    for l in lines[:limit]:
+        print(l)
+    if len(lines) > limit:
+        out = REPO_ROOT / ".tmp" / f"refs_{sym}.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(proc.stdout, encoding="utf-8")
+        print(f"(truncated; full output in {out})")
+
+
+def b2_base_url() -> str:
+    host = os.environ.get("B2_HOST", "127.0.0.1")
+    port = os.environ.get("B2_PORT", "48075")
+    inst = os.environ.get("B2_ID", "b2")
+    return f"http://{host}:{port}/peek/{inst}"
+
+
+def b2_peek(addr: int, length: int) -> bytes:
+    url = f"{b2_base_url()}/{addr:04x}/+{length}"
+    return urllib.request.urlopen(url, timeout=2).read()
+
+
+def cmd_watch(args: argparse.Namespace) -> None:
+    # Resolve symbols -> addresses. ZP vars are addressed directly.
+    labels = load_labels(LABELS_FILE)
+    zp = {n: a for n, a, _ in parse_zp_vars(MAIN_ASM)}
+
+    specs: list[tuple[str, int, int]] = []
+    for spec in args.symbols:
+        if ":" in spec:
+            name, size_s = spec.split(":", 1)
+            size = int(size_s)
+        else:
+            name = spec
+            size = 1
+
+        if name in zp:
+            specs.append((name, zp[name], size))
+            continue
+        if name in labels:
+            specs.append((name, labels[name], size))
+            continue
+        if ("." + name) in labels:
+            specs.append(("." + name, labels["." + name], size))
+            continue
+        die(f"Symbol not found: {name}")
+
+    last: dict[str, bytes] = {}
+    start = time.time()
+    while True:
+        now = time.time()
+        if args.duration and (now - start) >= args.duration:
+            return
+
+        changed: list[str] = []
+        for name, addr, size in specs:
+            data = b2_peek(addr, size)
+            if args.on_change:
+                if name in last and last[name] == data:
+                    continue
+            last[name] = data
+            changed.append(f"{name}=&{addr:04X} " + " ".join(f"{b:02X}" for b in data))
+
+        if changed:
+            t_ms = int((now - start) * 1000)
+            print(f"{t_ms:6d}ms  " + "  ".join(changed))
+
+        time.sleep(args.interval)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="tools/asm-nav")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    ap_zp = sub.add_parser("zp", help="List ZP variables (or query one)")
+    ap_zp.add_argument("name", nargs="?", help="ZP var name (without dot)")
+    ap_zp.set_defaults(func=cmd_zp)
+
+    ap_addr = sub.add_parser("addr", help="Print address of symbol")
+    ap_addr.add_argument("symbol", help="symbol name (without dot for ZP vars)")
+    ap_addr.set_defaults(func=cmd_addr)
+
+    ap_where = sub.add_parser("where", help="Find nearest label at/below address")
+    ap_where.add_argument("addr", help="address: &xxxx, 0xXXXX, or decimal")
+    ap_where.set_defaults(func=cmd_where)
+
+    ap_refs = sub.add_parser("refs", help="List references via ripgrep")
+    ap_refs.add_argument("symbol", help="regex/text to search")
+    ap_refs.add_argument("--limit", type=int, default=40)
+    ap_refs.add_argument("--include", default="*.asm", help="rg glob, default *.asm")
+    ap_refs.set_defaults(func=cmd_refs)
+
+    ap_watch = sub.add_parser("watch", help="Watch symbols in B2 (prints when changed)")
+    ap_watch.add_argument("symbols", nargs="+", help="symbols to watch, optional :N size suffix")
+    ap_watch.add_argument("--interval", type=float, default=0.1, help="seconds between polls")
+    ap_watch.add_argument("--duration", type=float, default=0.0, help="seconds to run (0=forever)")
+    ap_watch.add_argument(
+        "--on-change",
+        action="store_true",
+        help="only print when a watched value changes",
+    )
+    ap_watch.set_defaults(func=cmd_watch)
+
+    args = ap.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

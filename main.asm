@@ -22,6 +22,10 @@ ORG &70
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
 .rise_cooldown      SKIP 1    ; Frames until next upward step
 .fall_cooldown      SKIP 1    ; Frames until next downward step
+.room_dirty         SKIP 1    ; 0/1: room background needs redraw
+.exit_cooldown      SKIP 1    ; frames to ignore exits after transition
+.exit_probe0        SKIP 1    ; exit Y probe cell (y+8)>>4
+.exit_probe1        SKIP 1    ; exit Y probe cell (y+24)>>4
 .keys_held          SKIP 1    ; Bitfield: held keys this frame
 .keys_pressed       SKIP 1    ; Bitfield: edge-trigger keys (held & ~prev)
 .keys_prev          SKIP 1    ; Previous frame's keys_held
@@ -32,7 +36,7 @@ ORG &70
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
 .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
 .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
-.chelldata_fh      SKIP 1    ; File handle for CHDATA
+.chelldata_fh       SKIP 1    ; File handle for CHDATA
  .anim_frame              SKIP 1    ; Animation frame (0..3)
  .anim_dir                SKIP 1    ; Direction (0=left,1=right)
  .last_anim_dir           SKIP 1    ; Previous direction for redraw
@@ -49,7 +53,7 @@ ORG &70
 
 .cube_tile_pos       SKIP 1    ; Cube cell position (cell_y*16 + cell_x)
 .cube_byte_offset    SKIP 1    ; Cube byte offset within cell (0/8)
-.char_sprite_index  SKIP 1    ; Stable sprite index
+.char_sprite_index   SKIP 1    ; Stable sprite index
 
 ; Precomputed render decisions for Chell (computed in update; used in render).
 .chell_new_ptr       SKIP 2    ; next screen_ptr for Chell
@@ -64,13 +68,15 @@ ORG &70
 .reticle_prev_active SKIP 1    ; previous frame reticle_active
 .reticle_move_cd     SKIP 1    ; reticle move repeat cooldown
 
+.exit_dst            SKIP 1    ; scratch: exit destination room index
+
 .chell_dirty         SKIP 1    ; 0/1: Chell moved/changed last update
 .reticle_dirty       SKIP 1    ; 0/1: reticle moved/changed last update
 
 .chell_prev_ptr      SKIP 2    ; previous Chell screen_ptr
- .reticle_prev_ptr    SKIP 2    ; previous reticle screen_ptr
- .chell_has_under     SKIP 1    ; 0/1: have valid Chell save-under
- .reticle_has_under   SKIP 1    ; 0/1: have valid reticle save-under
+.reticle_prev_ptr    SKIP 2    ; previous reticle screen_ptr
+.chell_has_under     SKIP 1    ; 0/1: have valid Chell save-under
+.reticle_has_under   SKIP 1    ; 0/1: have valid reticle save-under
  
  ; --- Render list (PoP-style pipeline) ---
  ; Stored in screen scratch (not ZP) so MOS calls can't clobber it.
@@ -170,6 +176,10 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA gravity_cooldown
     STA rise_cooldown
     STA fall_cooldown
+    STA room_dirty
+    STA exit_cooldown
+    STA exit_probe0
+    STA exit_probe1
     STA keys_held
     STA keys_pressed
     STA keys_prev
@@ -259,6 +269,18 @@ CHELL_JUMP_LEFT_BASE        = 36
  ; Uses chell_dirty/reticle_dirty computed in the previous update.
  ; Reticle redraw condition includes chell_dirty because Chell can move under it.
  .render_frame_simple
+       ; Room transition: redraw background first.
+       LDA room_dirty
+       BEQ render_no_room_redraw
+       JSR set_room_tilemap
+       JSR set_room_portalmap
+       JSR render_tilemap
+       LDA #0
+       STA room_dirty
+       STA chell_has_under
+       STA reticle_has_under
+
+ .render_no_room_redraw
        ; Handle reticle deactivation: restore last rect.
        LDA reticle_active
        BNE render_reticle_active
@@ -347,21 +369,30 @@ CHELL_JUMP_LEFT_BASE        = 36
        LDA reticle_active
        STA reticle_prev_active
 
-       ; Reticle mode is held (SHIFT).
-       LDA keys_held
-       AND #8
-       BEQ update_normal_mode
+        ; Reticle mode is held (SHIFT), but only allowed when Chell is stable.
+        ; Strictly one or the other:
+        ; - If Chell is moving vertically (jump/fall), reticle cannot become active.
+        LDA keys_held
+        AND #8
+        BEQ update_normal_mode
 
-       ; Reticle active while SHIFT held.
-       LDA #1
-       STA reticle_active
+        LDA char_grounded
+        BEQ update_normal_mode
+        LDA char_vy
+        BNE update_normal_mode
 
-       JSR poll_reticle_keys
-       BCC reticle_no_dirty
-       LDA #1
-       STA reticle_dirty
-.reticle_no_dirty
-       JMP update_apply_gravity
+        ; Reticle active while SHIFT held and Chell is stable.
+        LDA #1
+        STA reticle_active
+
+        JSR poll_reticle_keys
+        BCC reticle_no_dirty
+        LDA #1
+        STA reticle_dirty
+ .reticle_no_dirty
+        ; While in reticle mode, gameplay time is frozen.
+        ; Chell does not step or fall; only the reticle updates.
+        JMP update_finish
 
 .update_normal_mode
        ; If we just released SHIFT, deactivate reticle and mark it dirty so render
@@ -392,6 +423,13 @@ CHELL_JUMP_LEFT_BASE        = 36
        STA chell_dirty
 
   .update_finish
+        ; Room exits (screen transitions).
+        JSR check_room_exits
+
+        ; While in reticle mode we ignore aim-based redraws.
+        LDA reticle_active
+        BNE aim_change_done
+
         ; Aim changes should trigger redraw while running (overlay changes).
         LDA char_grounded
         BEQ aim_change_done
@@ -445,6 +483,268 @@ CHELL_JUMP_LEFT_BASE        = 36
 
  .df_done
         RTS
+
+
+; --- Room exits / transitions ---
+;
+; Uses the generated exit tables in `levels/generated_level1.asm`.
+;
+; For now we support left/right edge exits only.
+;
+; Exit matching uses Chell's feet cell:
+;   feet_cell_y = (top_y + 31) >> 4
+; (We can tighten this later to require a full 16x32 clearance.)
+;
+; Returns: C=1 if room changed.
+.check_room_exits
+    ; Don't transition while in reticle mode.
+    LDA reticle_active
+    BEQ exits_check_cooldown
+    CLC
+    RTS
+
+.exits_check_cooldown
+    LDA exit_cooldown
+    BEQ exits_check_edges
+    DEC exit_cooldown
+    CLC
+    RTS
+
+.exits_check_edges
+    ; --- Right edge ---
+    ; Trigger exits only when Chell is facing/moving into the edge.
+    ; This avoids immediate bounce-back when spawning at an entrance.
+    JSR calc_char_x
+    CMP #112
+    BCC check_left_edge
+
+    LDA anim_dir
+    BEQ check_left_edge
+    LDA move_held
+    ORA last_move_held
+    BEQ check_left_edge
+
+    ; Preserve current top Y pixel (for spawn), in temp_y.
+    JSR calc_char_y
+    STA temp_y
+
+    ; Compute feet_cell_y into temp (0..15).
+    LDA temp_y
+    CLC
+    ADC #31
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    STA temp
+
+    JSR find_exit_right
+    BCC check_left_edge
+
+    ; Enter destination from left. A already holds dst room.
+    JSR transition_enter_from_left
+    SEC
+    RTS
+
+.check_left_edge
+    JSR calc_char_x
+    BNE exits_none
+
+    LDA anim_dir
+    BNE exits_none
+    LDA move_held
+    ORA last_move_held
+    BEQ exits_none
+
+    ; Preserve current top Y pixel (for spawn), in temp_y.
+    JSR calc_char_y
+    STA temp_y
+
+    ; Compute feet_cell_y into temp (0..15).
+    LDA temp_y
+    CLC
+    ADC #31
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    STA temp
+
+    JSR find_exit_left
+    BCC exits_none
+
+    ; Enter destination from right. A already holds dst room.
+    JSR transition_enter_from_right
+    SEC
+    RTS
+
+.exits_none
+    CLC
+    RTS
+
+
+; Find matching right-edge exit for current_room.
+; Input: temp = feet_cell_y
+; Output: C=1 and A=dst_room on match, else C=0.
+.find_exit_right
+    LDX current_room
+    LDA exit_right_counts,X
+    BEQ find_exit_none
+    STA col_counter
+
+    TXA
+    ASL A
+    TAX
+    LDA exit_right_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_right_ptrs+1,X
+    STA temp_sprite_ptr+1
+    JMP find_exit_scan
+
+; Find matching left-edge exit for current_room.
+.find_exit_left
+    LDX current_room
+    LDA exit_left_counts,X
+    BEQ find_exit_none
+    STA col_counter
+
+    TXA
+    ASL A
+    TAX
+    LDA exit_left_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_left_ptrs+1,X
+    STA temp_sprite_ptr+1
+
+.find_exit_scan
+    ; col_counter = count, temp_sprite_ptr points at entries.
+    ; Each entry: a0,a1,dst
+    LDY #0
+.find_exit_loop
+    ; a0
+    LDA (temp_sprite_ptr),Y
+    STA temp_mask_ptr
+    ; a1
+    INY
+    LDA (temp_sprite_ptr),Y
+    STA temp_mask_ptr+1
+    ; dst
+    INY
+    LDA (temp_sprite_ptr),Y
+    STA exit_dst
+
+    ; Check feet within [a0..a1]
+    LDA temp
+    CMP temp_mask_ptr
+    BCC find_exit_next
+    LDA temp
+    CMP temp_mask_ptr+1
+    BCC find_exit_match
+    BEQ find_exit_match
+    JMP find_exit_next
+
+.find_exit_match
+    LDA exit_dst
+    SEC
+    RTS
+
+.find_exit_next
+    ; advance ptr by 3 bytes
+    LDA temp_sprite_ptr
+    CLC
+    ADC #3
+    STA temp_sprite_ptr
+    BCC find_exit_next_ok
+    INC temp_sprite_ptr+1
+.find_exit_next_ok
+
+    LDY #0
+    DEC col_counter
+    BNE find_exit_loop
+
+.find_exit_none
+    CLC
+    RTS
+
+
+; Room transition helpers.
+; Inputs:
+; - A = destination room index
+; - temp_y = preserved top Y (pixel)
+; Preserves velocity; snaps X to the new edge.
+.transition_enter_from_left
+    STA current_room
+    JSR set_room_tilemap
+    JSR set_room_portalmap
+    JSR build_material_planes_from_tilemap
+
+    ; Spawn at the left edge (entrance).
+    LDA temp_y
+    AND #&F0
+    STA char_tile_pos
+    LDA temp_y
+    AND #&0F
+    STA char_y_offset
+    LDA #0
+    STA char_byte_offset
+    STA char_pixel_offset
+
+    ; Mark for redraw
+    LDA #1
+    STA room_dirty
+    STA chell_dirty
+    ; Clear movement intent so we don't immediately re-trigger exits.
+    LDA #0
+    STA move_held
+    STA last_move_held
+    LDA #8
+    STA exit_cooldown
+
+    ; Cancel reticle.
+    LDA #0
+    STA reticle_active
+    STA reticle_prev_active
+    STA reticle_has_under
+    STA chell_has_under
+    RTS
+
+.transition_enter_from_right
+    STA current_room
+    JSR set_room_tilemap
+    JSR set_room_portalmap
+    JSR build_material_planes_from_tilemap
+
+    ; Spawn at the right edge (entrance).
+    ; x=112 => tile_x=14, byte/pixel offset 0.
+    LDA temp_y
+    AND #&F0
+    ORA #14
+    STA char_tile_pos
+    LDA temp_y
+    AND #&0F
+    STA char_y_offset
+    LDA #0
+    STA char_byte_offset
+    STA char_pixel_offset
+
+    ; Mark for redraw
+    LDA #1
+    STA room_dirty
+    STA chell_dirty
+    ; Clear movement intent so we don't immediately re-trigger exits.
+    LDA #0
+    STA move_held
+    STA last_move_held
+    LDA #8
+    STA exit_cooldown
+
+    ; Cancel reticle.
+    LDA #0
+    STA reticle_active
+    STA reticle_prev_active
+    STA reticle_has_under
+    STA chell_has_under
+    RTS
  
 
 

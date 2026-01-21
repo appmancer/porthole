@@ -37,6 +37,9 @@ All coordinates in `.meta` are in **cell** units on the 16x16 room grid.
 
 Cells correspond to the engine's 8x16 pixel cells.
 
+All ranges are **0-based** and inclusive.
+For example, `6 7` means rows/cells 6 and 7.
+
 ## Chell probe point (for exits)
 
 Exit matching uses Chell's **feet** for now.
