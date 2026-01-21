@@ -60,11 +60,16 @@ ORG &70
 .reticle_dirty       SKIP 1    ; 0/1: reticle moved/changed last update
 
 .chell_prev_ptr      SKIP 2    ; previous Chell screen_ptr
-.reticle_prev_ptr    SKIP 2    ; previous reticle screen_ptr
-.chell_has_under     SKIP 1    ; 0/1: have valid Chell save-under
-.reticle_has_under   SKIP 1    ; 0/1: have valid reticle save-under
+ .reticle_prev_ptr    SKIP 2    ; previous reticle screen_ptr
+ .chell_has_under     SKIP 1    ; 0/1: have valid Chell save-under
+ .reticle_has_under   SKIP 1    ; 0/1: have valid reticle save-under
+ 
+ ; --- Render list (PoP-style pipeline) ---
+ ; Stored in screen scratch (not ZP) so MOS calls can't clobber it.
+ ; Layout is a fixed 2-entry list.
+ 
+ ORG &1900
 
-ORG &1900
 
 CRTC_ADDR = &FE00
 CRTC_DATA = &FE01
@@ -72,6 +77,14 @@ ROMSEL    = &FE30          ; Master paged ROM/SWRAM bank select
 
 CHELL_SWRAM_BANK_DEFAULT = 4
 CHELLDATA_BUF         = &7B00  ; Temp buffer in screen scratch
+
+; Render list storage lives in screen scratch so it survives MOS calls.
+RENDER_LIST_BASE      = &78C0
+RENDER_COUNT          = RENDER_LIST_BASE + 0
+RENDER_IDS            = RENDER_LIST_BASE + 1   ; 2 bytes
+RENDER_FLAGS          = RENDER_LIST_BASE + 3   ; 2 bytes
+RENDER_NEW_PTR_LO     = RENDER_LIST_BASE + 5   ; 2 bytes
+RENDER_NEW_PTR_HI     = RENDER_LIST_BASE + 7   ; 2 bytes
 
 GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
 GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
@@ -202,22 +215,51 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA #0
     STA reticle_has_under
  
- .main_loop
-      ; Pace the loop (reduces tearing/flicker).
-      JSR wait_vsync
+  .main_loop
+       ; Pace the loop (reduces tearing/flicker).
+       JSR wait_vsync
 
-      ; Render previous frame immediately after VSYNC.
-      LDA dirty_flag
-      BEQ main_skip_render
-      JSR render_chell
-.main_skip_render
+       ; Render previous frame immediately after VSYNC.
+       ; Incremental: only redraw Chell when dirty.
+       LDA dirty_flag
+       BEQ main_skip_render
+       JSR render_chell_simple
+ .main_skip_render
 
        ; Sample input once per frame; gameplay consumes only key bits.
        JSR sample_keys
 
-       ; Update state for next frame.
-       JSR update_chell
-       JMP main_loop
+        ; Update state for next frame.
+        JSR update_chell
+        JMP main_loop
+
+
+ ; --- Render (incremental Chell only) ---
+ ; Uses chell_dirty computed in the previous update.
+ .render_chell_simple
+       LDA chell_dirty
+       BEQ render_chell_simple_done
+
+       ; Restore previous background under Chell.
+       LDA chell_has_under
+       BEQ render_chell_simple_draw
+       JSR restore_chell_under
+
+ .render_chell_simple_draw
+       JSR update_screen_ptr_from_char
+       JSR save_chell_under
+       JSR draw_character_current
+
+       ; Record new previous pointer.
+       LDA screen_ptr
+       STA chell_prev_ptr
+       LDA screen_ptr+1
+       STA chell_prev_ptr+1
+       LDA #1
+       STA chell_has_under
+
+ .render_chell_simple_done
+       RTS
 
 
 ; --- Update pipeline ---
@@ -277,85 +319,14 @@ CHELL_JUMP_LEFT_BASE        = 36
        LDA #1
        STA chell_dirty
 
-.update_finish
-       ; Global dirty_flag is OR of both.
-       LDA chell_dirty
-       ORA reticle_dirty
-       STA dirty_flag
-       RTS
+ .update_finish
+        ; Dirty flag for next frame: Chell only.
+        LDA chell_dirty
+        STA dirty_flag
+        RTS
+ 
 
-; --- Render pipeline ---
-; Redraws moving objects using per-object save-under.
-; Uses chell_dirty/reticle_dirty computed in the previous update.
-.render_chell
-     ; Handle reticle deactivation: restore last rect.
-     LDA reticle_active
-     BNE render_reticle_maybe
-     LDA reticle_prev_active
-     BEQ render_reticle_maybe
 
-     ; Reticle just turned off.
-     LDA reticle_has_under
-     BEQ render_reticle_maybe
-     JSR restore_reticle_under
-     LDA #0
-     STA reticle_has_under
-
-.render_reticle_maybe
-
-     ; If Chell changed, restore+draw Chell first (reticle depends on it).
-     LDA chell_dirty
-     BEQ render_skip_chell
-
-     LDA chell_has_under
-     BEQ chell_restore_done
-     JSR restore_chell_under
-.chell_restore_done
-
-     JSR update_screen_ptr_from_char
-     JSR save_chell_under
-     JSR draw_character_current
-
-     ; Record Chell screen_ptr for next restore.
-     LDA screen_ptr
-     STA chell_prev_ptr
-     LDA screen_ptr+1
-     STA chell_prev_ptr+1
-     LDA #1
-     STA chell_has_under
-
-.render_skip_chell
-
-     ; Reticle needs redraw if it moved or Chell moved (background under reticle changed).
-     LDA reticle_active
-     BEQ render_done
-
-     LDA reticle_dirty
-     ORA chell_dirty
-     BEQ render_done
-
-     ; If reticle moved, restore old rect.
-     LDA reticle_dirty
-     BEQ reticle_no_restore
-     LDA reticle_has_under
-     BEQ reticle_no_restore
-     JSR restore_reticle_under
-.reticle_no_restore
-
-     JSR update_screen_ptr_from_reticle
-     JSR save_reticle_under
-     JSR draw_reticle_current
-
-     ; Record reticle screen_ptr for next restore.
-     LDA screen_ptr
-     STA reticle_prev_ptr
-     LDA screen_ptr+1
-     STA reticle_prev_ptr+1
-     LDA #1
-     STA reticle_has_under
-
-.render_done
-     RTS
 
 
 
@@ -373,10 +344,10 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA chell_bank
     STA ROMSEL
 
-     ; Airborne: draw jump pose only.
-     ; (Aim is held-only, and currently only affects overlay.)
-     LDA char_grounded
-     BNE draw_grounded
+      ; Airborne: draw jump pose only.
+      ; (Aim is held-only, and currently only affects overlay.)
+      LDA char_grounded
+      BNE draw_grounded
 
 
     ; jump_base = CHELL_JUMP_RIGHT_BASE or CHELL_JUMP_LEFT_BASE
@@ -391,20 +362,20 @@ CHELL_JUMP_LEFT_BASE        = 36
     ADC char_pixel_offset
     STA char_sprite_index
 
-     LDA char_sprite_index
-     JSR render_character_sprite
+      LDA char_sprite_index
+      JSR render_character_sprite
 
-     ; Jump: always draw gun forward overlay (no aim cycling here).
-     LDA anim_dir
-     BNE jump_overlay_right
-     LDA #CHELL_RUN_LEFT_BASE
-     BNE jump_overlay_base_ok
-.jump_overlay_right
-     LDA #0
-.jump_overlay_base_ok
-     CLC
-     ADC char_pixel_offset
-     JSR render_overlay_sprite
+      ; Jump: always draw gun forward overlay (no aim cycling here).
+      LDA anim_dir
+      BNE jump_overlay_right
+      LDA #CHELL_RUN_LEFT_BASE
+      BNE jump_overlay_base_ok
+ .jump_overlay_right
+      LDA #0
+ .jump_overlay_base_ok
+      CLC
+      ADC char_pixel_offset
+      JSR render_overlay_sprite
 
      JMP draw_done
 
@@ -427,17 +398,17 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA char_sprite_index
     JSR render_character_sprite
 
-     ; Idle: always draw gun forward overlay (no aim cycling here).
-     LDA anim_dir
-     BNE idle_overlay_right
-     LDA #CHELL_RUN_LEFT_BASE
-     BNE idle_overlay_base_ok
-.idle_overlay_right
-     LDA #0
-.idle_overlay_base_ok
-     CLC
-     ADC char_pixel_offset
-     JSR render_overlay_sprite
+      ; Idle: always draw gun forward overlay (no aim cycling here).
+      LDA anim_dir
+      BNE idle_overlay_right
+      LDA #CHELL_RUN_LEFT_BASE
+      BNE idle_overlay_base_ok
+ .idle_overlay_right
+      LDA #0
+ .idle_overlay_base_ok
+      CLC
+      ADC char_pixel_offset
+      JSR render_overlay_sprite
 
 
     JMP draw_done
@@ -472,59 +443,58 @@ CHELL_JUMP_LEFT_BASE        = 36
  
      LDA char_sprite_index
      JSR render_character_sprite
- 
-     ; Overlay index must be computed independently of body sprite index.
-     ; Overlay table is 24 entries:
-     ;   per direction: 3 aim frames (forward/down/up) x 4 subpixel = 12
-     ;   right: forward/down/up x0..x3 = 0..11
-     ;   left:  forward/down/up x0..x3 = 12..23
-     ; Overlay behaviour:
-     ; - aim_held=0 (forward): cycle overlay with run animation.
-     ; - aim_held=1 (up) or 2 (down): fixed overlay frame.
-     ; Overlay table per direction: 3 aim frames (forward/down/up) x 4 subpixel.
 
-     ; First compute a base within the direction: (aim_frame*4).
-     ; aim_frame mapping: forward=0, down=1, up=2
-     LDA aim_held
-     BEQ run_overlay_aimframe_ok
-     CMP #2
-     BNE run_overlay_aim_up
-     LDA #1
-     BNE run_overlay_aimframe_ok
-.run_overlay_aim_up
-     LDA #2
-.run_overlay_aimframe_ok
-     ASL A
-     ASL A
-     STA temp
+      ; Overlay index must be computed independently of body sprite index.
+      ; Overlay table is 24 entries:
+      ;   per direction: 3 aim frames (forward/down/up) x 4 subpixel = 12
+      ;   right: forward/down/up x0..x3 = 0..11
+      ;   left:  forward/down/up x0..x3 = 12..23
+      ; Overlay behaviour:
+      ; - aim_held=0 (forward): cycle overlay with run animation.
+      ; - aim_held=1 (up) or 2 (down): fixed overlay frame.
 
-     ; If not aiming, add run-phase cycling (0/4/8).
-     LDA aim_held
-     BNE run_overlay_have_index
+      ; First compute a base within the direction: (aim_frame*4).
+      ; aim_frame mapping: forward=0, down=1, up=2
+      LDA aim_held
+      BEQ run_overlay_aimframe_ok
+      CMP #2
+      BNE run_overlay_aim_up
+      LDA #1
+      BNE run_overlay_aimframe_ok
+ .run_overlay_aim_up
+      LDA #2
+ .run_overlay_aimframe_ok
+      ASL A
+      ASL A
+      STA temp
 
-     LDX anim_frame
-     LDA run_frame_seq,X
-     ASL A
-     ASL A
-     CLC
-     ADC temp
-     STA temp
+      ; If not aiming, add run-phase cycling (0/4/8).
+      LDA aim_held
+      BNE run_overlay_have_index
 
-.run_overlay_have_index
+      LDX anim_frame
+      LDA run_frame_seq,X
+      ASL A
+      ASL A
+      CLC
+      ADC temp
+      STA temp
 
-     ; Facing left adds 12.
-     LDA anim_dir
-     BNE overlay_run_right
-     LDA temp
-     CLC
-     ADC #CHELL_RUN_LEFT_BASE
-     STA temp
-.overlay_run_right
+ .run_overlay_have_index
 
-     LDA temp
-     CLC
-     ADC char_pixel_offset
-     JSR render_overlay_sprite
+      ; Facing left adds 12.
+      LDA anim_dir
+      BNE overlay_run_right
+      LDA temp
+      CLC
+      ADC #CHELL_RUN_LEFT_BASE
+      STA temp
+ .overlay_run_right
+
+      LDA temp
+      CLC
+      ADC char_pixel_offset
+      JSR render_overlay_sprite
  
 
   .draw_done
@@ -855,9 +825,12 @@ CHELL_JUMP_LEFT_BASE        = 36
 ;   keys_pressed = newly pressed this frame (edge)
 ;   keys_prev    = last frame's keys_held
 .sample_keys
-    ; Start with no bits set.
-    LDA #0
-    STA keys_held
+     ; Safety: OSBYTE input polling expects IRQs enabled.
+     CLI
+
+     ; Start with no bits set.
+     LDA #0
+     STA keys_held
 
     ; Jump (RETURN)
     LDX #&B6            ; INKEY(-74) = RETURN
@@ -2032,28 +2005,8 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA tile_row_screen_table+1,Y
     STA screen_ptr+1
 
-    ; Apply a visual centerline bias without affecting physics.
-    ;
-    ; Convention:
-    ; - Floors want +8 (stand into the tile)
-    ; - Ceilings want -8 (hit head into the tile)
-    ;
-    ; We approximate using vertical velocity:
-    ; - Falling/grounded -> +8
-    ; - Rising -> -8
-    ;
-    ; Then add the normal char_y_offset (+8 within cell row).
-    LDA char_vy
-    BMI ybias_up
-.ybias_down
-    INC screen_ptr+1
-    JMP ybias_done
-.ybias_up
-    ; -8 is one stripe up: decrement high byte.
-    DEC screen_ptr+1
-.ybias_done
-
     ; Optional +8 scanline offset (1 stripe) within the 16px cell row.
+    ; (Purely derived from gameplay state; no extra visual bias.)
     LDA char_y_offset
     BEQ char_y_offset_done
     INC screen_ptr+1

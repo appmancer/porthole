@@ -10,6 +10,9 @@
 ; - We may use screen RAM *below the playfield* as scratch (not returned to BASIC).
 
 .render_tilemap
+    ; Clear playfield to cyan so tile id 0 can be skipped.
+    JSR clear_playfield_cyan
+
     ; Set up initial pointers
     LDA #<(&5800)           ; Screen starts at &5800 in MODE 5
     STA screen_ptr                 ; screen_ptr_lo 
@@ -40,7 +43,9 @@
     
     ; Get cell value directly (8-bit format - no nibble extraction!)
     LDA (tilemap_ptr), Y            ; tilemap_ptr is in &79/&7A
+    BEQ tilemap_skip_cell
     JSR render_cell8x16
+  .tilemap_skip_cell
     
     ; Move to next cell column.
     ; Each 8x16 cell is 2 bytes wide per scanline.
@@ -71,6 +76,31 @@
     JMP tilemap_row_loop
     
 .tilemap_done
+    RTS
+
+; Fill the visible playfield (32 bytes x 256 scanlines = 8192 bytes) with cyan.
+;
+; With our palette mapping, colour index 2 is cyan. In MODE 5 (2bpp), a byte of
+; four cyan pixels encodes as &F0.
+.clear_playfield_cyan
+    ; temp_mask_ptr := &5800
+    LDA #<(&5800)
+    STA temp_mask_ptr
+    LDA #>(&5800)
+    STA temp_mask_ptr+1
+
+    ; 0x5800..0x77FF is 0x20 pages of 256 bytes.
+    LDX #&20
+    LDA #&F0
+  .clear_page
+    LDY #0
+  .clear_byte
+    STA (temp_mask_ptr),Y
+    INY
+    BNE clear_byte
+    INC temp_mask_ptr+1
+    DEX
+    BNE clear_page
     RTS
 
 .render_cell8x16
@@ -621,6 +651,7 @@ SOLID_TILE_PLANE          = &7A00
 
 ; Save 16x32 under screen_ptr into CHELL_SAVE_UNDER_BASE.
 .save_chell_under
+    SEI
     ; temp_mask_ptr := source screen
     LDA screen_ptr
     STA temp_mask_ptr
@@ -659,10 +690,12 @@ SOLID_TILE_PLANE          = &7A00
     CMP #4
     BNE save_chell_stripe
 
+    CLI
     RTS
 
 ; Restore 16x32 from CHELL_SAVE_UNDER_BASE to chell_prev_ptr.
 .restore_chell_under
+    SEI
     ; temp_mask_ptr := dest screen
     LDA chell_prev_ptr
     STA temp_mask_ptr
@@ -701,10 +734,12 @@ SOLID_TILE_PLANE          = &7A00
     CMP #4
     BNE restore_chell_stripe
 
+    CLI
     RTS
 
 ; Save 16x16 under screen_ptr into RETICLE_SAVE_UNDER_BASE.
 .save_reticle_under
+    SEI
     ; temp_mask_ptr := source screen
     LDA screen_ptr
     STA temp_mask_ptr
@@ -743,10 +778,12 @@ SOLID_TILE_PLANE          = &7A00
     CMP #2
     BNE save_reticle_stripe
 
+    CLI
     RTS
 
 ; Restore 16x16 from RETICLE_SAVE_UNDER_BASE to reticle_prev_ptr.
 .restore_reticle_under
+    SEI
     ; temp_mask_ptr := dest screen
     LDA reticle_prev_ptr
     STA temp_mask_ptr
@@ -785,6 +822,7 @@ SOLID_TILE_PLANE          = &7A00
     CMP #2
     BNE restore_reticle_stripe
 
+    CLI
     RTS
 
 ; Build a 16x16 solid-tile plane from the current room tilemap.
@@ -875,12 +913,15 @@ SOLID_TILE_PLANE          = &7A00
 
 
  .tile_material_flags
-    ; 0..3: non-solid (bootstrap default)
-    EQUB 0,0,0,0
-    ; 4..12: solid
+    ; Tile ids:
+    ; 0  = empty (background)
+    ; 1+ = all current room tiles (bedrock/platform variants)
+    ; For now, treat all non-zero tiles as solid.
+    EQUB 0
+    EQUB 2,2,2,2,2,2,2,2,2
     EQUB 2,2,2,2,2,2,2,2,2
     ; Fill remaining entries with 0.
-    SKIP 256-13
+    SKIP 256-19
 
 ; Legacy: redraw tiles behind the character (tilemap-based restore)
 .redraw_background_area
@@ -979,4 +1020,3 @@ SOLID_TILE_PLANE          = &7A00
     STA screen_ptr
  
     RTS
-

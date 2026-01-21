@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Generate beebasm EQUB tile data (8x16) from a tile CSV.
+
+Input format:
+
+- CSV contains one or more tile blocks separated by blank rows.
+- Each tile block contains 16 rows of pixels.
+- Each pixel row contains at least 8 pixel values:
+  - '.' means colour 0 (black) for tiles (not transparency)
+  - '0'..'3' means MODE 5 colour index
+- The tool ignores extra columns (e.g. computed hex bytes).
+- The file may contain header/label lines beginning with 'T' (e.g. "T01 ...").
+
+Output:
+
+- Emits `sprites/generated_tiles.asm` style data:
+  - `.sprite_table` pointers for tile indices 0..N
+  - `.sprite_data` bytes for each tile in MODE 5 "screen byte order"
+
+Tile indices:
+
+- 0 is an implicit "empty" tile (solid cyan fill) so '.' cells are safe.
+- Tiles from the CSV become indices 1..N, in file order.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+from pathlib import Path
+
+
+PIXEL_RE = re.compile(r"[0-3.]")
+
+
+def pixels_from_line(line: str, *, path: Path, line_index: int) -> list[str]:
+    # Scan raw text so spreadsheet quirks like merged cells are tolerated.
+    tokens = [m.group(0) for m in PIXEL_RE.finditer(line)]
+    if not tokens:
+        return []
+    if len(tokens) < 8:
+        raise ValueError(f"{path}: line {line_index + 1}: expected >=8 pixels, got {len(tokens)}")
+    return tokens[:8]
+
+
+def parse_tile_blocks(path: Path) -> list[list[list[str]]]:
+    blocks: list[list[list[str]]] = []
+    current: list[list[str]] = []
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line_index, line in enumerate(lines):
+        # Treat label rows as separators (they often contain digits).
+        if line.lstrip().startswith("T"):
+            if current:
+                blocks.append(current)
+                current = []
+            continue
+
+        pixels = pixels_from_line(line, path=path, line_index=line_index)
+        if not pixels:
+            if current:
+                blocks.append(current)
+                current = []
+            continue
+
+        current.append(pixels)
+
+    if current:
+        blocks.append(current)
+
+    for i, b in enumerate(blocks):
+        if len(b) != 16:
+            raise ValueError(f"{path}: tile block {i + 1} has {len(b)} rows (expected 16)")
+
+    return blocks
+
+
+def parse_pixel(ch: str) -> int:
+    if ch == ".":
+        return 0
+    v = ord(ch) - ord("0")
+    if not (0 <= v <= 3):
+        raise ValueError(f"pixel value out of range: {ch}")
+    return v
+
+
+def pack_mode5_byte(pixels4: list[int]) -> int:
+    # MODE 5: 2bpp, 4 pixels per byte.
+    msb = [(v >> 1) & 1 for v in pixels4]
+    lsb = [v & 1 for v in pixels4]
+    hi = (msb[0] << 3) | (msb[1] << 2) | (msb[2] << 1) | msb[3]
+    lo = (lsb[0] << 3) | (lsb[1] << 2) | (lsb[2] << 1) | lsb[3]
+    return (hi << 4) | lo
+
+
+def to_screen_byte_order(raster_bytes: list[int], *, rows: int, width_bytes: int) -> list[int]:
+    if rows % 8 != 0:
+        raise ValueError(f"rows must be multiple of 8, got {rows}")
+    expected = rows * width_bytes
+    if len(raster_bytes) != expected:
+        raise ValueError(f"expected {expected} bytes, got {len(raster_bytes)}")
+
+    stripes = rows // 8
+    out: list[int] = []
+    for stripe in range(stripes):
+        base_row = stripe * 8
+        for col in range(width_bytes):
+            for row in range(8):
+                out.append(raster_bytes[(base_row + row) * width_bytes + col])
+    return out
+
+
+def format_eqbytes(data: list[int], *, bytes_per_line: int = 16) -> str:
+    chunks = [data[i : i + bytes_per_line] for i in range(0, len(data), bytes_per_line)]
+    out_lines = []
+    for ch in chunks:
+        out_lines.append("    EQUB " + ",".join(f"&{b:02X}" for b in ch))
+    return "\n".join(out_lines)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--in", dest="in_path", required=True)
+    ap.add_argument("--out", dest="out_path", required=True)
+    args = ap.parse_args()
+
+    in_path = Path(args.in_path)
+    out_path = Path(args.out_path)
+
+    blocks = parse_tile_blocks(in_path)
+
+    # Tile 0: full cyan fill (colour index 2).
+    cyan4 = [2, 2, 2, 2]
+    cyan_byte = pack_mode5_byte(cyan4)
+    empty_raster = [cyan_byte] * (16 * 2)  # 16 rows * 2 bytes
+    empty_data = to_screen_byte_order(empty_raster, rows=16, width_bytes=2)
+
+    tile_labels: list[str] = ["tile_empty"]
+    tile_datas: list[list[int]] = [empty_data]
+
+    for i, block in enumerate(blocks, 1):
+        raster: list[int] = []
+        for row in block:
+            px = [parse_pixel(ch) for ch in row]
+            raster.append(pack_mode5_byte(px[0:4]))
+            raster.append(pack_mode5_byte(px[4:8]))
+        data = to_screen_byte_order(raster, rows=16, width_bytes=2)
+        tile_labels.append(f"tile_{i:02d}")
+        tile_datas.append(data)
+
+    # Emit beebasm.
+    lines: list[str] = []
+    lines.append("; Auto-generated by tools/gen-tiles. DO NOT EDIT.")
+    lines.append(f"; Source: {in_path}")
+    lines.append("")
+    lines.append(".sprite_table")
+    for lab in tile_labels:
+        lines.append(f"    EQUW {lab}")
+    lines.append("")
+    lines.append(".sprite_data")
+    for lab, data in zip(tile_labels, tile_datas, strict=True):
+        lines.append(f".{lab}")
+        lines.append(format_eqbytes(data, bytes_per_line=16))
+        lines.append("")
+
+    out_path.write_text("\n".join(lines), encoding="ascii")
+
+
+if __name__ == "__main__":
+    main()

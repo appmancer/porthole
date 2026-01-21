@@ -47,6 +47,14 @@ rm -f "${OUT_SSD}"
   --spec "chell_jump_l^:sprites/Chell Jump - Reference.csv" \
   --spec "reticle:sprites/Reticles - Reference.csv"
 
+./tools/gen-tiles \
+  --in "sprites/NewTiles - Grid.csv" \
+  --out "sprites/generated_tiles.asm"
+
+./tools/gen-level \
+  --level "levels/level1" \
+  --out "levels/generated_level1.asm"
+
 BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTHOLE" -boot PROGRAM)
 
 # Verbose beebasm listings are huge and can blow token budgets.

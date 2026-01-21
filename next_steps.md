@@ -90,6 +90,40 @@ For each moving object (starting with Chell):
 
 The hot path should not call the tile renderer.
 
+### Rendering pipeline plan (PoP/SpyCat-inspired)
+
+Goal: make rendering predictable and cheap, so we can finish all restore+draw work immediately after VSYNC and avoid top-of-screen tearing.
+
+**P1: Treat rendering as a pipeline (PoP “peel list” discipline)**
+
+- Build a small **render list** during update (for the *next* frame): Chell, reticle, cube, etc.
+  - Each entry includes:
+    - `needs_redraw` (object moved or must be reblitted)
+    - `prev_ptr` + `has_under` (for restore)
+    - `new_ptr` (screen pointer for new draw position)
+    - `sprite_id` / `frame_id` and any palette/variant flags
+    - `bank_id` (sideways RAM bank for sprite reads)
+- Render phase (immediately after `wait_vsync`) executes two explicit passes:
+  1) **Restore pass (peel)**: for each `needs_redraw && has_under`, restore under in reverse list order (LIFO).
+  2) **Draw pass**: for each `needs_redraw`, save-under at `new_ptr` and blit the chosen sprite.
+- Invariants:
+  - Never “save-under” if any overlapping newer sprite is still visible (restore-first avoids under-buffer contamination).
+  - Always restore newest-first when objects can overlap (LIFO).
+
+**P2: Keep post-VSYNC work minimal (SpyCat table-driven setup)**
+
+- Do sprite/frame selection and as much pointer math as possible in update.
+- Make screen pointer computation table-driven and branch-light:
+  - row base pointer tables + column offset tables (SpyCat pattern)
+  - avoid general multiplies/divides in the render phase
+- Where possible, group draws by `bank_id` so we can page SWRAM once per render pass (rather than per sprite).
+
+**P3: Evolve to BG/MID/FG lists (PoP layering)**
+
+- BG: room drawn once per load (or on room transitions)
+- MID: moving gameplay objects (Chell, cubes, pellets)
+- FG: foreground cover tiles/props (pipes/grates) drawn after MID to create depth without per-pixel occlusion
+
 ## Sprites
 
 ### Sprite storage
@@ -319,6 +353,118 @@ This makes portal placement tolerant: if the top edge is visible, you can still 
   - Candidates: require an explicit “enter” input while overlapping, or use a direction modifier (e.g. hold Up), or treat back-wall portals as a separate interaction mode.
 - How do we choose the portal surface normal under the reticle (wall/floor/ceiling/back wall) when multiple surfaces overlap in screen space?
 - How should reticle mode interact with jumping/falling (can the player hold SHIFT midair, does it freeze Chell horizontal movement, etc.)?
+
+## Procedural Portal Rendering ("Probability Portal", no side-on sprite)
+
+### Motivation
+
+In a 4-colour palette, we want portals (A/B) to be highly readable without having to reserve red/yellow inside background tiles. A mostly monochrome background (cyan/black) keeps the level readable while letting portals and interactive objects “own” the highlight colours.
+
+Instead of using authored portal sprites (at least for side-on portals), generate a portal’s look procedurally **once at placement time** and then treat it as part of the background.
+
+### Core requirements
+
+- **No shimmer**: portal pixels must be stable frame-to-frame.
+- **Cheap at runtime**: generation happens only on placement/move; rendering loop treats portal as background.
+- **Deterministic but varied**: each placement should look slightly different, but remain stable after creation.
+- **Blend + connection hint**:
+  - portal is clearly “mostly A” (red) or “mostly B” (yellow)
+  - portal optionally contains a small amount of the *other* portal colour to suggest connection
+  - portal colour “bleeds” into the surface for a few columns (e.g. max 5 columns deep)
+
+### Rendering model
+
+- On portal placement:
+  - compute and store a per-portal `portal_seed` (1–2 bytes) so the pattern is stable for that portal instance.
+  - stamp the portal into the **clean background buffer**, then copy that rectangle into the **live buffer** (or redraw that rect immediately) so sprite restore works naturally.
+- On portal removal:
+  - restore the affected rectangle from clean background (or rebuild the clean background for that room if needed).
+
+### Pattern generation: ordered dither (recommended)
+
+Avoid per-pixel PRNG calls (costly) and instead use a small threshold map (e.g. 4×4 ordered dither) to approximate “probability” as coverage.
+
+- Let `t` be a threshold 0..15 from a 4×4 table.
+- The table lookup is phase-shifted by the portal seed so each placement is different:
+  - `tx = (x + seed_x) & 3`
+  - `ty = (y + seed_y) & 3`
+  - `t = dither4x4[ty*4 + tx]`
+- For each pixel in the portal footprint:
+  - if `t < main_level` → write the portal’s main colour
+  - else if `t < main_level + alt_level` → write the other-portal colour
+  - else → leave the underlying pixel unchanged
+
+This produces the intended “probability rule” look while remaining deterministic and stable.
+
+#### Example `dither4x4`
+
+Any low-discrepancy 4×4 threshold pattern works. One common choice is a 4×4 Bayer matrix (values 0..15):
+
+- ` 0  8  2 10`
+- `12  4 14  6`
+- ` 3 11  1  9`
+- `15  7 13  5`
+
+Store it in row-major order as 16 bytes (0..15). The seed offsets select different phases of the same pattern.
+
+#### Portal seed suggestions
+
+Goal: stable for an instance, but different each time you place (even at the same location).
+
+- Maintain a monotonically increasing `portal_place_counter` (wrap is fine).
+- On placement, derive `portal_seed` from a mix of:
+  - `portal_place_counter`
+  - `reticle_cell_x`, `reticle_cell_y`
+  - Chell’s position (`char_tile_pos`, possibly `char_pixel_offset`)
+  - `current_room`
+
+Example (conceptually):
+
+- `seed_x = portal_place_counter ^ reticle_cell_x ^ (char_tile_pos << 1)`
+- `seed_y = (portal_place_counter << 1) ^ reticle_cell_y ^ current_room`
+
+This is intentionally simple: it doesn’t need cryptographic randomness, just visual variation.
+
+### Column depth rules (example)
+
+Treat the portal as blending into the surface across a small number of columns from the edge inward (e.g. 5 columns max). Each column has its own `(main_level, alt_level)` in 0..16 units.
+
+Example levels (out of 16):
+
+- col0: main=16, alt=0 (100% main)
+- col1: main=14, alt=2 (mostly main, slight alt)
+- col2: main=10, alt=2 (main + a little alt, some unchanged)
+- col3: main=5,  alt=1 (mostly unchanged)
+- col4: main=3,  alt=1 (subtle fade)
+
+These numbers are tuning knobs.
+
+### Outline / rim
+
+Even with a cyan/black background, a thin rim helps readability and avoids colour bleed. Options:
+
+- 1px black outline around the portal footprint, OR
+- black pixels on the inner edge only (cheaper, still defines shape)
+
+### Gameplay clarity rules (suggested)
+
+- If only one portal exists (the other is not placed yet), suppress the “other portal colour” speckles (use black speckles instead) to avoid implying an active connection.
+- When the second portal becomes active, redraw **both** portals using their full A↔B speckle rules so the player immediately sees the connection.
+
+### MODE 5 packing note
+
+MODE 5 pixel packing makes true “per pixel” writes expensive. The ordered-dither approach is still viable, but implementation should aim to operate on convenient pixel groupings (where possible) and only run on placement time, not per frame.
+
+#### What does “5 columns” mean in MODE 5?
+
+In our custom MODE 5 setup (128px wide = 32 bytes/scanline):
+
+- **1 screen byte = 4 horizontal pixels** (2 bits per pixel).
+- Therefore:
+  - **5 pixel-columns** = 5 pixels (awkward: crosses byte boundaries)
+  - **5 byte-columns** = 20 pixels (often a better fit for byte-wide loops)
+
+If we want the portal blend depth to be easy to stamp quickly, prefer depths that are multiples of **4 pixels** (byte-aligned) or **8 pixels** (tile half-cell, 2 bytes). If we truly want a 5-pixel blend, we can still do it, but it will require per-byte masking and partial updates at the left/right edges.
 
 ## Next Implementation Steps
 
