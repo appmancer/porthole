@@ -918,7 +918,7 @@ SOLID_TILE_PLANE          = &7A00
     LSR A
     LSR A
     LSR A
-    STA temp
+    STA col_counter
 
     ; tile_y = Y >> 4
     TYA
@@ -931,7 +931,7 @@ SOLID_TILE_PLANE          = &7A00
     ; tilepos = tile_y*16 + tile_x
     LDA times16_table,Y
     CLC
-    ADC temp
+    ADC col_counter
     TAY
 
     LDA SOLID_TILE_PLANE,Y
@@ -950,7 +950,7 @@ SOLID_TILE_PLANE          = &7A00
     LSR A
     LSR A
     LSR A
-    STA temp
+    STA col_counter
 
     ; tile_y = Y >> 4
     TYA
@@ -963,7 +963,7 @@ SOLID_TILE_PLANE          = &7A00
     ; tilepos = tile_y*16 + tile_x
     LDA times16_table,Y
     CLC
-    ADC temp
+    ADC col_counter
     TAY
 
     LDA (portalmap_ptr),Y

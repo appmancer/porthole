@@ -21,6 +21,7 @@ ORG &70
 .char_grounded      SKIP 1    ; 0/1: standing on solid
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
 .rise_cooldown      SKIP 1    ; Frames until next upward step
+.fall_cooldown      SKIP 1    ; Frames until next downward step
 .keys_held          SKIP 1    ; Bitfield: held keys this frame
 .keys_pressed       SKIP 1    ; Bitfield: edge-trigger keys (held & ~prev)
 .keys_prev          SKIP 1    ; Previous frame's keys_held
@@ -61,6 +62,7 @@ ORG &70
 .reticle_state       SKIP 1    ; 0=blocked, 1=portalable
 .reticle_active      SKIP 1    ; 0/1: draw reticle
 .reticle_prev_active SKIP 1    ; previous frame reticle_active
+.reticle_move_cd     SKIP 1    ; reticle move repeat cooldown
 
 .chell_dirty         SKIP 1    ; 0/1: Chell moved/changed last update
 .reticle_dirty       SKIP 1    ; 0/1: reticle moved/changed last update
@@ -95,9 +97,10 @@ RENDER_NEW_PTR_HI     = RENDER_LIST_BASE + 7   ; 2 bytes
 GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
 GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
 GRAVITY_DOWN_PERIOD         = 1      ; gravity tick period while falling
-TERMINAL_VELOCITY_DOWN      = 4      ; max falling speed (8px steps)
+TERMINAL_VELOCITY_DOWN      = 1      ; max falling speed (8px steps)
 JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
 RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
+FALL_STEP_PERIOD            = 2      ; move down 1 stripe every N frames
 
 CHELL_RUN_LEFT_BASE         = 12
 CHELL_IDLE_RIGHT_BASE       = 24
@@ -166,6 +169,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA char_grounded
     STA gravity_cooldown
     STA rise_cooldown
+    STA fall_cooldown
     STA keys_held
     STA keys_pressed
     STA keys_prev
@@ -185,6 +189,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA #0
     STA reticle_active
     STA reticle_prev_active
+    STA reticle_move_cd
     STA reticle_cell_x
     STA reticle_cell_y
     STA reticle_state
@@ -621,8 +626,10 @@ CHELL_JUMP_LEFT_BASE        = 36
 ; Z/X/:/ move reticle in portal-grid cells.
 ; Output: C=1 if redraw needed.
 .poll_reticle_keys
+    ; Use temp_y as our local "needs redraw" flag.
+    ; (temp is used inside is_portalable/is_solid, so don't use it here.)
     LDA #0
-    STA temp
+    STA temp_y
 
     ; Ensure reticle is active.
     LDA reticle_active
@@ -630,7 +637,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA #1
     STA reticle_active
     LDA #1
-    STA temp
+    STA temp_y
 .reticle_already_active
 
     ; Entering reticle mode: snap reticle to Chell gun position.
@@ -667,7 +674,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA reticle_cell_y
 
     LDA #1
-    STA temp
+    STA temp_y
 .reticle_skip_snap
 
     ; Chell stays idle (stop horizontal stepping)
@@ -677,52 +684,81 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA move_held
     STA move_cooldown
 
-    ; Reticle movement is step-per-press (no auto-repeat).
+    ; Reticle movement with simple repeat.
+    ; - If a direction was newly pressed, move immediately.
+    ; - Otherwise, repeat while held using a cooldown.
 
-    ; Reticle left
+    ; If any direction is newly pressed, bypass cooldown.
     LDA keys_pressed
+    AND #(1+2+16+32)
+    BEQ reticle_cd_tick
+    LDA #0
+    STA reticle_move_cd
+
+ .reticle_cd_tick
+    LDA reticle_move_cd
+    BEQ reticle_try_move
+    DEC reticle_move_cd
+    JMP reticle_update_state
+
+ .reticle_try_move
+    ; Prefer left, then right, then up, then down.
+
+    ; Left
+    LDA keys_held
     AND #1
-    BEQ reticle_check_right
+    BEQ reticle_try_right
     LDA reticle_cell_x
-    BEQ reticle_check_right
+    BEQ reticle_try_right
     DEC reticle_cell_x
+    LDA #4
+    STA reticle_move_cd
     LDA #1
-    STA temp
+    STA temp_y
+    JMP reticle_update_state
 
-.reticle_check_right
-    ; Reticle right
-    LDA keys_pressed
+ .reticle_try_right
+    ; Right
+    LDA keys_held
     AND #2
-    BEQ reticle_check_up
+    BEQ reticle_try_up
     LDA reticle_cell_x
     CMP #7
-    BEQ reticle_check_up
+    BEQ reticle_try_up
     INC reticle_cell_x
+    LDA #4
+    STA reticle_move_cd
     LDA #1
-    STA temp
+    STA temp_y
+    JMP reticle_update_state
 
-.reticle_check_up
-    ; Reticle up
-    LDA keys_pressed
+ .reticle_try_up
+    ; Up
+    LDA keys_held
     AND #16
-    BEQ reticle_check_down
+    BEQ reticle_try_down
     LDA reticle_cell_y
-    BEQ reticle_check_down
+    BEQ reticle_try_down
     DEC reticle_cell_y
+    LDA #4
+    STA reticle_move_cd
     LDA #1
-    STA temp
+    STA temp_y
+    JMP reticle_update_state
 
-.reticle_check_down
-    ; Reticle down
-    LDA keys_pressed
+ .reticle_try_down
+    ; Down
+    LDA keys_held
     AND #32
     BEQ reticle_update_state
     LDA reticle_cell_y
     CMP #15
     BEQ reticle_update_state
     INC reticle_cell_y
+    LDA #4
+    STA reticle_move_cd
     LDA #1
-    STA temp
+    STA temp_y
 
  .reticle_update_state
     ; Update reticle_state from portalability (no LOS yet).
@@ -762,26 +798,26 @@ CHELL_JUMP_LEFT_BASE        = 36
     JSR is_portalable
     BCC reticle_set_blocked
 
-.reticle_set_green
+ .reticle_set_green
     LDA reticle_state
     CMP #1
     BEQ reticle_done
     LDA #1
     STA reticle_state
     LDA #1
-    STA temp
+    STA temp_y
     JMP reticle_done
 
-.reticle_set_blocked
+ .reticle_set_blocked
     LDA reticle_state
     BEQ reticle_done
     LDA #0
     STA reticle_state
     LDA #1
-    STA temp
+    STA temp_y
 
-.reticle_done
-    LDA temp
+ .reticle_done
+    LDA temp_y
     BEQ reticle_no_redraw
     SEC
     RTS
@@ -861,6 +897,9 @@ CHELL_JUMP_LEFT_BASE        = 36
      ; Allow an immediate upward step this frame.
      LDA #0
      STA rise_cooldown
+
+     ; Reset fall pacing when a jump starts.
+     STA fall_cooldown
 
      LDA #1
      STA temp
@@ -1364,14 +1403,21 @@ CHELL_JUMP_LEFT_BASE        = 36
     BMI apply_move_up
 
 .apply_move_down
-    LDX char_vy
-.move_down_loop
+    ; Pace falling so it doesn't "teleport" by whole stripes every frame.
+    ; Cap to at most one 8px stripe step per frame.
+    LDA fall_cooldown
+    BEQ do_fall_step
+    DEC fall_cooldown
+    JMP apply_gravity_only
+
+ .do_fall_step
+    LDA #(FALL_STEP_PERIOD-1)
+    STA fall_cooldown
+
     JSR step_down_8
     BCC hit_ground
     LDA #1
     STA temp
-    DEX
-    BNE move_down_loop
     JMP apply_gravity_only
 
 .apply_move_up
@@ -1397,6 +1443,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA #0
     STA char_vy
     STA gravity_cooldown
+    STA fall_cooldown
     LDA #1
     STA char_grounded
     JMP apply_return
