@@ -1,5 +1,9 @@
 .tmp/
 
+# Build-generated includes
+levels/generated_level*.asm
+sprites/generated_tiles.asm
+
 # Reference materials (not part of PORTHOLE build)
 Spycat.ssd
 Disc041-Spycat.ssd
