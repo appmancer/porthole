@@ -61,7 +61,7 @@ ORG &70
 .chell_overlay_index SKIP 1    ; sprite index into overlay_sprite_table
 .last_aim_held       SKIP 1    ; previous aim_held (0/1/2)
 
-.reticle_cell_x      SKIP 1    ; 0..7 (portal grid X)
+.reticle_cell_x      SKIP 1    ; 0..14 (portal span X, top-left tile_x)
 .reticle_cell_y      SKIP 1    ; 0..15 (portal grid Y)
 .reticle_state       SKIP 1    ; 0=blocked, 1=portalable
 .reticle_active      SKIP 1    ; 0/1: draw reticle
@@ -77,6 +77,29 @@ ORG &70
 .reticle_prev_ptr    SKIP 2    ; previous reticle screen_ptr
 .chell_has_under     SKIP 1    ; 0/1: have valid Chell save-under
 .reticle_has_under   SKIP 1    ; 0/1: have valid reticle save-under
+
+; Debug: why the reticle is currently green.
+; 0 = not green / unknown
+; 1 = floor/ceiling 2x1 match
+; 2 = wall 1x2 match (left column)
+; 3 = wall 1x2 match (right column)
+; 4 = back-wall 2x2 empty match at y
+; 5 = back-wall 2x2 empty match at y-1
+.reticle_debug_reason SKIP 1
+
+; --- Reticle LOS scratch ---
+; All values are in pixels unless noted.
+.los_x0        SKIP 1    ; ray start X
+.los_y0        SKIP 1    ; ray start Y
+.los_x1        SKIP 1    ; ray target X
+.los_y1        SKIP 1    ; ray target Y
+.los_dx        SKIP 1    ; abs(x1-x0)
+.los_dy        SKIP 1    ; abs(y1-y0)
+.los_err       SKIP 1    ; Bresenham error accumulator
+.los_steps     SKIP 1    ; loop counter (major axis delta)
+.los_sx        SKIP 1    ; step X (+1 or $FF)
+.los_sy        SKIP 1    ; step Y (+1 or $FF)
+.los_prev_tile SKIP 1    ; last visited tilepos (y*16+x), $FF = none
  
  ; --- Render list (PoP-style pipeline) ---
  ; Stored in screen scratch (not ZP) so MOS calls can't clobber it.
@@ -212,6 +235,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA reticle_prev_ptr+1
     STA chell_has_under
     STA reticle_has_under
+    STA reticle_debug_reason
 
     ; Default: face right.
     LDA #1
@@ -923,7 +947,9 @@ CHELL_JUMP_LEFT_BASE        = 36
  
   
 ; Poll reticle movement while SHIFT is held.
-; Z/X/:/ move reticle in portal-grid cells.
+; Z/X/:/ move reticle over the placement grid:
+; - X in 8px tile columns (reticle_cell_x = top-left of 2-tile span)
+; - Y in 16px tile rows
 ; Output: C=1 if redraw needed.
 .poll_reticle_keys
     ; Use temp_y as our local "needs redraw" flag.
@@ -946,17 +972,17 @@ CHELL_JUMP_LEFT_BASE        = 36
     BEQ reticle_skip_snap
 
     ; x = calc_char_x + 8 (roughly Chell center)
+    ; reticle_cell_x is the top-left 8px tile_x of a 2-tile-wide portal span.
     JSR calc_char_x
     CLC
     ADC #8
     LSR A
     LSR A
     LSR A
-    LSR A
-    CMP #8
+    CMP #15
     BCC reticle_snap_x_ok
-    LDA #7
-.reticle_snap_x_ok
+    LDA #14
+ .reticle_snap_x_ok
     STA reticle_cell_x
 
     ; y = calc_char_y + 16 (roughly mid-body)
@@ -1023,7 +1049,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     AND #2
     BEQ reticle_try_up
     LDA reticle_cell_x
-    CMP #7
+    CMP #14
     BEQ reticle_try_up
     INC reticle_cell_x
     LDA #4
@@ -1062,43 +1088,202 @@ CHELL_JUMP_LEFT_BASE        = 36
 
  .reticle_update_state
     ; Update reticle_state from portalability (no LOS yet).
-    ; We treat a portal cell as portalable if both underlying 8x16 tiles are portalable.
+    ;
+    ; In the side-on platform view:
+    ; - Floor/ceiling portals are 16x16 pixels (2 tiles wide x 1 tile tall)
+    ; - Wall portals are 8x32 pixels (1 tile wide x 2 tiles tall)
+    ; - Back-wall portals are 16x32 pixels (2 tiles wide x 2 tiles tall)
+    ;
+    ; Rules (current):
+    ; - Floor: two adjacent tiles must both be ╥ (tile id 2)
+    ; - Ceiling: two adjacent tiles must both be ╨ (tile id 4)
+    ; - Wall: two stacked tiles must both be ╢ (tile id 3) or both be ╟ (tile id 5)
+    ;   (we accept either the left or right 8px column within the 16px portal cell)
 
-    ; y = cell_y*16 + 8
+    ; tile_x0 = reticle_cell_x (top-left)
+    LDA reticle_cell_x
+    STA col_counter
+    ; tile_x1 = tile_x0 + 1
+    CLC
+    ADC #1
+    STA row_counter
+
+    ; -------- Floor / ceiling test (2x1) --------
+    ; idx0 = times16_table[y] + tile_x0
     LDY reticle_cell_y
     LDA times16_table,Y
     CLC
-    ADC #8
+    ADC col_counter
     TAY
+    LDA (tilemap_ptr),Y
+    STA temp
 
-    ; x_left = cell_x*16 + 4
-    LDY reticle_cell_x
-    LDA times16_table,Y
-    CLC
-    ADC #4
-    TAX
+    ; idx1 = idx0 + 1
+    INY
+    LDA (tilemap_ptr),Y
+    CMP temp
+    BNE reticle_try_wall
 
-    JSR is_portalable
-    BCC reticle_set_blocked
+    ; Must be floor or ceiling face.
+    LDA temp
+    CMP #2
+    BEQ reticle_floor_ceiling_match
+    CMP #4
+    BEQ reticle_floor_ceiling_match
+    JMP reticle_try_wall
 
-    ; x_right = cell_x*16 + 12
-    LDY reticle_cell_x
-    LDA times16_table,Y
-    CLC
-    ADC #12
-    TAX
+  .reticle_floor_ceiling_match
+    LDA #1
+    STA reticle_debug_reason
+    JMP reticle_set_green
 
-    ; Y must still be y_center
+    ; -------- Wall test (1x2) --------
+  .reticle_try_wall
+    ; Need 2 tiles height.
+    LDA reticle_cell_y
+    CMP #15
+    BNE reticle_wall_height_ok
+    JMP reticle_set_blocked
+  .reticle_wall_height_ok
+
+    ; Try left column: (tile_x0, y) and (tile_x0, y+1)
     LDY reticle_cell_y
     LDA times16_table,Y
     CLC
-    ADC #8
+    ADC col_counter
     TAY
+    LDA (tilemap_ptr),Y
+    STA temp
 
-    JSR is_portalable
+    ; temp must be 3 (╢) or 5 (╟)
+    CMP #3
+    BEQ wall_left_ok_type
+    CMP #5
+    BNE reticle_try_wall_right
+  .wall_left_ok_type
+
+    ; Compare with below tile.
+    LDY reticle_cell_y
+    INY
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    CMP temp
+    BNE reticle_try_wall_right
+     LDA #2
+     STA reticle_debug_reason
+     JMP reticle_set_green
+
+  .reticle_try_wall_right
+    ; Try right column: (tile_x1, y) and (tile_x1, y+1)
+    LDY reticle_cell_y
+    LDA times16_table,Y
+    CLC
+    ADC row_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    STA temp
+
+    CMP #3
+    BEQ wall_right_ok_type
+    CMP #5
+    BEQ wall_right_ok_type
+    JMP reticle_set_blocked
+  .wall_right_ok_type
+
+    LDY reticle_cell_y
+    INY
+    LDA times16_table,Y
+    CLC
+    ADC row_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    CMP temp
+    BNE reticle_try_backwall
+     LDA #3
+     STA reticle_debug_reason
+     JMP reticle_set_green
+
+    ; -------- Back-wall test (2x2 empties) --------
+    ; Back wall is represented by empty tiles (id 0).
+    ; Allow placement at the confluence of 4 tiles by trying y and y-1.
+
+  .reticle_try_backwall
+    ; Try top-left at (x0, y)
+    JSR reticle_backwall_at_y
+    BCC reticle_try_backwall_yminus1
+     LDA #4
+     STA reticle_debug_reason
+     JMP reticle_set_green
+
+    ; Try top-left at (x0, y-1)
+  .reticle_try_backwall_yminus1
+    LDA reticle_cell_y
+    BEQ reticle_set_blocked
+    DEC reticle_cell_y
+    JSR reticle_backwall_at_y
+    INC reticle_cell_y
     BCC reticle_set_blocked
+     LDA #5
+     STA reticle_debug_reason
+     JMP reticle_set_green
 
- .reticle_set_green
+    JMP reticle_set_blocked
+
+; Check back-wall portalability (2x2 empty) at current reticle_cell_y.
+; Returns C=1 if tile(y,x0..x1) and tile(y+1,x0..x1) are all 0.
+.reticle_backwall_at_y
+    ; Need 2 tiles height.
+    LDA reticle_cell_y
+    CMP #15
+    BEQ backwall_fail
+
+    ; row y
+    LDY reticle_cell_y
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    BNE backwall_fail
+    INY
+    LDA (tilemap_ptr),Y
+    BNE backwall_fail
+
+    ; row y+1
+    LDY reticle_cell_y
+    INY
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    BNE backwall_fail
+    INY
+    LDA (tilemap_ptr),Y
+    BNE backwall_fail
+
+    SEC
+    RTS
+
+  .backwall_fail
+    CLC
+    RTS
+
+  .reticle_set_green
+    ; Candidate surface match passed; now require line-of-sight.
+    JSR reticle_check_los
+    BCS reticle_set_green_now
+
+    ; LOS blocked: keep the base reason but mark it with bit 7.
+    LDA reticle_debug_reason
+    ORA #&80
+    STA reticle_debug_reason
+    JMP reticle_set_blocked_los
+
+  .reticle_set_green_now
     LDA reticle_state
     CMP #1
     BEQ reticle_done
@@ -1108,7 +1293,20 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA temp_y
     JMP reticle_done
 
- .reticle_set_blocked
+  ; Blocked due to LOS. Do not clear reticle_debug_reason (it already contains
+  ; the base reason, possibly ORed with $80).
+  .reticle_set_blocked_los
+    LDA reticle_state
+    BEQ reticle_done
+    LDA #0
+    STA reticle_state
+    LDA #1
+    STA temp_y
+    JMP reticle_done
+
+  .reticle_set_blocked
+    LDA #0
+    STA reticle_debug_reason
     LDA reticle_state
     BEQ reticle_done
     LDA #0
@@ -1121,7 +1319,417 @@ CHELL_JUMP_LEFT_BASE        = 36
     BEQ reticle_no_redraw
     SEC
     RTS
-.reticle_no_redraw
+ .reticle_no_redraw
+    CLC
+    RTS
+
+
+; --- Reticle line-of-sight ---
+;
+; Returns C=1 if Chell can see the candidate portal target, else C=0.
+; Uses the solid-tile plane (SOLID_TILE_PLANE) only.
+.reticle_check_los
+    ; Ray start (gun position) from Chell.
+    ; Tune offsets later; for now use the same rough centre used when snapping.
+    JSR calc_char_x
+    CLC
+    ADC #8
+    STA los_x0
+
+    JSR calc_char_y
+    CLC
+    ADC #16
+    STA los_y0
+
+    ; Compute ray target based on the chosen placement kind.
+    LDA reticle_debug_reason
+    AND #&7F
+    BNE reticle_los_kind_ok
+    CLC
+    RTS
+  .reticle_los_kind_ok
+    CMP #1
+    BEQ reticle_los_target_floor
+    CMP #2
+    BEQ reticle_los_target_wall_left
+    CMP #3
+    BEQ reticle_los_target_wall_right
+    CMP #4
+    BEQ reticle_los_target_backwall_y
+    CMP #5
+    BEQ reticle_los_target_backwall_yminus1
+    JMP reticle_los_fail
+
+  ; --- Floor/ceiling (2x1) ---
+  .reticle_los_target_floor
+    ; target_x = reticle_cell_x*8 + 8 (centre of 2-tile span)
+    LDA reticle_cell_x
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #8
+    STA los_x1
+
+    ; Compute tile top Y = reticle_cell_y*16.
+    LDA reticle_cell_y
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    STA los_y1
+
+    ; Choose the side of the solid tile that faces the shooter.
+    ; If shooter is above tile centre -> aim just above the tile; else just below.
+    CLC
+    ADC #8              ; A = tile_top + 8 (centre)
+    CMP los_y0
+    BCC los_floor_shooter_below
+
+    ; shooter above: y = tile_top - 1 (clamped)
+    LDA los_y1
+    BEQ los_floor_y_ok
+    DEC los_y1
+  .los_floor_y_ok
+    JMP reticle_los_nudge_and_cast
+
+  .los_floor_shooter_below
+    ; shooter below: y = tile_top + 16
+    LDA los_y1
+    CLC
+    ADC #16
+    STA los_y1
+    JMP reticle_los_nudge_and_cast
+
+  ; --- Wall (1x2), left column ---
+  .reticle_los_target_wall_left
+    LDA reticle_cell_x
+    JMP reticle_los_wall_common
+
+  ; --- Wall (1x2), right column ---
+  .reticle_los_target_wall_right
+    LDA reticle_cell_x
+    CLC
+    ADC #1
+  .reticle_los_wall_common
+    ; A = wall tile_x
+    ; Compute wall tile left pixel X = tile_x*8 in temp.
+    STA temp
+    ASL A
+    ASL A
+    ASL A
+    STA los_x1           ; provisional: tile_left
+
+    ; target_y = reticle_cell_y*16 + 16 (centre of 2-tile height)
+    LDA reticle_cell_y
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #16
+    STA los_y1
+
+    ; Choose the side of the solid tile that faces the shooter.
+    ; If shooter is left of tile centre -> x = tile_left - 1, else x = tile_left + 8.
+    LDA los_x1
+    CLC
+    ADC #4               ; tile centre X
+    CMP los_x0
+    BCC los_wall_shooter_right
+
+    ; shooter left: x = tile_left - 1 (clamped)
+    LDA los_x1
+    BEQ los_wall_x_ok
+    DEC los_x1
+  .los_wall_x_ok
+    JMP reticle_los_nudge_and_cast
+
+  .los_wall_shooter_right
+    ; shooter right: x = tile_left + 8
+    LDA los_x1
+    CLC
+    ADC #8
+    CMP #128
+    BCC los_wall_right_ok
+    LDA #127
+  .los_wall_right_ok
+    STA los_x1
+    JMP reticle_los_nudge_and_cast
+
+  ; --- Backwall (2x2 empty), at y ---
+  .reticle_los_target_backwall_y
+    LDA reticle_cell_y
+    JMP reticle_los_backwall_common
+
+  ; --- Backwall (2x2 empty), at y-1 ---
+  .reticle_los_target_backwall_yminus1
+    LDA reticle_cell_y
+    BEQ reticle_los_fail
+    SEC
+    SBC #1
+  .reticle_los_backwall_common
+    ; target_x = reticle_cell_x*8 + 8 (centre)
+    LDA reticle_cell_x
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #8
+    STA los_x1
+
+    ; target_y = tile_y*16 + 16 (centre of 2-tile height)
+    ; A currently holds effective tile_y.
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #16
+    STA los_y1
+    JMP reticle_los_cast
+
+  ; Nudge target 1px toward the shooter (helps avoid grazing the destination wall).
+  .reticle_los_nudge_and_cast
+    ; Nudge X
+    LDA los_x1
+    CMP los_x0
+    BEQ reticle_los_nudge_y
+    BCC reticle_los_nudge_x_right
+    ; target > shooter: move target left
+    LDA los_x1
+    BEQ reticle_los_nudge_y
+    DEC los_x1
+    JMP reticle_los_nudge_y
+  .reticle_los_nudge_x_right
+    ; target < shooter: move target right
+    LDA los_x1
+    CMP #127
+    BEQ reticle_los_nudge_y
+    INC los_x1
+
+  .reticle_los_nudge_y
+    ; Nudge Y
+    LDA los_y1
+    CMP los_y0
+    BEQ reticle_los_cast
+    BCC reticle_los_nudge_y_down
+    ; target > shooter: move target up
+    LDA los_y1
+    BEQ reticle_los_cast
+    DEC los_y1
+    JMP reticle_los_cast
+  .reticle_los_nudge_y_down
+    ; target < shooter: move target down
+    LDA los_y1
+    CMP #255
+    BEQ reticle_los_cast
+    INC los_y1
+
+  .reticle_los_cast
+    JSR los_line_clear
+    RTS
+
+  .reticle_los_fail
+    CLC
+    RTS
+
+
+; Test line-of-sight from (los_x0,los_y0) to (los_x1,los_y1).
+; Returns C=1 if clear, else C=0.
+.los_line_clear
+    ; Compute step + abs delta for X.
+    LDA los_x1
+    SEC
+    SBC los_x0
+    BCS los_dx_pos
+    ; negative => sx = -1
+    LDA #&FF
+    STA los_sx
+    LDA los_x0
+    SEC
+    SBC los_x1
+    STA los_dx
+    JMP los_dx_done
+  .los_dx_pos
+    LDA #1
+    STA los_sx
+    STA temp              ; temp=1 (used only to avoid reloading)
+    LDA los_x1
+    SEC
+    SBC los_x0
+    STA los_dx
+  .los_dx_done
+
+    ; Compute step + abs delta for Y.
+    LDA los_y1
+    SEC
+    SBC los_y0
+    BCS los_dy_pos
+    ; negative => sy = -1
+    LDA #&FF
+    STA los_sy
+    LDA los_y0
+    SEC
+    SBC los_y1
+    STA los_dy
+    JMP los_dy_done
+  .los_dy_pos
+    LDA #1
+    STA los_sy
+    LDA los_y1
+    SEC
+    SBC los_y0
+    STA los_dy
+  .los_dy_done
+
+    ; prev tile = none
+    LDA #&FF
+    STA los_prev_tile
+
+    ; Choose major axis.
+    LDA los_dx
+    CMP los_dy
+    BCS los_x_major
+
+    ; --- Y-major ---
+    LDA los_dy
+    STA los_steps
+    LSR A
+    STA los_err
+  .los_y_loop
+    ; Block if we enter a solid tile.
+    JSR los_check_tile
+    BCS los_blocked
+
+    ; Reached target?
+    LDA los_x0
+    CMP los_x1
+    BNE los_y_not_done
+    LDA los_y0
+    CMP los_y1
+    BEQ los_clear
+  .los_y_not_done
+
+    LDA los_steps
+    BEQ los_blocked
+
+    ; Step Y.
+    LDA los_y0
+    CLC
+    ADC los_sy
+    STA los_y0
+
+    ; err -= dx; if borrow, step X and err += dy
+    LDA los_err
+    SEC
+    SBC los_dx
+    STA los_err
+    BCS los_y_err_ok
+    LDA los_x0
+    CLC
+    ADC los_sx
+    STA los_x0
+    LDA los_err
+    CLC
+    ADC los_dy
+    STA los_err
+  .los_y_err_ok
+
+    DEC los_steps
+    JMP los_y_loop
+
+  ; --- X-major ---
+  .los_x_major
+    LDA los_dx
+    STA los_steps
+    LSR A
+    STA los_err
+  .los_x_loop
+    JSR los_check_tile
+    BCS los_blocked
+
+    LDA los_x0
+    CMP los_x1
+    BNE los_x_not_done
+    LDA los_y0
+    CMP los_y1
+    BEQ los_clear
+  .los_x_not_done
+
+    LDA los_steps
+    BEQ los_blocked
+
+    ; Step X.
+    LDA los_x0
+    CLC
+    ADC los_sx
+    STA los_x0
+
+    ; err -= dy; if borrow, step Y and err += dx
+    LDA los_err
+    SEC
+    SBC los_dy
+    STA los_err
+    BCS los_x_err_ok
+    LDA los_y0
+    CLC
+    ADC los_sy
+    STA los_y0
+    LDA los_err
+    CLC
+    ADC los_dx
+    STA los_err
+  .los_x_err_ok
+
+    DEC los_steps
+    JMP los_x_loop
+
+  .los_clear
+    SEC
+    RTS
+
+  .los_blocked
+    CLC
+    RTS
+
+
+; Check whether the ray has entered a new tile, and if so, test solidity.
+; Returns C=1 if blocked by a solid tile, else C=0.
+.los_check_tile
+    ; tile_x = x >> 3
+    LDA los_x0
+    LSR A
+    LSR A
+    LSR A
+    STA col_counter
+
+    ; tile_y = y >> 4
+    LDA los_y0
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAY
+
+    ; tilepos = tile_y*16 + tile_x
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+
+    ; Only test when we enter a new tile.
+    TYA
+    CMP los_prev_tile
+    BEQ los_tile_ok
+    STA los_prev_tile
+
+    LDA SOLID_TILE_PLANE,Y
+    BEQ los_tile_ok
+    SEC
+    RTS
+
+  .los_tile_ok
     CLC
     RTS
 
@@ -2476,7 +3084,10 @@ CHELL_JUMP_LEFT_BASE        = 36
     RTS
 
 ; Update screen_ptr from reticle portal-grid cell.
-; Portal grid is 16x16 pixels, so X uses tile_x = reticle_cell_x*2.
+;
+; Note: reticle_cell_x is expressed in 8px tile columns (0..14), representing
+; the top-left tile_x of a 2-tile-wide portal span. (reticle_cell_y is still a
+; 16px tile row index, 0..15.)
 .update_screen_ptr_from_reticle
     ; tile_y = reticle_cell_y
     LDA reticle_cell_y
@@ -2490,10 +3101,8 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA tile_row_screen_table+1,Y
     STA screen_ptr+1
 
-    ; tile_x = reticle_cell_x * 2
-    LDA reticle_cell_x
-    ASL A
-    TAY
+    ; tile_x = reticle_cell_x
+    LDY reticle_cell_x
 
     ; Add tile_x * 16
     LDA times16_table,Y
