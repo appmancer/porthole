@@ -77,7 +77,7 @@
     EQUB &FF,&EE,&CC,&CC,&CC,&CC,&CC,&88,&11,&00,&00,&00,&00,&00,&00,&00
     EQUB &FF,&FF,&77,&33,&33,&33,&33,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &00,&00,&88,&EE,&CC,&CC,&CC,&CC,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &33,&77,&FF,&FF,&77,&77,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &33,&77,&FF,&FF,&FF,&77,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &CC,&CC,&CC,&CC,&CC,&88,&88,&88,&00,&00,&00,&00,&00,&00,&00,&00
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &88,&88,&88,&88,&88,&88,&88,&88,&00,&00,&00,&11,&11,&00,&00,&00
@@ -86,7 +86,7 @@
     EQUB &FF,&FF,&EE,&EE,&EE,&EE,&EE,&CC,&88,&00,&00,&00,&00,&00,&00,&00
     EQUB &FF,&77,&33,&11,&11,&11,&11,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &88,&88,&CC,&FF,&EE,&EE,&EE,&EE,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &11,&33,&77,&77,&33,&33,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &11,&33,&77,&77,&77,&33,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &EE,&EE,&EE,&EE,&EE,&CC,&CC,&CC,&00,&00,&00,&00,&00,&00,&00,&00
     EQUB &77,&77,&77,&77,&77,&77,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &CC,&CC,&CC,&CC,&CC,&CC,&CC,&CC,&00,&00,&00,&00,&00,&00,&00,&00
@@ -95,7 +95,7 @@
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&00,&00,&00,&00,&00,&00
     EQUB &77,&33,&11,&00,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&77
     EQUB &CC,&CC,&EE,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&88,&00,&00,&00,&00
-    EQUB &00,&11,&33,&33,&11,&11,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&11,&33,&33,&33,&11,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&EE,&EE,&EE,&00,&00,&00,&00,&00,&00,&00,&00
     EQUB &33,&33,&33,&33,&33,&33,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &EE,&EE,&EE,&EE,&EE,&EE,&EE,&EE,&00,&00,&00,&00,&00,&00,&00,&00
@@ -104,7 +104,7 @@
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&88,&88,&88,&88,&00
     EQUB &33,&11,&00,&00,&00,&00,&00,&00,&FF,&FF,&FF,&77,&77,&77,&77,&33
     EQUB &EE,&EE,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&CC,&88,&88,&88,&88
-    EQUB &00,&00,&11,&11,&00,&00,&00,&00,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&00,&11,&11,&11,&00,&00,&00,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&88,&88,&88,&88,&00,&00,&00
     EQUB &11,&11,&11,&11,&11,&11,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&00,&00,&00,&00,&00
@@ -113,7 +113,7 @@
     EQUB &FF,&EE,&CC,&CC,&CC,&00,&00,&00,&11,&00,&00,&00,&00,&00,&00,&00
     EQUB &FF,&FF,&77,&33,&33,&33,&33,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &00,&88,&EE,&EE,&EE,&EE,&EE,&EE,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &33,&77,&FF,&FF,&77,&33,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &33,&77,&FF,&FF,&FF,&33,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &EE,&CC,&CC,&CC,&CC,&CC,&EE,&FF,&00,&00,&00,&00,&00,&00,&00,&00
     EQUB &FF,&FF,&FF,&FF,&77,&FF,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&EE,&CC,&CC,&EE,&CC,&88,&CC,&00,&00,&00,&00,&00,&44,&00,&00
@@ -122,7 +122,7 @@
     EQUB &FF,&FF,&EE,&EE,&EE,&88,&88,&88,&88,&00,&00,&00,&00,&00,&00,&00
     EQUB &FF,&77,&33,&11,&11,&11,&11,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &88,&CC,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &11,&33,&77,&77,&33,&11,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &11,&33,&77,&77,&77,&11,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&EE,&EE,&EE,&EE,&EE,&FF,&FF,&00,&00,&00,&00,&00,&00,&00,&88
     EQUB &77,&77,&77,&77,&33,&77,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&EE,&EE,&FF,&EE,&CC,&EE,&88,&00,&00,&00,&00,&22,&00,&00
@@ -131,7 +131,7 @@
     EQUB &FF,&FF,&FF,&FF,&FF,&CC,&CC,&CC,&CC,&88,&00,&00,&00,&00,&00,&00
     EQUB &77,&33,&11,&00,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&77
     EQUB &CC,&EE,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&88,&88,&88,&88,&88,&88
-    EQUB &00,&11,&33,&33,&11,&00,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&11,&33,&33,&33,&00,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&00,&00,&00,&00,&00,&88,&CC
     EQUB &33,&33,&33,&33,&11,&33,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&EE,&FF,&CC,&88,&00,&00,&88,&11,&00,&00
@@ -140,7 +140,7 @@
     EQUB &FF,&FF,&FF,&FF,&FF,&EE,&EE,&EE,&EE,&CC,&88,&88,&88,&00,&00,&00
     EQUB &33,&11,&00,&00,&00,&00,&00,&00,&FF,&FF,&FF,&77,&77,&77,&77,&33
     EQUB &EE,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&CC,&CC,&CC,&CC,&CC,&CC
-    EQUB &00,&00,&11,&11,&00,&00,&00,&00,&77,&FF,&FF,&FF,&FF,&77,&FF,&FF
+    EQUB &00,&00,&11,&11,&11,&00,&00,&00,&77,&FF,&FF,&FF,&FF,&77,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&88,&88,&88,&88,&88,&CC,&EE
     EQUB &11,&11,&11,&11,&00,&11,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&88,&CC,&88,&00,&88
@@ -149,42 +149,42 @@
     EQUB &FF,&FF,&EE,&CC,&CC,&CC,&88,&88,&FF,&11,&00,&00,&00,&00,&00,&00
     EQUB &FF,&FF,&FF,&77,&33,&33,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &00,&00,&00,&CC,&EE,&EE,&EE,&EE,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &11,&33,&77,&FF,&FF,&77,&33,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &11,&33,&77,&FF,&FF,&FF,&33,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &EE,&EE,&CC,&CC,&CC,&CC,&EE,&EE,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &77,&77,&FF,&FF,&FF,&33,&77,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
-    EQUB &CC,&CC,&CC,&88,&88,&88,&00,&00,&00,&00,&00,&00,&00,&66,&66,&22
+    EQUB &77,&FF,&FF,&FF,&FF,&33,&77,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &CC,&CC,&CC,&88,&88,&88,&00,&00,&00,&00,&00,&00,&00,&66,&66,&33
     EQUB &33,&33,&33,&33,&33,&11,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&77
 .chell_run_r3_x1_mask
     EQUB &FF,&FF,&FF,&EE,&EE,&EE,&CC,&CC,&FF,&88,&00,&00,&00,&00,&00,&00
     EQUB &FF,&FF,&77,&33,&11,&11,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &88,&88,&88,&EE,&FF,&FF,&FF,&FF,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &00,&11,&33,&77,&77,&33,&11,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&11,&33,&77,&77,&77,&11,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&EE,&EE,&EE,&EE,&FF,&FF,&00,&00,&00,&00,&00,&00,&00,&00
-    EQUB &33,&33,&77,&77,&77,&11,&33,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &33,&77,&77,&77,&77,&11,&33,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &EE,&EE,&EE,&CC,&CC,&CC,&88,&88,&00,&00,&00,&00,&00,&33,&33,&11
-    EQUB &11,&11,&11,&11,&11,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&77,&33
+    EQUB &11,&11,&11,&11,&11,&00,&00,&88,&FF,&FF,&FF,&FF,&FF,&FF,&77,&33
 .chell_run_r3_x2_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&EE,&EE,&FF,&CC,&88,&00,&00,&00,&00,&00
     EQUB &FF,&77,&33,&11,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &CC,&CC,&CC,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&00,&88,&88,&88,&88
-    EQUB &00,&00,&11,&33,&33,&11,&00,&11,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&00,&11,&33,&33,&33,&00,&11,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&88,&00,&00,&00,&00,&88,&88
-    EQUB &11,&11,&33,&33,&33,&00,&11,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &11,&33,&33,&33,&33,&00,&11,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&EE,&EE,&EE,&CC,&CC,&00,&00,&00,&00,&00,&11,&11,&00
-    EQUB &00,&00,&00,&00,&00,&88,&88,&88,&FF,&FF,&FF,&FF,&FF,&77,&33,&11
+    EQUB &00,&00,&00,&00,&00,&88,&88,&CC,&FF,&FF,&FF,&FF,&FF,&77,&33,&11
 .chell_run_r3_x3_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&88,&88,&00,&00
     EQUB &FF,&33,&11,&00,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&77,&77,&77,&77
     EQUB &EE,&EE,&EE,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&88,&CC,&CC,&CC,&CC
-    EQUB &00,&00,&00,&11,&11,&00,&00,&00,&33,&77,&FF,&FF,&FF,&FF,&77,&FF
+    EQUB &00,&00,&00,&11,&11,&11,&00,&00,&33,&77,&FF,&FF,&FF,&FF,&77,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&CC,&88,&88,&88,&88,&CC,&CC
-    EQUB &00,&00,&11,&11,&11,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&77,&FF,&77
+    EQUB &00,&11,&11,&11,&11,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&77,&FF,&77
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&EE,&EE,&88,&88,&88,&00,&00,&00,&00,&00
-    EQUB &00,&00,&00,&00,&00,&CC,&CC,&44,&77,&77,&77,&77,&77,&33,&11,&00
+    EQUB &00,&00,&00,&00,&00,&CC,&CC,&66,&77,&77,&77,&77,&77,&33,&11,&00
 .chell_run_l1_x3_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&CC,&CC,&CC,&88
     EQUB &88,&00,&00,&00,&00,&00,&00,&00,&FF,&77,&33,&33,&33,&33,&33,&11
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&EE,&FF,&FF,&EE,&EE,&EE,&EE
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&EE,&FF,&FF,&FF,&EE,&EE,&EE
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&00,&00,&11,&77,&33,&33,&33,&33
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&33,&33,&33,&33,&33,&11,&11,&11
@@ -193,7 +193,7 @@
 .chell_run_l1_x2_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&88,&88,&88,&00
     EQUB &11,&00,&00,&00,&00,&00,&00,&00,&FF,&FF,&77,&77,&77,&77,&77,&33
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&CC,&EE,&EE,&CC,&CC,&CC,&CC
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&CC,&EE,&EE,&EE,&CC,&CC,&CC
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&11,&11,&33,&FF,&77,&77,&77,&77
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&EE,&EE,&EE,&EE,&EE,&EE,&EE
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&77,&77,&77,&77,&77,&33,&33,&33
@@ -202,7 +202,7 @@
 .chell_run_l1_x1_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&EE,&CC,&88,&00,&00,&00,&00,&00
     EQUB &33,&11,&00,&00,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&77
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&88,&CC,&CC,&88,&88,&88,&88
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&88,&CC,&CC,&CC,&88,&88,&88
     EQUB &00,&00,&00,&11,&00,&00,&00,&00,&33,&33,&77,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&CC,&CC,&CC,&CC,&CC,&CC,&CC
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&77,&77,&77
@@ -211,7 +211,7 @@
 .chell_run_l1_x0_mask
     EQUB &FF,&FF,&FF,&EE,&EE,&EE,&EE,&CC,&CC,&88,&00,&00,&00,&00,&00,&00
     EQUB &77,&33,&11,&11,&11,&11,&11,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
-    EQUB &EE,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&88,&88,&00,&00,&00,&00
+    EQUB &EE,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&88,&88,&88,&00,&00,&00
     EQUB &00,&00,&00,&33,&11,&11,&11,&11,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&88,&88,&88,&88,&88,&88,&88
     EQUB &11,&11,&11,&11,&11,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
@@ -220,7 +220,7 @@
 .chell_run_l2_x3_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&CC,&CC,&CC,&88
     EQUB &88,&00,&00,&00,&00,&00,&00,&00,&FF,&77,&33,&33,&33,&00,&00,&00
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&EE,&FF,&FF,&EE,&CC,&EE,&EE
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&EE,&FF,&FF,&FF,&CC,&EE,&EE
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&00,&11,&77,&77,&77,&77,&77,&77
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&FF,&EE,&EE
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&77,&33,&33,&33,&33,&33,&77,&FF
@@ -229,7 +229,7 @@
 .chell_run_l2_x2_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&88,&88,&88,&00
     EQUB &11,&00,&00,&00,&00,&00,&00,&00,&FF,&FF,&77,&77,&77,&11,&11,&11
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&CC,&EE,&EE,&CC,&88,&CC,&CC
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&CC,&EE,&EE,&EE,&88,&CC,&CC
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&11,&33,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&EE,&EE,&EE,&CC,&EE,&CC,&CC
     EQUB &00,&00,&00,&00,&00,&00,&00,&11,&FF,&77,&77,&77,&77,&77,&FF,&FF
@@ -238,7 +238,7 @@
 .chell_run_l2_x1_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&EE,&CC,&88,&00,&00,&00,&00,&00
     EQUB &33,&11,&00,&00,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&33,&33,&33
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&88,&CC,&CC,&88,&00,&88,&88
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&88,&CC,&CC,&CC,&00,&88,&88
     EQUB &00,&00,&11,&11,&11,&11,&11,&11,&33,&77,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&CC,&CC,&CC,&88,&CC,&88,&88
     EQUB &11,&00,&00,&00,&00,&00,&11,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
@@ -247,7 +247,7 @@
 .chell_run_l2_x0_mask
     EQUB &FF,&FF,&FF,&EE,&EE,&EE,&EE,&CC,&CC,&88,&00,&00,&00,&00,&00,&00
     EQUB &77,&33,&11,&11,&11,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&77,&77,&77
-    EQUB &EE,&FF,&FF,&FF,&FF,&EE,&FF,&FF,&00,&00,&88,&88,&00,&00,&00,&00
+    EQUB &EE,&FF,&FF,&FF,&FF,&EE,&FF,&FF,&00,&00,&88,&88,&88,&00,&00,&00
     EQUB &00,&00,&33,&33,&33,&33,&33,&33,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&88,&88,&88,&00,&88,&00,&00
     EQUB &33,&11,&11,&11,&11,&11,&33,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
@@ -256,38 +256,38 @@
 .chell_run_l3_x3_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&CC,&CC,&CC
     EQUB &FF,&88,&00,&00,&00,&00,&00,&00,&FF,&FF,&77,&33,&33,&33,&11,&11
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&CC,&EE,&FF,&FF,&EE,&CC,&EE
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&CC,&EE,&FF,&FF,&FF,&CC,&EE
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&00,&00,&00,&33,&77,&77,&77,&77
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&EE,&FF,&FF,&FF,&CC,&EE,&CC
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&FF,&FF,&FF,&FF,&CC,&EE,&CC
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&77,&77,&33,&33,&33,&33,&77,&77
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&CC,&CC,&CC,&CC,&88,&00,&00
-    EQUB &00,&00,&00,&00,&00,&66,&66,&44,&33,&33,&33,&11,&11,&11,&00,&00
+    EQUB &00,&00,&00,&00,&00,&66,&66,&CC,&33,&33,&33,&11,&11,&11,&00,&00
 .chell_run_l3_x2_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&88,&88,&88
     EQUB &FF,&11,&00,&00,&00,&00,&00,&00,&FF,&FF,&FF,&77,&77,&77,&33,&33
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&88,&CC,&EE,&EE,&CC,&88,&CC
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&88,&CC,&EE,&EE,&EE,&88,&CC
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&11,&11,&11,&77,&FF,&FF,&FF,&FF
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&CC,&EE,&EE,&EE,&88,&CC,&88
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&EE,&EE,&EE,&EE,&88,&CC,&88
     EQUB &00,&00,&00,&00,&00,&00,&00,&00,&FF,&FF,&77,&77,&77,&77,&FF,&FF
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&88,&88,&88,&88,&00,&00,&00
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&88,&88,&88,&88,&00,&00,&11
     EQUB &00,&00,&00,&00,&00,&CC,&CC,&88,&77,&77,&77,&33,&33,&33,&11,&11
 .chell_run_l3_x1_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&00,&00,&00,&00
     EQUB &FF,&33,&11,&00,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&77,&77
-    EQUB &EE,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&88,&CC,&CC,&88,&00,&88
+    EQUB &EE,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&88,&CC,&CC,&CC,&00,&88
     EQUB &00,&00,&00,&00,&11,&11,&11,&11,&33,&33,&33,&FF,&FF,&FF,&FF,&FF
-    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&88,&CC,&CC,&CC,&00,&88,&00
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&CC,&CC,&CC,&CC,&00,&88,&00
     EQUB &11,&11,&00,&00,&00,&00,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
-    EQUB &FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&00,&00,&00,&00,&00,&11,&11,&11
+    EQUB &FF,&FF,&FF,&FF,&FF,&EE,&CC,&88,&00,&00,&00,&00,&00,&11,&11,&33
     EQUB &00,&00,&00,&00,&00,&88,&88,&00,&FF,&FF,&FF,&77,&77,&77,&33,&33
 .chell_run_l3_x0_mask
     EQUB &FF,&FF,&FF,&FF,&EE,&EE,&EE,&EE,&FF,&CC,&88,&00,&00,&00,&00,&00
     EQUB &FF,&77,&33,&11,&11,&11,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
-    EQUB &CC,&EE,&FF,&FF,&FF,&FF,&EE,&FF,&00,&00,&00,&88,&88,&00,&00,&00
+    EQUB &CC,&EE,&FF,&FF,&FF,&FF,&EE,&FF,&00,&00,&00,&88,&88,&88,&00,&00
     EQUB &00,&00,&00,&11,&33,&33,&33,&33,&77,&77,&77,&FF,&FF,&FF,&FF,&FF
-    EQUB &FF,&FF,&FF,&FF,&FF,&EE,&FF,&EE,&00,&00,&88,&88,&88,&00,&00,&00
+    EQUB &FF,&FF,&FF,&FF,&FF,&EE,&FF,&EE,&00,&88,&88,&88,&88,&00,&00,&00
     EQUB &33,&33,&11,&11,&11,&11,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
-    EQUB &EE,&EE,&EE,&EE,&EE,&CC,&88,&00,&00,&00,&00,&00,&00,&33,&33,&22
+    EQUB &EE,&EE,&EE,&EE,&EE,&CC,&88,&00,&00,&00,&00,&00,&00,&33,&33,&66
     EQUB &11,&11,&11,&00,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&77,&77
 .chell_rgun_r1_x0_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&88
