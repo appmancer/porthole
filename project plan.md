@@ -355,6 +355,75 @@ This makes portal placement tolerant: if the top edge is visible, you can still 
 - How do we choose the portal surface normal under the reticle (wall/floor/ceiling/back wall) when multiple surfaces overlap in screen space?
 - How should reticle mode interact with jumping/falling (can the player hold SHIFT midair, does it freeze Chell horizontal movement, etc.)?
 
+## Portal Teleportation Rules (Design)
+
+This section captures the intended "Portal feel" for teleportation in our 2D side-on interpretation.
+
+### Coordinate system + portal frame
+
+- Screen space: +X right, +Y down.
+- Velocity `v = (vx, vy)`.
+- Each portal has a local frame:
+  - `n` = portal normal pointing *out* of the portal (the direction you exit).
+  - `t` = portal tangent along the portal surface.
+- Define a deterministic tangent from the normal:
+  - `t = perp(n) = (-n_y, n_x)`
+
+### Entry intent ("push into it")
+
+- Teleport triggers only if Chell overlaps the portal rectangle and is moving into its face:
+  - require `dot(v, n_enter) < 0`.
+
+### Momentum preservation (velocity, not facing)
+
+- Preserve momentum magnitude and components relative to the portal plane. Do not preserve facing.
+- Compute components in the *enter* portal frame:
+  - `v_t = dot(v, t_enter)` (tangent component, signed)
+  - `v_n = -dot(v, n_enter)` (speed into the portal, positive when entering)
+- Recompose in the *exit* portal frame:
+  - `v' = v_t * t_exit + v_n * n_exit`
+
+This automatically enables "flinging": high-speed falls can convert into high-speed horizontal/vertical exit motion.
+
+### Canonical normals (side-on)
+
+- Left-wall portal (exit right): `n=(+1, 0)`, `t=(0, +1)`
+- Right-wall portal (exit left): `n=(-1, 0)`, `t=(0, -1)`
+- Floor portal (exit up): `n=(0, -1)`, `t=(+1, 0)`
+- Ceiling portal (exit down): `n=(0, +1)`, `t=(-1, 0)`
+
+### Exit facing + grounded state
+
+- Always clear grounded state on teleport.
+- Facing is derived from the exit:
+  - wall exits: face away from the wall (from `n_exit.x`)
+  - floor/ceiling exits: face by horizontal motion sign (`sign(v'.x)`) or last input
+
+### Exit placement + anti-ping-pong
+
+- On exit, place Chell slightly outside the exit portal along `n_exit` so she is not still overlapping.
+- Add a short post-teleport cooldown / grace distance so she cannot immediately re-trigger.
+
+### High-speed traversal (tunnelling)
+
+- Teleport detection must still work when Chell moves faster than 1px/frame (terminal velocity / fling speeds).
+- Teleport detection must still work when Chell moves faster than 1px/frame (terminal velocity / fling speeds).
+- Later this likely implies a swept/stepped check against the portal rectangle to avoid skipping through it.
+
+### Tuning targets (initial)
+
+- Teleportation itself is lossless (no damping).
+- Airborne motion should be lossless (no per-frame drag), so the "bouncy elevator" can run forever.
+- Gravity: `g = 1 px/frame^2` (simple integer).
+- Terminal velocity ("spicy" fling cap): `vy_terminal = 28 px/frame`.
+  - Roughly 1.5 screens of rise from a floor exit in the no-drag ideal case (`h ~= vy^2/(2g)`).
+
+### Sanity checks (classic maneuvers)
+
+- Terminal fall into floor, out floor: `v=(0,+V)` -> `v'=(0,-V)`.
+- Run into right-wall portal, out floor: `v=(+V,0)` -> `v'=(0,-V)`.
+- Fall into floor, out right-wall portal: `v=(0,+V)` -> `v'=(-V,0)`.
+
 ## Procedural Portal Rendering ("Probability Portal", no side-on sprite)
 
 ### Motivation

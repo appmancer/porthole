@@ -16,6 +16,7 @@ When working in this repo, assume the agent is an expert in writing 65C02 games 
 - BBC Micro display memory layouts and MODE-specific considerations
 - Efficient sprite/tile rendering and masking techniques
 - Use of OS calls where appropriate (`OSWRCH`, `OSBYTE`, etc.)
+- Before making changes, explain to the human operator what the task is, and agree a strategy with them. Don' t just make changes and then communicate it afterwards
 
 ## Project conventions
 
