@@ -3353,6 +3353,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 INCLUDE "sprites.asm"
 INCLUDE "masks.asm"
 INCLUDE "tilemap.asm"
+INCLUDE "objects.asm"
 INCLUDE "render.asm"
 INCLUDE "lookup_tables.asm"
 INCLUDE "sprites/generated_objects_sprites.asm"

@@ -1,0 +1,88 @@
+; Static object instance lists (tile-aligned stamps).
+;
+; Each entry is 10 bytes:
+; 0: x (cell)
+; 1: y (cell)
+; 2: stripe_count (1/2/4); 0 terminates table
+; 3: bytes_per_stripe (16/32)
+; 4: stride (usually 16/32)
+; 5: flags
+;    bit0 = masked
+;    bit7 = enabled (0 = skip)
+; 6: sprite_ptr lo
+; 7: sprite_ptr hi
+; 8: mask_ptr lo
+; 9: mask_ptr hi
+
+STATIC_OBJ_ENTRY_SIZE = 10
+STATIC_OBJ_FLAG_MASKED = 1
+STATIC_OBJ_FLAG_ENABLED = &80
+
+; Pointer table indexed by current_room.
+.static_objects_room_pointers
+    EQUW static_objects_room0
+    EQUW static_objects_room1
+
+
+; Room 0 objects (TEMP: validation portals)
+.static_objects_room0
+    ; Red portal V (right)
+  .room0_portal_red_x
+    EQUB 12,6,4,16,32
+.room0_obj0_flags
+    EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
+    EQUW portal_v_red_r_x0
+    EQUW portal_v_red_r_x0_mask
+
+    ; Portal B (TEMP: uses red sprite)
+  .room0_portal_yel_x
+    EQUB 2,2,4,16,32
+.room0_obj1_flags
+    EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
+    EQUW portal_v_red_r_x0
+    EQUW portal_v_red_r_x0_mask
+
+    ; End
+    EQUB 0,0,0
+
+
+; Room 1 objects (none yet)
+.static_objects_room1
+    ; Red portal V (right)
+  .room1_portal_red_x
+    EQUB 12,6,4,16,32
+  .room1_obj0_flags
+    EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
+    EQUW portal_v_red_r_x0
+    EQUW portal_v_red_r_x0_mask
+
+    ; Portal B (TEMP: uses red sprite)
+  .room1_portal_yel_x
+    EQUB 2,2,4,16,32
+  .room1_obj1_flags
+    EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
+    EQUW portal_v_red_r_x0
+    EQUW portal_v_red_r_x0_mask
+
+    ; End
+    EQUB 0,0,0
+
+
+; Enable a static object entry by setting flags bit7.
+; Input: temp_sprite_ptr points to the flags byte.
+.enable_static_object
+    LDY #0
+    LDA (temp_sprite_ptr),Y
+    ORA #STATIC_OBJ_FLAG_ENABLED
+    STA (temp_sprite_ptr),Y
+    RTS
+
+
+; Disable a static object entry by clearing flags bit7.
+; Input: temp_sprite_ptr points to the flags byte.
+.disable_static_object
+    LDY #0
+    LDA (temp_sprite_ptr),Y
+    AND #&7F
+    STA (temp_sprite_ptr),Y
+    RTS

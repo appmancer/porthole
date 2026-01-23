@@ -79,15 +79,18 @@
     RTS
 
 
-; Render static tile-aligned objects.
-;
-; Objects are described by a small table so we can add new objects without
-; changing code.
-.render_static_objects
-    ; temp_sprite_ptr := object table pointer
-    LDA #<static_objects_table
+ ; Render static tile-aligned objects.
+ ;
+ ; Objects are described by a small table so we can add new objects without
+ ; changing code.
+ .render_static_objects
+    ; temp_sprite_ptr := per-room object table pointer
+    LDA current_room
+    ASL A
+    TAX
+    LDA static_objects_room_pointers,X
     STA temp_sprite_ptr
-    LDA #>static_objects_table
+    LDA static_objects_room_pointers+1,X
     STA temp_sprite_ptr+1
 
   .rsobj_next
@@ -125,6 +128,17 @@
   .rsobj_x_ok
 
     ; flags
+    LDY #5
+    LDA (temp_sprite_ptr),Y
+    STA temp
+
+    ; Skip disabled entries (bit7 clear)
+    AND #&80
+    BNE rsobj_enabled
+    JMP rsobj_advance
+  .rsobj_enabled
+
+    ; Restore full flags byte (masked bit etc.)
     LDY #5
     LDA (temp_sprite_ptr),Y
     STA temp
@@ -179,10 +193,10 @@
     JSR stamp_striped_copy
 
   .rsobj_advance
-    ; temp_sprite_ptr += 10
+    ; temp_sprite_ptr += STATIC_OBJ_ENTRY_SIZE
     LDA temp_sprite_ptr
     CLC
-    ADC #10
+    ADC #STATIC_OBJ_ENTRY_SIZE
     STA temp_sprite_ptr
     BCC rsobj_adv_ok
     INC temp_sprite_ptr+1
@@ -193,26 +207,7 @@
     RTS
 
 
-; Static object table.
-;
-; Each entry is 10 bytes:
-; 0: x (cell)
-; 1: y (cell)
-; 2: stripe_count (1/2/4); 0 terminates table
-; 3: bytes_per_stripe (16/32)
-; 4: stride (usually 16/32)
-; 5: flags (bit0=masked)
-; 6: sprite_ptr lo
-; 7: sprite_ptr hi
-; 8: mask_ptr lo
- ; 9: mask_ptr hi
-.static_objects_table
-    ; Portal V - Red (Right): 8x32, masked
-    EQUB 12,6,4,16,32,1
-    EQUW portal_v_red_r_x0
-    EQUW portal_v_red_r_x0_mask
-    ; End
-    EQUB 0,0,0
+; Note: object instance tables live in `objects.asm`.
 
 
 ; Generic unmasked stamper for tile-aligned objects.
