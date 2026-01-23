@@ -85,9 +85,16 @@ ORG &70
 ; 3 = wall 1x2 match (right column)
 ; 4 = back-wall 2x2 empty match at y
 ; 5 = back-wall 2x2 empty match at y-1
-.reticle_debug_reason SKIP 1
+ .reticle_debug_reason SKIP 1
 
-; --- Reticle LOS scratch ---
+ ; Portal stamping (partial redraw) state.
+ .portal_pending      SKIP 1    ; 0/1: portal moved/placed; render must update background
+ .portal_kind         SKIP 1    ; 0 = red (A), 1 = yellow (B)
+ .portal_old_x        SKIP 1
+ .portal_old_y        SKIP 1
+ .portal_old_enabled  SKIP 1    ; 0/1: whether old portal was enabled
+
+ ; --- Reticle LOS scratch ---
 ; All values are in pixels unless noted.
 .los_x0        SKIP 1    ; ray start X
 .los_y0        SKIP 1    ; ray start Y
@@ -237,6 +244,12 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA reticle_has_under
     STA reticle_debug_reason
 
+     STA portal_pending
+     STA portal_kind
+     STA portal_old_x
+     STA portal_old_y
+     STA portal_old_enabled
+
     ; Default: face right.
     LDA #1
     STA anim_dir
@@ -293,23 +306,35 @@ CHELL_JUMP_LEFT_BASE        = 36
  ; --- Render (incremental frame) ---
  ; Uses chell_dirty/reticle_dirty computed in the previous update.
  ; Reticle redraw condition includes chell_dirty because Chell can move under it.
- .render_frame_simple
-       ; Room transition: redraw background first.
-       LDA room_dirty
-       BEQ render_no_room_redraw
+  .render_frame_simple
+        ; Room transition: redraw background first.
+        LDA room_dirty
+        BEQ render_no_room_redraw
        JSR set_room_tilemap
        JSR set_room_portalmap
        JSR render_tilemap
        JSR render_static_objects
        LDA #0
        STA room_dirty
-       STA chell_has_under
-       STA reticle_has_under
+        STA chell_has_under
+        STA reticle_has_under
 
- .render_no_room_redraw
-       ; Handle reticle deactivation: restore last rect.
-       LDA reticle_active
-       BNE render_reticle_active
+  .render_no_room_redraw
+        ; Portal placement: we will patch the background this frame.
+        ; Force both sprites to redraw so their save-under captures the updated BG.
+        LDA portal_pending
+        BEQ render_no_portal_force
+        LDA #1
+        STA chell_dirty
+        LDA reticle_active
+        BEQ render_no_portal_force
+        LDA #1
+        STA reticle_dirty
+  .render_no_portal_force
+
+        ; Handle reticle deactivation: restore last rect.
+        LDA reticle_active
+        BNE render_reticle_active
        LDA reticle_prev_active
        BEQ render_restore_maybe
        LDA reticle_has_under
@@ -329,13 +354,17 @@ CHELL_JUMP_LEFT_BASE        = 36
        BEQ render_restore_maybe
        JSR restore_reticle_under
 
- .render_restore_maybe
-       ; Restore Chell under if it moved.
-       LDA chell_dirty
-       BEQ render_draw_maybe
-       LDA chell_has_under
-       BEQ render_draw_maybe
-       JSR restore_chell_under
+  .render_restore_maybe
+        ; Restore Chell under if it moved.
+        LDA chell_dirty
+        BEQ render_portal_maybe
+        LDA chell_has_under
+        BEQ render_portal_maybe
+        JSR restore_chell_under
+
+  .render_portal_maybe
+        ; If a portal was placed/moved, update background now (after restores).
+        JSR apply_pending_portal_update
 
  .render_draw_maybe
        ; Draw Chell if dirty.
@@ -513,10 +542,17 @@ CHELL_JUMP_LEFT_BASE        = 36
         BEQ df_skip_chell
         LDA #1
         STA dirty_flag
- .df_skip_chell
+  .df_skip_chell
 
-        LDA reticle_active
-        BEQ df_reticle_off
+         ; Portal placement/stamping forces a render.
+         LDA portal_pending
+         BEQ df_skip_portal
+         LDA #1
+         STA dirty_flag
+  .df_skip_portal
+
+         LDA reticle_active
+         BEQ df_reticle_off
         LDA reticle_dirty
         ORA chell_dirty
         BEQ df_done
@@ -2194,7 +2230,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 ; - A = 1 for Portal B (yellow)
 ;
 .place_portal_from_reticle
-     PHA
+     STA portal_kind
 
      ; temp_sprite_ptr := per-room object table pointer
      LDA current_room
@@ -2206,7 +2242,7 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA temp_sprite_ptr+1
 
      ; Select entry 0 (A) or entry 1 (B).
-     PLA
+     LDA portal_kind
      BEQ ppr_have_entry
      LDA temp_sprite_ptr
      CLC
@@ -2215,6 +2251,24 @@ CHELL_JUMP_LEFT_BASE        = 36
      BCC ppr_have_entry
      INC temp_sprite_ptr+1
    .ppr_have_entry
+
+     ; Snapshot old position for erase (partial redraw).
+     LDY #0
+     LDA (temp_sprite_ptr),Y
+     STA portal_old_x
+     INY
+     LDA (temp_sprite_ptr),Y
+     STA portal_old_y
+     LDY #5
+     LDA (temp_sprite_ptr),Y
+     AND #&80
+     BEQ ppr_old_disabled
+     LDA #1
+     BNE ppr_old_enabled_done
+   .ppr_old_disabled
+     LDA #0
+   .ppr_old_enabled_done
+     STA portal_old_enabled
 
      ; x
      LDY #0
@@ -2250,11 +2304,167 @@ CHELL_JUMP_LEFT_BASE        = 36
      ORA #&80
      STA (temp_sprite_ptr),Y
 
-     ; Force a full restamp next render.
      LDA #1
-     STA room_dirty
-     STA chell_dirty
-     STA reticle_dirty
+     STA portal_pending
+     RTS
+
+
+; Apply a pending portal update without redrawing the whole room.
+; This erases the old portal stamp by re-rendering the underlying tiles, then
+; stamps the updated portal entry.
+;
+; Safe to call unconditionally; returns quickly if portal_pending=0.
+.apply_pending_portal_update
+     LDA portal_pending
+     BNE apu_go
+     RTS
+
+  .apu_go
+     ; Erase old stamp if it was previously enabled.
+     LDA portal_old_enabled
+     BEQ apu_stamp_new
+
+     ; Redraw tile (old_x, old_y)
+     LDX portal_old_x
+     LDA portal_old_y
+     JSR redraw_tile_xy
+
+     ; Redraw tile (old_x, old_y+1) if in range.
+     LDA portal_old_y
+     CMP #15
+     BEQ apu_stamp_new
+     CLC
+     ADC #1
+     LDX portal_old_x
+     JSR redraw_tile_xy
+
+  .apu_stamp_new
+     ; temp_sprite_ptr := per-room object table pointer
+     LDA current_room
+     ASL A
+     TAX
+     LDA static_objects_room_pointers,X
+     STA temp_sprite_ptr
+     LDA static_objects_room_pointers+1,X
+     STA temp_sprite_ptr+1
+
+     ; Select entry 0 (A) or entry 1 (B).
+     LDA portal_kind
+     BEQ apu_have_entry
+     LDA temp_sprite_ptr
+     CLC
+     ADC #10              ; STATIC_OBJ_ENTRY_SIZE
+     STA temp_sprite_ptr
+     BCC apu_have_entry
+     INC temp_sprite_ptr+1
+  .apu_have_entry
+
+     ; Skip if disabled (shouldn't happen after placement, but cheap).
+     LDY #5
+     LDA (temp_sprite_ptr),Y
+     AND #&80
+     BEQ apu_done
+
+     ; screen_ptr := &5800 + y*512 + x*16
+     LDA #<(&5800)
+     STA screen_ptr
+     LDA #>(&5800)
+     STA screen_ptr+1
+
+     ; y*512 => add (y*2) to high byte
+     LDY #1
+     LDA (temp_sprite_ptr),Y
+     ASL A
+     CLC
+     ADC screen_ptr+1
+     STA screen_ptr+1
+
+     ; x*16 => add to low byte
+     LDY #0
+     LDA (temp_sprite_ptr),Y
+     TAY
+     LDA times16_table,Y
+     CLC
+     ADC screen_ptr
+     STA screen_ptr
+     BCC apu_x_ok
+     INC screen_ptr+1
+  .apu_x_ok
+
+     ; sprite_ptr
+     LDY #6
+     LDA (temp_sprite_ptr),Y
+     STA sprite_ptr
+     INY
+     LDA (temp_sprite_ptr),Y
+     STA sprite_ptr+1
+
+     ; mask_ptr
+     LDY #8
+     LDA (temp_sprite_ptr),Y
+     STA mask_ptr
+     INY
+     LDA (temp_sprite_ptr),Y
+     STA mask_ptr+1
+
+     ; A=stripe_count, X=bytes_per_stripe, Y=stride
+     LDY #2
+     LDA (temp_sprite_ptr),Y
+     STA temp
+     LDY #3
+     LDA (temp_sprite_ptr),Y
+     TAX
+     LDY #4
+     LDA (temp_sprite_ptr),Y
+     TAY
+     LDA temp
+     JSR stamp_striped_masked
+
+  .apu_done
+     LDA #0
+     STA portal_pending
+     RTS
+
+
+; Redraw a single 8x16 tile from the tilemap.
+; Inputs:
+; - A = tile_y (0..15)
+; - X = tile_x (0..15)
+; Clobbers: A,X,Y,temp,row_counter,temp_y,screen_ptr
+.redraw_tile_xy
+     STA temp_y
+     STX row_counter
+
+     ; Fetch tile id: idx = y*16 + x
+     LDY temp_y
+     LDA times16_table,Y
+     CLC
+     ADC row_counter
+     TAY
+     LDA (tilemap_ptr),Y
+     STA temp
+
+     ; screen_ptr := base of tile row
+     LDA temp_y
+     ASL A
+     TAY
+     LDA tile_row_screen_table,Y
+     STA screen_ptr
+     LDA tile_row_screen_table+1,Y
+     STA screen_ptr+1
+
+     ; + x*16
+     LDY row_counter
+     LDA times16_table,Y
+     CLC
+     ADC screen_ptr
+     STA screen_ptr
+     BCC rtx_x_ok
+     INC screen_ptr+1
+  .rtx_x_ok
+
+     LDA temp
+     JSR render_cell8x16
      RTS
 
 ; Return C=1 if SHIFT key is held.
