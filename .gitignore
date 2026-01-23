@@ -3,10 +3,15 @@
 # Build-generated includes
 levels/generated_level*.asm
 sprites/generated_tiles.asm
+sprites/generated_objects_sprites.asm
+sprites/generated_objects_masks.asm
 
 # Tooling outputs
 .tmp/beebasm.labels
 .tmp/refs_*.txt
+
+# Python caches
+tools/__pycache__/
 
 # Reference materials (not part of PORTHOLE build)
 Spycat.ssd

@@ -47,6 +47,12 @@ rm -f "${OUT_SSD}"
   --spec "chell_jump_l^:sprites/Chell Jump - Reference.csv" \
   --spec "reticle:sprites/Reticles - Reference.csv"
 
+# Static object sprites embedded in main RAM (tile-aligned stamps).
+./tools/gen-sprites \
+  --out-sprites sprites/generated_objects_sprites.asm \
+  --out-masks sprites/generated_objects_masks.asm \
+  --spec "portal_v_red_r:sprites/Portal V - Red (Right).csv"
+
 ./tools/gen-tiles \
   --in "sprites/NewTiles - Grid.csv" \
   --out "sprites/generated_tiles.asm"

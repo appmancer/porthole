@@ -244,6 +244,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 
     ; Render background once.
     JSR render_tilemap
+    JSR render_static_objects
 
     ; Build collision/material plane from the tilemap.
     JSR build_material_planes_from_tilemap
@@ -299,6 +300,7 @@ CHELL_JUMP_LEFT_BASE        = 36
        JSR set_room_tilemap
        JSR set_room_portalmap
        JSR render_tilemap
+       JSR render_static_objects
        LDA #0
        STA room_dirty
        STA chell_has_under
@@ -3353,6 +3355,8 @@ INCLUDE "masks.asm"
 INCLUDE "tilemap.asm"
 INCLUDE "render.asm"
 INCLUDE "lookup_tables.asm"
+INCLUDE "sprites/generated_objects_sprites.asm"
+INCLUDE "sprites/generated_objects_masks.asm"
 
 .end
 

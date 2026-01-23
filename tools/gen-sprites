@@ -64,7 +64,7 @@ def derive_prefix(path: Path) -> str:
     return name
 
 
-PIXEL_RE = re.compile(r"[0-3.]")
+PIXEL_CELL_RE = re.compile(r"^[0-3.]+$")
 
 def parse_pixel(ch: str, *, path: Path, block_index: int, row_index: int, col_index: int) -> int | None:
     if ch == ".":
@@ -80,15 +80,25 @@ def parse_pixel(ch: str, *, path: Path, block_index: int, row_index: int, col_in
 def pixels_from_line(line: str, *, path: Path, line_index: int) -> list[str]:
     """Extract the first 16 pixel tokens from a CSV line.
 
-    We scan the raw line text so merged spreadsheet cells like "10" still decode
-    as two pixels.
+    We parse comma-separated cells and only consider cells that contain pixel
+    tokens (0..3 or '.') so computed columns like hex bytes (e.g. "08", "FF")
+    don't get misread as pixels.
+
+    Merged spreadsheet cells like "10" still decode as two pixels.
     """
 
-    tokens = [m.group(0) for m in PIXEL_RE.finditer(line)]
+    tokens: list[str] = []
+    for cell in line.split(","):
+        cell = cell.strip()
+        if not cell:
+            continue
+        if not PIXEL_CELL_RE.match(cell):
+            continue
+        tokens.extend(list(cell))
     if not tokens:
         return []
     if len(tokens) < 16:
-        raise ValueError(f"{path}: line {line_index + 1}: expected 16 pixels, got {len(tokens)}")
+        tokens = tokens + ["."] * (16 - len(tokens))
     return tokens[:16]
 
 

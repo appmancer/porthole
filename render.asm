@@ -78,6 +78,292 @@
 .tilemap_done
     RTS
 
+
+; Render static tile-aligned objects.
+;
+; Objects are described by a small table so we can add new objects without
+; changing code.
+.render_static_objects
+    ; temp_sprite_ptr := object table pointer
+    LDA #<static_objects_table
+    STA temp_sprite_ptr
+    LDA #>static_objects_table
+    STA temp_sprite_ptr+1
+
+  .rsobj_next
+    ; End marker: stripes==0
+    LDY #2
+    LDA (temp_sprite_ptr),Y
+    BNE rsobj_has_entry
+    JMP rsobj_done
+  .rsobj_has_entry
+
+    ; screen_ptr := &5800 + y*512 + x*16
+    LDA #<(&5800)
+    STA screen_ptr
+    LDA #>(&5800)
+    STA screen_ptr+1
+
+    ; y*512 => add (y*2) to high byte
+    LDY #1
+    LDA (temp_sprite_ptr),Y
+    ASL A
+    CLC
+    ADC screen_ptr+1
+    STA screen_ptr+1
+
+    ; x*16 => add to low byte
+    LDY #0
+    LDA (temp_sprite_ptr),Y
+    TAY
+    LDA times16_table,Y
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC rsobj_x_ok
+    INC screen_ptr+1
+  .rsobj_x_ok
+
+    ; flags
+    LDY #5
+    LDA (temp_sprite_ptr),Y
+    STA temp
+
+    ; sprite_ptr
+    LDY #6
+    LDA (temp_sprite_ptr),Y
+    STA sprite_ptr
+    INY
+    LDA (temp_sprite_ptr),Y
+    STA sprite_ptr+1
+
+    ; mask_ptr
+    LDY #8
+    LDA (temp_sprite_ptr),Y
+    STA mask_ptr
+    INY
+    LDA (temp_sprite_ptr),Y
+    STA mask_ptr+1
+
+    ; masked/unmasked
+    LDA temp
+    AND #1
+    BEQ rsobj_unmasked
+
+    ; A=stripe_count, X=bytes_per_stripe, Y=stride
+    LDY #2
+    LDA (temp_sprite_ptr),Y
+    STA temp_y
+    LDY #3
+    LDA (temp_sprite_ptr),Y
+    TAX
+    LDY #4
+    LDA (temp_sprite_ptr),Y
+    TAY
+    LDA temp_y
+    JSR stamp_striped_masked
+    JMP rsobj_advance
+
+  .rsobj_unmasked
+    ; A=stripe_count, X=bytes_per_stripe, Y=stride
+    LDY #2
+    LDA (temp_sprite_ptr),Y
+    STA temp_y
+    LDY #3
+    LDA (temp_sprite_ptr),Y
+    TAX
+    LDY #4
+    LDA (temp_sprite_ptr),Y
+    TAY
+    LDA temp_y
+    JSR stamp_striped_copy
+
+  .rsobj_advance
+    ; temp_sprite_ptr += 10
+    LDA temp_sprite_ptr
+    CLC
+    ADC #10
+    STA temp_sprite_ptr
+    BCC rsobj_adv_ok
+    INC temp_sprite_ptr+1
+  .rsobj_adv_ok
+    JMP rsobj_next
+
+  .rsobj_done
+    RTS
+
+
+; Static object table.
+;
+; Each entry is 10 bytes:
+; 0: x (cell)
+; 1: y (cell)
+; 2: stripe_count (1/2/4); 0 terminates table
+; 3: bytes_per_stripe (16/32)
+; 4: stride (usually 16/32)
+; 5: flags (bit0=masked)
+; 6: sprite_ptr lo
+; 7: sprite_ptr hi
+; 8: mask_ptr lo
+ ; 9: mask_ptr hi
+.static_objects_table
+    ; Portal V - Red (Right): 8x32, masked
+    EQUB 12,6,4,16,32,1
+    EQUW portal_v_red_r_x0
+    EQUW portal_v_red_r_x0_mask
+    ; End
+    EQUB 0,0,0
+
+
+; Generic unmasked stamper for tile-aligned objects.
+;
+; Inputs:
+; - screen_ptr: destination top-left
+; - sprite_ptr: source data (striped)
+; - A: stripe count (1,2,4)
+; - X: bytes to copy per stripe (16 for 8px-wide, 32 for 16px-wide)
+; - Y: source stride per stripe (usually 16 or 32)
+.stamp_striped_copy
+    STA row_counter
+    STX col_counter
+    STY temp_y
+
+    ; Preserve pointers.
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+    LDA sprite_ptr
+    PHA
+    LDA sprite_ptr+1
+    PHA
+
+  .stamp_stripe
+    LDY #0
+  .stamp_byte
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY col_counter
+    BNE stamp_byte
+
+    ; Next stripe on screen.
+    INC screen_ptr+1
+
+    ; Next stripe in sprite data.
+    LDA sprite_ptr
+    CLC
+    ADC temp_y
+    STA sprite_ptr
+    BCC stamp_sprite_ptr_ok
+    INC sprite_ptr+1
+  .stamp_sprite_ptr_ok
+
+    DEC row_counter
+    BNE stamp_stripe
+
+    ; Restore pointers.
+    PLA
+    STA sprite_ptr+1
+    PLA
+    STA sprite_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    RTS
+
+
+; Generic masked stamper for tile-aligned objects.
+;
+; Inputs:
+; - screen_ptr: destination top-left
+; - sprite_ptr: source data (striped)
+; - mask_ptr: mask data (striped)
+; - A: stripe count (1,2,4)
+; - X: bytes to process per stripe (16 for 8px-wide, 32 for 16px-wide)
+; - Y: source stride per stripe (usually 16 or 32)
+.stamp_striped_masked
+    STA row_counter
+    STX col_counter
+    STY temp_y
+
+    ; Preserve pointers.
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+    LDA sprite_ptr
+    PHA
+    LDA sprite_ptr+1
+    PHA
+    LDA mask_ptr
+    PHA
+    LDA mask_ptr+1
+    PHA
+
+  .stampm_stripe
+    LDY #0
+  .stampm_byte
+    LDA (mask_ptr),Y
+    BEQ stampm_opaque
+    CMP #&FF
+    BEQ stampm_next
+
+    STA temp
+    LDA (screen_ptr),Y
+    AND temp
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP stampm_next
+
+  .stampm_opaque
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+
+  .stampm_next
+    INY
+    CPY col_counter
+    BNE stampm_byte
+
+    ; Next stripe on screen.
+    INC screen_ptr+1
+
+    ; Next stripe in sprite/mask data.
+    LDA sprite_ptr
+    CLC
+    ADC temp_y
+    STA sprite_ptr
+    BCC stampm_sprite_ptr_ok
+    INC sprite_ptr+1
+  .stampm_sprite_ptr_ok
+
+    LDA mask_ptr
+    CLC
+    ADC temp_y
+    STA mask_ptr
+    BCC stampm_mask_ptr_ok
+    INC mask_ptr+1
+  .stampm_mask_ptr_ok
+
+    DEC row_counter
+    BNE stampm_stripe
+
+    ; Restore pointers.
+    PLA
+    STA mask_ptr+1
+    PLA
+    STA mask_ptr
+    PLA
+    STA sprite_ptr+1
+    PLA
+    STA sprite_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    RTS
+
 ; Fill the visible playfield (32 bytes x 256 scanlines = 8192 bytes) with cyan.
 ;
 ; With our palette mapping, colour index 2 is cyan. In MODE 5 (2bpp), a byte of
