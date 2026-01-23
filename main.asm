@@ -32,6 +32,11 @@ ORG &70
 .keys_pressed       SKIP 1    ; Bitfield: edge-trigger keys (held & ~prev)
 .keys_prev          SKIP 1    ; Previous frame's keys_held
 .aim_held           SKIP 1    ; 0=none, 1=up, 2=down
+
+; Action button (SPACE) state.
+.action_held        SKIP 1
+.action_prev        SKIP 1
+.action_pressed     SKIP 1
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 
@@ -69,7 +74,7 @@ ORG &70
  .reticle_active      SKIP 1    ; 0/1: draw reticle
  .reticle_prev_active SKIP 1    ; previous frame reticle_active
  .reticle_move_cd     SKIP 1    ; reticle move repeat cooldown
- .reticle_wall_orient SKIP 1    ; 0=left wall (tile 3), 1=right wall (tile 5)
+  .reticle_wall_orient SKIP 1    ; 0..4 (wall_l, wall_r, floor, ceil, back)
 
 .exit_dst            SKIP 1    ; scratch: exit destination room index
 
@@ -104,12 +109,12 @@ ORG &70
   .portal_a_room       SKIP 1
   .portal_a_x          SKIP 1
   .portal_a_y          SKIP 1
-  .portal_a_orient     SKIP 1    ; 0..3 (wall_l, wall_r, floor, ceil)
+  .portal_a_orient     SKIP 1    ; 0..4 (wall_l, wall_r, floor, ceil, back)
   .portal_b_enabled    SKIP 1
   .portal_b_room       SKIP 1
   .portal_b_x          SKIP 1
   .portal_b_y          SKIP 1
-  .portal_b_orient     SKIP 1    ; 0..3 (wall_l, wall_r, floor, ceil)
+  .portal_b_orient     SKIP 1    ; 0..4 (wall_l, wall_r, floor, ceil, back)
 
   ; Portal teleportation (MVP wiring)
   .teleport_pending    SKIP 1    ; 0/1: overlap+intent detected; pending teleport
@@ -182,6 +187,7 @@ PORTAL_ORIENT_WALL_L         = 0
 PORTAL_ORIENT_WALL_R         = 1
 PORTAL_ORIENT_FLOOR          = 2
 PORTAL_ORIENT_CEIL           = 3
+PORTAL_ORIENT_BACK           = 4
 
 CHELL_W_PX                   = 16
 CHELL_H_PX                   = 32
@@ -267,6 +273,9 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA keys_held
     STA keys_pressed
     STA keys_prev
+    STA action_held
+    STA action_prev
+    STA action_pressed
     STA anim_frame
     STA move_held
     STA last_move_held
@@ -684,12 +693,16 @@ CHELL_JUMP_LEFT_BASE        = 36
         DEC teleport_cooldown
  .cpei_cd_done
 
-        ; Only consider entry when the player has some velocity.
-        ; (Use previous vy so floor/ceiling entry can trigger on landing.)
+        ; Fast reject:
+        ; - normal portals require motion intent
+        ; - back-wall portals require SPACE intent (may be stationary)
         LDA char_vx
         ORA char_vy
         ORA char_prev_vy
+        BNE cpei_intent_ok
+        LDA action_held
         BEQ cpei_done
+ .cpei_intent_ok
 
         ; Cache Chell rect (approx).
         ; We bias the leading edge to better match what you see on screen:
@@ -702,11 +715,21 @@ CHELL_JUMP_LEFT_BASE        = 36
         ; Bias the overlap rect toward motion direction.
         ; (Don't use anim_dir here; portal momentum can move Chell without input.)
         LDA char_vx
+        BEQ cpei_x_stationary
         BMI cpei_x_left
         ; Right: chell_right_x = left + 10
         LDA screen_ptr
         CLC
         ADC #10
+        STA temp_y
+        JMP cpei_x_done
+
+ .cpei_x_stationary
+        ; Stationary: use full body width.
+        LDA screen_ptr
+        STA temp
+        CLC
+        ADC #15
         STA temp_y
         JMP cpei_x_done
 
@@ -857,6 +880,20 @@ CHELL_JUMP_LEFT_BASE        = 36
  .mt_entry_orient_ok
         STA temp_y
 
+        ; Back-wall portals are entered deliberately via SPACE.
+        ; We don't have a Z axis, so if either end is back-wall, keep vx/vy unchanged
+        ; and only reposition Chell.
+        LDA temp_y
+        CMP #PORTAL_ORIENT_BACK
+        BNE mt_back_chk_exit
+        JMP mt_place_from_orient
+ .mt_back_chk_exit
+        LDA row_counter
+        CMP #PORTAL_ORIENT_BACK
+        BNE mt_back_ok
+        JMP mt_place_from_orient
+ .mt_back_ok
+
         ; Compute (v_t, v_n) in the entry portal frame.
         ; See project plan for definitions.
         LDA temp_y
@@ -865,6 +902,8 @@ CHELL_JUMP_LEFT_BASE        = 36
         CMP #PORTAL_ORIENT_WALL_R
         BEQ mt_vtn_wall_r
         CMP #PORTAL_ORIENT_FLOOR
+        BEQ mt_vtn_floor
+        CMP #PORTAL_ORIENT_BACK
         BEQ mt_vtn_floor
         ; ceiling
         JMP mt_vtn_ceil
@@ -922,6 +961,8 @@ CHELL_JUMP_LEFT_BASE        = 36
         BEQ mt_vout_wall_r
         CMP #PORTAL_ORIENT_FLOOR
         BEQ mt_vout_floor
+        CMP #PORTAL_ORIENT_BACK
+        BEQ mt_vout_floor
         ; ceiling
         JMP mt_vout_ceil
 
@@ -962,6 +1003,7 @@ CHELL_JUMP_LEFT_BASE        = 36
         STA char_vy
  .mt_vout_done
 
+ .mt_place_from_orient
         ; Exit placement from orientation.
         LDA row_counter
         CMP #PORTAL_ORIENT_WALL_L
@@ -970,6 +1012,8 @@ CHELL_JUMP_LEFT_BASE        = 36
         BEQ mt_place_wall_r
         CMP #PORTAL_ORIENT_FLOOR
         BEQ mt_place_floor
+        CMP #PORTAL_ORIENT_BACK
+        BEQ mt_place_back
         ; ceiling
         JMP mt_place_ceil
 
@@ -1021,6 +1065,14 @@ CHELL_JUMP_LEFT_BASE        = 36
         ADC #PORTAL_FC_H_PX
         CLC
         ADC #PORTAL_EXIT_NUDGE
+        JMP mt_y_store
+
+ .mt_place_back
+        ; Back wall: portal is a 16x32 zone in empty space.
+        ; Place Chell's top-left at the portal top-left.
+        LDA screen_ptr
+        STA temp                 ; new_x
+        LDA col_counter
         JMP mt_y_store
 
   .mt_x_store
@@ -1159,6 +1211,8 @@ CHELL_JUMP_LEFT_BASE        = 36
         BEQ cpei_a_need_vx_pos
         CMP #PORTAL_ORIENT_FLOOR
         BEQ cpei_a_need_vy_pos
+        CMP #PORTAL_ORIENT_BACK
+        BEQ cpei_a_intent_ok
         ; ceiling
         JMP cpei_a_need_vy_neg
 
@@ -1171,11 +1225,11 @@ CHELL_JUMP_LEFT_BASE        = 36
         LDA char_vx
         BMI cpei_a_intent_ok
         JMP cpei_a_no
- .cpei_a_need_vy_pos
+  .cpei_a_need_vy_pos
         LDA char_vy
         BNE cpei_a_vypos_have
         LDA char_prev_vy
- .cpei_a_vypos_have
+   .cpei_a_vypos_have
         BEQ cpei_a_no
         BMI cpei_a_no
         JMP cpei_a_intent_ok
@@ -1187,6 +1241,14 @@ CHELL_JUMP_LEFT_BASE        = 36
         BMI cpei_a_intent_ok
         JMP cpei_a_no
  .cpei_a_intent_ok
+
+        ; Back wall portals require SPACE.
+        LDA portal_a_orient
+        CMP #PORTAL_ORIENT_BACK
+        BNE cpei_a_intent_done
+        LDA action_held
+        BEQ cpei_a_no
+ .cpei_a_intent_done
 
         ; Overlap test against portal rect.
         LDA portal_a_orient
@@ -1233,6 +1295,8 @@ CHELL_JUMP_LEFT_BASE        = 36
         BEQ cpei_b_need_vx_pos
         CMP #PORTAL_ORIENT_FLOOR
         BEQ cpei_b_need_vy_pos
+        CMP #PORTAL_ORIENT_BACK
+        BEQ cpei_b_intent_ok
         ; ceiling
         JMP cpei_b_need_vy_neg
 
@@ -1245,11 +1309,11 @@ CHELL_JUMP_LEFT_BASE        = 36
         LDA char_vx
         BMI cpei_b_intent_ok
         JMP cpei_b_no
- .cpei_b_need_vy_pos
+  .cpei_b_need_vy_pos
         LDA char_vy
         BNE cpei_b_vypos_have
         LDA char_prev_vy
- .cpei_b_vypos_have
+   .cpei_b_vypos_have
         BEQ cpei_b_no
         BMI cpei_b_no
         JMP cpei_b_intent_ok
@@ -1261,6 +1325,14 @@ CHELL_JUMP_LEFT_BASE        = 36
         BMI cpei_b_intent_ok
         JMP cpei_b_no
  .cpei_b_intent_ok
+
+        ; Back wall portals require SPACE.
+        LDA portal_b_orient
+        CMP #PORTAL_ORIENT_BACK
+        BNE cpei_b_intent_done
+        LDA action_held
+        BEQ cpei_b_no
+ .cpei_b_intent_done
 
         ; Overlap test against portal rect.
         LDA portal_b_orient
@@ -1294,7 +1366,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 ;
 ; Returns: C=1 if overlap, C=0 otherwise.
 ; Inputs:
-; - A = orient (0..3)
+; - A = orient (0..4)
 ; - X = tile_x
 ; - Y = tile_y
 ; Clobbers: A,temp
@@ -1314,7 +1386,11 @@ CHELL_JUMP_LEFT_BASE        = 36
         JSR cpei_overlap_tile_xy_8x32
         RTS
 
- .cpei_overlap_fc
+.cpei_overlap_fc
+        ; Back-wall portals: 16x32 (2 tiles wide x 2 tiles tall)
+        CMP #PORTAL_ORIENT_BACK
+        BEQ cpei_overlap_back
+
         ; Floor/ceiling portals: 16x16 (2 tiles wide x 1 tile tall)
         ; AABB overlap, plus an X-center alignment guard.
 
@@ -1377,6 +1453,51 @@ CHELL_JUMP_LEFT_BASE        = 36
 
  .cpei_fc_no
         CLC
+        RTS
+
+ .cpei_overlap_back
+        ; portal_left_x = tile_x*8
+        TXA
+        ASL A
+        ASL A
+        ASL A
+        STA screen_ptr
+
+        ; If chell_right_x < portal_left_x => no overlap
+        LDA temp_y
+        CMP screen_ptr
+        BCC cpei_fc_no
+
+        ; portal_right_x = portal_left_x + 15
+        LDA screen_ptr
+        CLC
+        ADC #15
+        ; If portal_right_x < chell_left_x => no overlap
+        CMP temp
+        BCC cpei_fc_no
+
+        ; portal_top_y = tile_y*16
+        TYA
+        ASL A
+        ASL A
+        ASL A
+        ASL A
+        STA screen_ptr+1
+
+        ; If chell_bottom_y < portal_top_y => no overlap
+        LDA col_counter
+        CMP screen_ptr+1
+        BCC cpei_fc_no
+
+        ; portal_bottom_y = portal_top_y + 31
+        LDA screen_ptr+1
+        CLC
+        ADC #31
+        ; If portal_bottom_y < chell_top_y => no overlap
+        CMP row_counter
+        BCC cpei_fc_no
+
+        SEC
         RTS
 
 
@@ -2212,12 +2333,12 @@ CHELL_JUMP_LEFT_BASE        = 36
     ; the four tiles meet.
 
   .reticle_try_backwall
-    ; Try top-left at (x0, y)
-    JSR reticle_backwall_at_y
-    BCC reticle_set_blocked
-      LDA #4
-      STA reticle_debug_reason
-      LDA #0
+     ; Try top-left at (x0, y)
+     JSR reticle_backwall_at_y
+     BCC reticle_set_blocked
+       LDA #4
+       STA reticle_debug_reason
+      LDA #PORTAL_ORIENT_BACK
       STA reticle_wall_orient
       JMP reticle_set_green
 
@@ -3127,9 +3248,30 @@ CHELL_JUMP_LEFT_BASE        = 36
     AND keys_held
     STA keys_pressed
 
-    ; Update previous snapshot for next frame.
-    LDA keys_held
-    STA keys_prev
+     ; Update previous snapshot for next frame.
+     LDA keys_held
+     STA keys_prev
+
+      ; --- Action button (SPACE) ---
+      ; Keep separate from keys_held (we've run out of bits).
+      LDA action_held
+      STA action_prev
+      LDA #0
+      STA action_held
+
+      ; SPACE = INKEY(-99)
+      LDX #&9D
+      JSR is_key_pressed
+      BCC sample_no_action
+      LDA #1
+      STA action_held
+ .sample_no_action
+
+      ; action_pressed = action_held & ~action_prev
+      LDA action_prev
+      EOR #&FF
+      AND action_held
+      STA action_pressed
 
      ; --- Aim sampling ---
      ; aim_held: 0=none, 1=up, 2=down
@@ -3253,7 +3395,7 @@ CHELL_JUMP_LEFT_BASE        = 36
       STA temp_y
 
       ; Orientation computed by reticle validation.
-      ; 0..3 (wall_l, wall_r, floor, ceil)
+      ; 0..4 (wall_l, wall_r, floor, ceil, back)
       LDA reticle_wall_orient
       STA row_counter
 
@@ -3293,23 +3435,33 @@ CHELL_JUMP_LEFT_BASE        = 36
   .ppr_reject_oob
       RTS
 
-  .ppr_overlap_check
+   .ppr_overlap_check
 
        ; Prevent overlapping portals (red and yellow cannot overlap).
        ; Disallow placement if tile footprints intersect.
       ; new footprint dims (tile units) into col_counter(w) and screen_ptr(h)
       LDA row_counter
+      CMP #PORTAL_ORIENT_BACK
+      BEQ ppr_new_back
       CMP #PORTAL_ORIENT_FLOOR
       BCS ppr_new_fc
+      ; wall (1x2)
       LDA #1
       STA col_counter
       LDA #2
       STA screen_ptr
       JMP ppr_overlap_have_new
    .ppr_new_fc
+      ; floor/ceiling (2x1)
       LDA #2
       STA col_counter
       LDA #1
+      STA screen_ptr
+      JMP ppr_overlap_have_new
+   .ppr_new_back
+      ; back wall (2x2)
+      LDA #2
+      STA col_counter
       STA screen_ptr
 
    .ppr_overlap_have_new
@@ -3345,17 +3497,27 @@ CHELL_JUMP_LEFT_BASE        = 36
 
    .ppr_overlap_have_other
       ; other dims into temp_mask_ptr+1(w) and temp_sprite_ptr(h)
+      CMP #PORTAL_ORIENT_BACK
+      BEQ ppr_other_back
       CMP #PORTAL_ORIENT_FLOOR
       BCS ppr_other_fc
+      ; wall (1x2)
       LDA #1
       STA temp_mask_ptr+1
       LDA #2
       STA temp_sprite_ptr
       JMP ppr_overlap_test
    .ppr_other_fc
+      ; floor/ceiling (2x1)
       LDA #2
       STA temp_mask_ptr+1
       LDA #1
+      STA temp_sprite_ptr
+      JMP ppr_overlap_test
+   .ppr_other_back
+      ; back wall (2x2)
+      LDA #2
+      STA temp_mask_ptr+1
       STA temp_sprite_ptr
 
    .ppr_overlap_test
@@ -3442,15 +3604,21 @@ CHELL_JUMP_LEFT_BASE        = 36
      RTS
 
   .apu_go
-     ; Erase old stamp if it was previously enabled AND visible in this room.
-     LDA portal_old_enabled
-     BEQ apu_stamp_new
+      ; Erase old stamp if it was previously enabled AND visible in this room.
+      LDA portal_old_enabled
+      BNE apu_old_enabled
+      JMP apu_stamp_new
+  .apu_old_enabled
       LDA portal_old_room
       CMP current_room
-      BNE apu_stamp_new
+      BEQ apu_old_visible
+      JMP apu_stamp_new
+  .apu_old_visible
 
       ; Redraw underlying tiles for the old portal footprint.
       LDA portal_old_orient
+      CMP #PORTAL_ORIENT_BACK
+      BEQ apu_erase_back
       CMP #PORTAL_ORIENT_FLOOR
       BCS apu_erase_fc
 
@@ -3461,7 +3629,9 @@ CHELL_JUMP_LEFT_BASE        = 36
 
       LDA portal_old_y
       CMP #15
-      BEQ apu_stamp_new
+      BNE apu_wall_redraw2
+      JMP apu_stamp_new
+  .apu_wall_redraw2
       CLC
       ADC #1
       LDX portal_old_x
@@ -3486,6 +3656,42 @@ CHELL_JUMP_LEFT_BASE        = 36
   .apu_erase_fc_have_y
       ; Preserve adjusted Y across redraw_tile_xy (it clobbers Y).
       STY temp_y
+      LDA temp_y
+      JSR redraw_tile_xy
+
+      JMP apu_stamp_new
+
+  .apu_erase_back
+      ; Back wall: 2x2 tiles at (x,y),(x+1,y),(x,y+1),(x+1,y+1)
+      LDA portal_old_y
+      STA temp_y
+
+      ; top row
+      LDX portal_old_x
+      LDA temp_y
+      JSR redraw_tile_xy
+      LDX portal_old_x
+      CPX #15
+      BEQ apu_back_skip_topx
+      INX
+      LDA temp_y
+      JSR redraw_tile_xy
+  .apu_back_skip_topx
+
+      ; bottom row
+      LDA temp_y
+      CMP #15
+      BEQ apu_stamp_new
+      CLC
+      ADC #1
+      STA temp_y
+      LDX portal_old_x
+      LDA temp_y
+      JSR redraw_tile_xy
+      LDX portal_old_x
+      CPX #15
+      BEQ apu_stamp_new
+      INX
       LDA temp_y
       JSR redraw_tile_xy
 
@@ -3646,9 +3852,14 @@ CHELL_JUMP_LEFT_BASE        = 36
       ; When the portal pixels live in the *right* half of the 16px sprite, we
       ; start 16 bytes into each stripe.
       ; Floor/ceiling: 16x16 (2 stripes, 32 bytes/stripe).
+      ; Back wall: 16x32 (4 stripes, 32 bytes/stripe).
       LDA row_counter
+      CMP #PORTAL_ORIENT_BACK
+      BEQ spx_is_back
       CMP #PORTAL_ORIENT_FLOOR
-      BCC spx_is_wall
+      BCS spx_not_wall
+      JMP spx_is_wall
+ .spx_not_wall
 
       LDA temp
       BEQ spx_fc_red
@@ -3705,6 +3916,39 @@ CHELL_JUMP_LEFT_BASE        = 36
  .spx_fc_stamp
       ; A=stripe_count, X=bytes_per_stripe, Y=stride
       LDA #2
+      LDX #32
+      LDY #32
+      JSR stamp_striped_masked
+      RTS
+
+ .spx_is_back
+      LDA temp
+      BEQ spx_back_red
+
+      ; Yellow back wall
+      LDA #<portal_b_yel_x0
+      STA sprite_ptr
+      LDA #>portal_b_yel_x0
+      STA sprite_ptr+1
+      LDA #<portal_b_yel_x0_mask
+      STA mask_ptr
+      LDA #>portal_b_yel_x0_mask
+      STA mask_ptr+1
+      JMP spx_back_stamp
+
+ .spx_back_red
+      LDA #<portal_b_red_x0
+      STA sprite_ptr
+      LDA #>portal_b_red_x0
+      STA sprite_ptr+1
+      LDA #<portal_b_red_x0_mask
+      STA mask_ptr
+      LDA #>portal_b_red_x0_mask
+      STA mask_ptr+1
+
+ .spx_back_stamp
+      ; A=stripe_count, X=bytes_per_stripe, Y=stride
+      LDA #4
       LDX #32
       LDY #32
       JSR stamp_striped_masked

@@ -2,6 +2,11 @@
 
 ## Portal Teleportation MVP
 
+### Bug Reports
+
+- Portal placement: pressing A on a floor/ceiling target sometimes stamps both red and yellow sprites.
+- Reticle mode: Chell flashes while moving the reticle (we should only redraw Chell OR the reticle, not both).
+
 ### Current Status
 
 - Portals support 4 orientations: wall-left, wall-right, floor, ceiling.
