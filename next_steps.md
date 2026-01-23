@@ -1,20 +1,24 @@
 # Next Steps
 
-## Next Steps
+## Portal Teleportation MVP
 
-### Portal Teleportation MVP (no code yet)
+### Current Status
 
-- Define portal rects in pixels for each orientation and the exact mapping from stored portal `(room, tile_x, tile_y, orient)` to that rect.
-- Add runtime state needed:
-  - per-portal: enabled, room, tile_x, tile_y, orient
-  - teleport: cooldown frames, last-teleport id (optional)
-- Trigger rule (intent): teleport only if Chell overlaps the portal rect and `dot(v, n_enter) < 0`.
-- Momentum rule: compute `v_t=dot(v,t_enter)`, `v_n=-dot(v,n_enter)`, then `v'=v_t*t_exit + v_n*n_exit`.
-- On teleport: clear grounded, place Chell just outside exit rect by `PORTAL_EXIT_NUDGE` pixels along `n_exit`, apply cooldown.
-- Pick initial tuning constants: `g=1 px/frame^2`, `vy_terminal=28 px/frame` ("spicy" cap), plus `PORTAL_EXIT_NUDGE`, `PORTAL_COOLDOWN_FRAMES`.
-- First implementation step: detect portal overlap + intent only (no teleport yet).
-  - For current room: compute Chell rect/point and portal rects.
-  - Overlap + `dot(v, n_enter) < 0` => set `teleport_pending` and record which portal is the entry.
+- Wall portals only (left/right).
+- Entry detection: overlap + "push into face" (currently approximated from input/facing).
+- Teleportation: immediate teleport to the other portal, including cross-room transition.
+- Exit placement: pixel-space nudge + simple visual-bound tuning.
+- Re-trigger guard: cooldown frames.
+
+### Next Work
+
+- Define canonical portal rects in pixels for each orientation and use them everywhere (draw, overlap, exit placement).
+- Add real horizontal velocity (`char_vx`, px/frame) so entry intent becomes `dot(v, n_enter) < 0` instead of input-derived.
+- Implement momentum mapping using the design rules:
+  - compute `(v_t, v_n)` in the entry portal frame
+  - recompose `v'` in the exit portal frame
+- Add anti-ping-pong: store last-exit portal id and/or a short grace window so you can’t instantly re-trigger the same portal.
+- Extend to floor/ceiling portals once placement and portalable-surface rules exist.
 
 ### Test Scenarios (B2)
 

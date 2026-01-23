@@ -18,6 +18,7 @@ ORG &70
 .char_byte_offset   SKIP 1    ; Byte offset within cell (0 or 8)
 .char_y_offset      SKIP 1    ; Vertical offset within cell row (0 or 8)
 .char_vy            SKIP 1    ; Signed vy in 8px steps
+.char_vx            SKIP 1    ; Signed vx in px/frame (used for portal intent + momentum)
 .char_grounded      SKIP 1    ; 0/1: standing on solid
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
 .rise_cooldown      SKIP 1    ; Frames until next upward step
@@ -116,6 +117,9 @@ ORG &70
   .teleport_exit_x     SKIP 1
   .teleport_exit_y     SKIP 1
   .teleport_exit_orient SKIP 1
+  .teleport_vt         SKIP 1    ; scratch: v_t during teleport
+  .teleport_vn         SKIP 1    ; scratch: v_n during teleport
+  .teleport_last_exit_kind SKIP 1    ; 0/1, $FF=none (debug/anti-ping-pong)
 
  ; --- Reticle LOS scratch ---
 ; All values are in pixels unless noted.
@@ -163,6 +167,10 @@ FALL_STEP_PERIOD            = 2      ; move down 1 stripe every N frames
 
 PORTAL_EXIT_NUDGE           = 2
 PORTAL_COOLDOWN_FRAMES      = 8
+
+PORTAL_WALL_W_PX            = 8
+PORTAL_WALL_H_PX            = 32
+PORTAL_ALIGN_TOL_Y          = 8      ; max |chell_center_y - portal_center_y|
 
 ; Approx visible bounds (used for portal exit placement).
 ; When facing right, Chell's visible "nose" is around x+10 (see will_collide_right).
@@ -232,6 +240,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA char_byte_offset
     STA char_y_offset
     STA char_vy
+    STA char_vx
     STA char_grounded
     STA gravity_cooldown
     STA rise_cooldown
@@ -300,6 +309,8 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA teleport_exit_x
      STA teleport_exit_y
      STA teleport_exit_orient
+     LDA #&FF
+     STA teleport_last_exit_kind
 
     ; Default: face right.
     LDA #1
@@ -656,8 +667,8 @@ CHELL_JUMP_LEFT_BASE        = 36
         JMP cpei_done
 .cpei_cd_done
 
-        ; Only consider entry when the player is actively pushing left/right.
-        LDA move_held
+        ; Only consider entry when the player has horizontal velocity.
+        LDA char_vx
         BEQ cpei_done
 
         ; Cache Chell rect (approx).
@@ -668,8 +679,10 @@ CHELL_JUMP_LEFT_BASE        = 36
         STA screen_ptr        ; chell_left_x (raw)
         STA temp              ; chell_left_x (effective)
 
-        LDA anim_dir
-        BEQ cpei_x_left
+        ; Bias the overlap rect toward motion direction.
+        ; (Don't use anim_dir here; portal momentum can move Chell without input.)
+        LDA char_vx
+        BMI cpei_x_left
         ; Right: chell_right_x = left + 10
         LDA screen_ptr
         CLC
@@ -719,6 +732,10 @@ CHELL_JUMP_LEFT_BASE        = 36
         LDA teleport_entry_kind
         EOR #1
         STA temp                ; exit_kind (0=A,1=B)
+
+        ; Record last-exit portal kind (for anti-ping-pong/debug).
+        LDA temp
+        STA teleport_last_exit_kind
 
         ; Load exit portal into (row_counter=orient, X=tile_x, Y=tile_y, temp_y=room).
         LDA temp
@@ -811,6 +828,71 @@ CHELL_JUMP_LEFT_BASE        = 36
         STA screen_ptr
 
 .mt_portal_x_ok
+        ; --- Momentum mapping (wall portals only) ---
+        ; Use canonical portal frames:
+        ; - left wall:  n=(+1,0), t=(0,+1)
+        ; - right wall: n=(-1,0), t=(0,-1)
+        ;
+        ; v_t = dot(v, t_enter) = vy * t_enter_y
+        ; v_n = -dot(v, n_enter) = -(vx * n_enter_x)
+        ; v' = v_t * t_exit + v_n * n_exit
+        ; => vx' = v_n * n_exit_x
+        ; => vy' = v_t * t_exit_y
+
+        ; temp_y := entry_orient (0=left wall, 1=right wall)
+        LDA teleport_entry_kind
+        BEQ mt_entry_a
+        LDA portal_b_orient
+        BNE mt_entry_orient_ok
+ .mt_entry_a
+        LDA portal_a_orient
+ .mt_entry_orient_ok
+        STA temp_y
+
+        ; teleport_vt := v_t
+        LDA char_vy
+        LDX temp_y
+        BEQ mt_vt_ok
+        ; entry is right wall => t_enter_y=-1 => v_t=-vy
+        EOR #&FF
+        CLC
+        ADC #1
+ .mt_vt_ok
+        STA teleport_vt
+
+        ; teleport_vn := v_n
+        LDA char_vx
+        LDX temp_y
+        BNE mt_vn_ok
+        ; entry is left wall => n_enter_x=+1 => v_n=-vx
+        EOR #&FF
+        CLC
+        ADC #1
+ .mt_vn_ok
+        STA teleport_vn
+
+        ; vx' from exit orientation (row_counter)
+        LDA teleport_vn
+        LDX row_counter
+        BEQ mt_vx_ok
+        ; exit is right wall => n_exit_x=-1 => vx'=-v_n
+        EOR #&FF
+        CLC
+        ADC #1
+ .mt_vx_ok
+        STA char_vx
+
+        ; vy' from exit orientation (row_counter)
+        LDA teleport_vt
+        LDX row_counter
+        BEQ mt_vy_ok
+        ; exit is right wall => t_exit_y=-1 => vy'=-v_t
+        EOR #&FF
+        CLC
+        ADC #1
+ .mt_vy_ok
+        STA char_vy
+
         ; Compute new Chell top-left x from exit orientation.
         LDA row_counter
         BEQ mt_exit_to_right
@@ -826,10 +908,10 @@ CHELL_JUMP_LEFT_BASE        = 36
         ; left wall => exit to right.
         ; Place Chell so her visible "nose" (x+CHELL_NOSE_X_RIGHT) sits just
         ; outside the portal's right edge.
-        ; new_x = (portal_left_x+7+PORTAL_EXIT_NUDGE) - CHELL_NOSE_X_RIGHT
+        ; new_x = (portal_left_x+(PORTAL_WALL_W_PX-1)+PORTAL_EXIT_NUDGE) - CHELL_NOSE_X_RIGHT
         LDA screen_ptr
         CLC
-        ADC #(7+PORTAL_EXIT_NUDGE)
+        ADC #((PORTAL_WALL_W_PX-1)+PORTAL_EXIT_NUDGE)
         SEC
         SBC #CHELL_NOSE_X_RIGHT
         CMP #128
@@ -917,12 +999,22 @@ CHELL_JUMP_LEFT_BASE        = 36
         CMP current_room
         BNE cpei_a_no
 
-        ; Orientation must match push direction.
-        ; 0=left wall => must be pushing left (anim_dir=0)
-        ; 1=right wall => must be pushing right (anim_dir=1)
+        ; Entry intent: dot(v, n_enter) < 0.
+        ; Wall portals only:
+        ; - left wall (n=(+1,0))  => vx < 0
+        ; - right wall (n=(-1,0)) => vx > 0
         LDA portal_a_orient
-        CMP anim_dir
-        BNE cpei_a_no
+        BEQ cpei_a_need_vx_neg
+        ; right wall
+        LDA char_vx
+        BEQ cpei_a_no
+        BMI cpei_a_no
+        JMP cpei_a_intent_ok
+ .cpei_a_need_vx_neg
+        LDA char_vx
+        BMI cpei_a_intent_ok
+        JMP cpei_a_no
+ .cpei_a_intent_ok
 
         ; Overlap test against portal rect.
         LDX portal_a_x
@@ -959,10 +1051,19 @@ CHELL_JUMP_LEFT_BASE        = 36
         CMP current_room
         BNE cpei_b_no
 
-        ; Orientation must match push direction.
+        ; Entry intent: dot(v, n_enter) < 0. (See portal A version.)
         LDA portal_b_orient
-        CMP anim_dir
-        BNE cpei_b_no
+        BEQ cpei_b_need_vx_neg
+        ; right wall
+        LDA char_vx
+        BEQ cpei_b_no
+        BMI cpei_b_no
+        JMP cpei_b_intent_ok
+ .cpei_b_need_vx_neg
+        LDA char_vx
+        BMI cpei_b_intent_ok
+        JMP cpei_b_no
+ .cpei_b_intent_ok
 
         ; Overlap test against portal rect.
         LDX portal_b_x
@@ -993,7 +1094,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 ; vs portal tile rect at (X=tile_x,Y=tile_y) sized 8x32 pixels.
 ;
 ; Returns: C=1 if overlap, C=0 otherwise.
-; Clobbers: A
+; Clobbers: A,temp
 .cpei_overlap_tile_xy_8x32
         ; portal_left_x = tile_x*8
         TXA
@@ -1013,10 +1114,10 @@ CHELL_JUMP_LEFT_BASE        = 36
         RTS
 .cpei_x_ok0
 
-        ; portal_right_x = portal_left_x + 7
+        ; portal_right_x = portal_left_x + (PORTAL_WALL_W_PX-1)
         LDA screen_ptr
         CLC
-        ADC #7
+        ADC #(PORTAL_WALL_W_PX-1)
         ; If chell_left_x > portal_right_x => no overlap
         CMP temp
         BEQ cpei_x_ok1
@@ -1036,27 +1137,53 @@ CHELL_JUMP_LEFT_BASE        = 36
         ; stash portal_top_y
         STA screen_ptr+1
 
-        ; If chell_bottom_y < portal_top_y => no overlap
-        LDA col_counter
-        CMP screen_ptr+1
-        BCS cpei_y_ok0         ; chell_bottom_y >= portal_top_y
-        ; chell_bottom_y < portal_top_y
-        CLC
-        RTS
-.cpei_y_ok0
+        ; Vertical sensitivity guard:
+        ; Require that Chell's vertical center is close to the portal's vertical
+        ; center. This prevents accidental teleports when she just grazes a
+        ; portal with hair/feet.
+        ;
+        ; chell_center_y  = chell_top_y + 16
+        ; portal_center_y = portal_top_y + (PORTAL_WALL_H_PX/2)
+        ; require |chell_center_y - portal_center_y| <= PORTAL_ALIGN_TOL_Y
 
-        ; portal_bottom_y = portal_top_y + 31
+        ; portal_center_y -> temp
         LDA screen_ptr+1
         CLC
-        ADC #31
-        ; If chell_top_y > portal_bottom_y => no overlap
-        CMP row_counter
-        BEQ cpei_y_ok1
-        BCS cpei_y_ok1         ; portal_bottom_y >= chell_top_y
-        ; portal_bottom_y < chell_top_y
+        ADC #(PORTAL_WALL_H_PX/2)
+        STA temp
+
+        ; chell_center_y -> temp_y
+        LDA row_counter
+        CLC
+        ADC #16
+        STA temp_y
+
+        ; lower = portal_center_y - PORTAL_ALIGN_TOL_Y
+        LDA temp
+        SEC
+        SBC #PORTAL_ALIGN_TOL_Y
+        STA screen_ptr+1
+
+        ; if chell_center_y < lower => no overlap
+        LDA temp_y
+        CMP screen_ptr+1
+        BCC cpei_y_no
+
+        ; upper = portal_center_y + PORTAL_ALIGN_TOL_Y
+        LDA temp
+        CLC
+        ADC #PORTAL_ALIGN_TOL_Y
+        STA screen_ptr+1
+
+        ; if chell_center_y > upper => no overlap
+        LDA temp_y
+        CMP screen_ptr+1
+        BEQ cpei_y_ok
+        BCC cpei_y_ok
+ .cpei_y_no
         CLC
         RTS
-.cpei_y_ok1
+ .cpei_y_ok
 
         SEC
         RTS
@@ -2529,6 +2656,37 @@ CHELL_JUMP_LEFT_BASE        = 36
       STA move_held
       STA move_cooldown
 
+      ; If grounded, kill horizontal velocity.
+      ; If airborne and we have velocity, keep drifting.
+      LDA char_grounded
+      BEQ no_key_airborne
+      LDA #0
+      STA char_vx
+      JMP no_key_after_vx
+
+  .no_key_airborne
+      LDA char_vx
+      BEQ no_key_after_vx
+      BMI no_key_drift_left
+      ; drift right
+      JSR step_right_pixel
+      BCS no_key_drift_moved
+      ; hit wall => stop
+      LDA #0
+      STA char_vx
+      JMP no_key_after_vx
+  .no_key_drift_left
+      JSR step_left_pixel
+      BCS no_key_drift_moved
+      LDA #0
+      STA char_vx
+      JMP no_key_after_vx
+  .no_key_drift_moved
+      LDA #1
+      STA temp
+
+  .no_key_after_vx
+
       ; If we just released movement keys while grounded, redraw to idle.
       LDA last_move_held
       BEQ no_key_no_redraw
@@ -3184,13 +3342,17 @@ CHELL_JUMP_LEFT_BASE        = 36
     RTS
  
  .key_left
-     LDA #0
-     STA anim_dir
-     JMP key_held
+      LDA #0
+      STA anim_dir
+      LDA #&FF
+      STA char_vx
+      JMP key_held
  
  .key_right
-     LDA #1
-     STA anim_dir
+      LDA #1
+      STA anim_dir
+      LDA #1
+      STA char_vx
  
  .key_held
       ; Mark that we are trying to move (used for idle pose selection).
@@ -3211,20 +3373,21 @@ CHELL_JUMP_LEFT_BASE        = 36
      BEQ do_move
      DEC move_cooldown
      JMP return_redraw
- .do_move
+  .do_move
       ; Walk speed (1px per frame).
       LDA #0
       STA move_cooldown
 
  
-     LDA anim_dir
-     BEQ do_move_left
-     JSR step_right_pixel
-     BCC return_redraw
-     JMP did_move
- .do_move_left
-     JSR step_left_pixel
-     BCC return_redraw
+      LDA anim_dir
+      BEQ do_move_left
+      JSR step_right_pixel
+      BCS did_move
+      BCC return_redraw
+  .do_move_left
+      JSR step_left_pixel
+      BCS did_move
+      BCC return_redraw
  .did_move
       ; We moved: redraw, and advance animation every 4 pixels.
       LDA #1
