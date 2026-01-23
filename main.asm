@@ -2309,11 +2309,11 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA portal_old_y
 
    .ppr_compute_new
-     ; Compute new x.
-     ; Wall portal can snap to either the left or right 8px column within the
-     ; 16px reticle span. reticle_debug_reason distinguishes:
-     ;   2 = left column match
-     ;   3 = right column match
+      ; Compute new x.
+      ; Wall portal can snap to either the left or right 8px column within the
+      ; 16px reticle span. reticle_debug_reason distinguishes:
+      ;   2 = left column match
+      ;   3 = right column match
      LDA reticle_debug_reason
      AND #&7F
      CMP #3
@@ -2335,15 +2335,64 @@ CHELL_JUMP_LEFT_BASE        = 36
    .ppr_y_ok
      STA temp_y
 
-     ; Wall orientation (tile type) computed by reticle validation.
-     ; 0=left wall (tile 3), 1=right wall (tile 5)
-     LDA reticle_wall_orient
-     STA row_counter
+      ; Wall orientation (tile type) computed by reticle validation.
+      ; 0=left wall (tile 3), 1=right wall (tile 5)
+      LDA reticle_wall_orient
+      STA row_counter
 
-     ; Commit new state.
-     LDA portal_kind
-     BEQ ppr_set_a
-     ; B
+      ; Prevent overlapping portals (red and yellow cannot overlap).
+      ; Each wall portal occupies 1x2 tiles: (x,y) and (x,y+1).
+      ; Disallow placement if the other portal is in this room at the same x and
+      ; the y ranges intersect (|dy| <= 1).
+      LDA portal_kind
+      BEQ ppr_check_overlap_b
+      ; Placing B: check overlap against A
+      LDA portal_a_enabled
+      BEQ ppr_no_overlap
+      LDA portal_a_room
+      CMP current_room
+      BNE ppr_no_overlap
+      LDA portal_a_x
+      CMP temp
+      BNE ppr_no_overlap
+      LDA portal_a_y
+      SEC
+      SBC temp_y
+      BPL ppr_dy_pos_a
+      EOR #&FF
+      CLC
+      ADC #1
+    .ppr_dy_pos_a
+      CMP #2
+      BCS ppr_no_overlap
+      RTS
+    .ppr_check_overlap_b
+      ; Placing A: check overlap against B
+      LDA portal_b_enabled
+      BEQ ppr_no_overlap
+      LDA portal_b_room
+      CMP current_room
+      BNE ppr_no_overlap
+      LDA portal_b_x
+      CMP temp
+      BNE ppr_no_overlap
+      LDA portal_b_y
+      SEC
+      SBC temp_y
+      BPL ppr_dy_pos_b
+      EOR #&FF
+      CLC
+      ADC #1
+    .ppr_dy_pos_b
+      CMP #2
+      BCS ppr_no_overlap
+      RTS
+    .ppr_no_overlap
+
+      ; Commit new state.
+      LDA portal_kind
+      BEQ ppr_set_a
+      ; B
      LDA #1
      STA portal_b_enabled
      LDA current_room
