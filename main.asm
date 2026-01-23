@@ -3504,47 +3504,51 @@ CHELL_JUMP_LEFT_BASE        = 36
      LDA portal_b_room
      CMP current_room
      BNE apu_done
-      LDA portal_b_orient
-      STA row_counter
-      LDA #1
-      LDX portal_b_x
-      LDY portal_b_y
-      ; Adjust draw Y for floor/ceiling (stored y is collision rect).
-      LDA row_counter
-      CMP #PORTAL_ORIENT_FLOOR
+       LDA portal_b_orient
+       STA row_counter
+       LDA #1
+       PHA
+       LDX portal_b_x
+       LDY portal_b_y
+       ; Adjust draw Y for floor/ceiling (stored y is collision rect).
+       LDA row_counter
+       CMP #PORTAL_ORIENT_FLOOR
       BNE apu_stamp_b_not_floor
       INY
       JMP apu_stamp_b_y_ok
   .apu_stamp_b_not_floor
-      CMP #PORTAL_ORIENT_CEIL
-      BNE apu_stamp_b_y_ok
-      DEY
-  .apu_stamp_b_y_ok
-      JSR stamp_portal_xy
-      JMP apu_done
+       CMP #PORTAL_ORIENT_CEIL
+       BNE apu_stamp_b_y_ok
+       DEY
+   .apu_stamp_b_y_ok
+       PLA
+       JSR stamp_portal_xy
+       JMP apu_done
   .apu_try_a
      LDA portal_a_enabled
      BEQ apu_done
       LDA portal_a_room
       CMP current_room
       BNE apu_done
-       LDA portal_a_orient
-       STA row_counter
-       LDA #0
-        LDX portal_a_x
-        LDY portal_a_y
-       ; Adjust draw Y for floor/ceiling (stored y is collision rect).
-       LDA row_counter
-       CMP #PORTAL_ORIENT_FLOOR
+        LDA portal_a_orient
+        STA row_counter
+        LDA #0
+        PHA
+         LDX portal_a_x
+         LDY portal_a_y
+        ; Adjust draw Y for floor/ceiling (stored y is collision rect).
+        LDA row_counter
+        CMP #PORTAL_ORIENT_FLOOR
        BNE apu_stamp_a_not_floor
        INY
        JMP apu_stamp_a_y_ok
   .apu_stamp_a_not_floor
-       CMP #PORTAL_ORIENT_CEIL
-       BNE apu_stamp_a_y_ok
-       DEY
-  .apu_stamp_a_y_ok
-        JSR stamp_portal_xy
+        CMP #PORTAL_ORIENT_CEIL
+        BNE apu_stamp_a_y_ok
+        DEY
+   .apu_stamp_a_y_ok
+        PLA
+         JSR stamp_portal_xy
 
   .apu_done
      LDA #0
@@ -3811,6 +3815,7 @@ CHELL_JUMP_LEFT_BASE        = 36
       LDA portal_a_orient
       STA row_counter
       LDA #0
+      PHA
       LDX portal_a_x
       LDY portal_a_y
       ; Adjust draw Y for floor/ceiling (stored y is collision rect).
@@ -3824,6 +3829,7 @@ CHELL_JUMP_LEFT_BASE        = 36
       BNE spcr_a_y_ok
       DEY
   .spcr_a_y_ok
+      PLA
       JSR stamp_portal_xy
 
   .spcr_b
@@ -3836,6 +3842,7 @@ CHELL_JUMP_LEFT_BASE        = 36
       LDA portal_b_orient
       STA row_counter
       LDA #1
+      PHA
       LDX portal_b_x
       LDY portal_b_y
       ; Adjust draw Y for floor/ceiling (stored y is collision rect).
@@ -3849,6 +3856,7 @@ CHELL_JUMP_LEFT_BASE        = 36
       BNE spcr_b_y_ok
       DEY
   .spcr_b_y_ok
+      PLA
       JSR stamp_portal_xy
 
   .spcr_done
