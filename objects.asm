@@ -24,46 +24,14 @@ STATIC_OBJ_FLAG_ENABLED = &80
     EQUW static_objects_room1
 
 
-; Room 0 objects (TEMP: validation portals)
+; Room 0 objects
 .static_objects_room0
-    ; Red portal V (right)
-  .room0_portal_red_x
-    EQUB 12,6,4,16,32
-.room0_obj0_flags
-    EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
-    EQUW portal_v_red_r_x0
-    EQUW portal_v_red_r_x0_mask
-
-    ; Yellow portal V (right)
-  .room0_portal_yel_x
-    EQUB 2,2,4,16,32
-.room0_obj1_flags
-    EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
-    EQUW portal_v_yel_r_x0
-    EQUW portal_v_yel_r_x0_mask
-
     ; End
     EQUB 0,0,0
 
 
-; Room 1 objects (none yet)
+; Room 1 objects
 .static_objects_room1
-    ; Red portal V (right)
-  .room1_portal_red_x
-    EQUB 12,6,4,16,32
-  .room1_obj0_flags
-    EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
-    EQUW portal_v_red_r_x0
-    EQUW portal_v_red_r_x0_mask
-
-    ; Yellow portal V (right)
-  .room1_portal_yel_x
-    EQUB 2,2,4,16,32
-  .room1_obj1_flags
-    EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
-    EQUW portal_v_yel_r_x0
-    EQUW portal_v_yel_r_x0_mask
-
     ; End
     EQUB 0,0,0
 

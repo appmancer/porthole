@@ -92,7 +92,18 @@ ORG &70
  .portal_kind         SKIP 1    ; 0 = red (A), 1 = yellow (B)
  .portal_old_x        SKIP 1
  .portal_old_y        SKIP 1
+ .portal_old_room     SKIP 1
  .portal_old_enabled  SKIP 1    ; 0/1: whether old portal was enabled
+
+ ; Portal instances (global per level)
+ .portal_a_enabled    SKIP 1
+ .portal_a_room       SKIP 1
+ .portal_a_x          SKIP 1
+ .portal_a_y          SKIP 1
+ .portal_b_enabled    SKIP 1
+ .portal_b_room       SKIP 1
+ .portal_b_x          SKIP 1
+ .portal_b_y          SKIP 1
 
  ; --- Reticle LOS scratch ---
 ; All values are in pixels unless noted.
@@ -248,7 +259,17 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA portal_kind
      STA portal_old_x
      STA portal_old_y
+     STA portal_old_room
      STA portal_old_enabled
+
+     STA portal_a_enabled
+     STA portal_a_room
+     STA portal_a_x
+     STA portal_a_y
+     STA portal_b_enabled
+     STA portal_b_room
+     STA portal_b_x
+     STA portal_b_y
 
     ; Default: face right.
     LDA #1
@@ -258,6 +279,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     ; Render background once.
     JSR render_tilemap
     JSR render_static_objects
+    JSR stamp_portals_for_current_room
 
     ; Build collision/material plane from the tilemap.
     JSR build_material_planes_from_tilemap
@@ -312,9 +334,10 @@ CHELL_JUMP_LEFT_BASE        = 36
         BEQ render_no_room_redraw
        JSR set_room_tilemap
        JSR set_room_portalmap
-       JSR render_tilemap
-       JSR render_static_objects
-       LDA #0
+        JSR render_tilemap
+        JSR render_static_objects
+        JSR stamp_portals_for_current_room
+        LDA #0
        STA room_dirty
         STA chell_has_under
         STA reticle_has_under
@@ -2222,8 +2245,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 
 
 ; Place a portal by updating the current room's static-object entry.
-; This is a first-pass implementation: we restamp the whole room by setting
-; room_dirty.
+; This updates global portal state (one A + one B per level).
 ;
 ; Input:
 ; - A = 0 for Portal A (red)
@@ -2232,46 +2254,31 @@ CHELL_JUMP_LEFT_BASE        = 36
 .place_portal_from_reticle
      STA portal_kind
 
-     ; temp_sprite_ptr := per-room object table pointer
-     LDA current_room
-     ASL A
-     TAX
-     LDA static_objects_room_pointers,X
-     STA temp_sprite_ptr
-     LDA static_objects_room_pointers+1,X
-     STA temp_sprite_ptr+1
-
-     ; Select entry 0 (A) or entry 1 (B).
+     ; Snapshot old portal state (for erase).
      LDA portal_kind
-     BEQ ppr_have_entry
-     LDA temp_sprite_ptr
-     CLC
-     ADC #10              ; STATIC_OBJ_ENTRY_SIZE
-     STA temp_sprite_ptr
-     BCC ppr_have_entry
-     INC temp_sprite_ptr+1
-   .ppr_have_entry
-
-     ; Snapshot old position for erase (partial redraw).
-     LDY #0
-     LDA (temp_sprite_ptr),Y
-     STA portal_old_x
-     INY
-     LDA (temp_sprite_ptr),Y
-     STA portal_old_y
-     LDY #5
-     LDA (temp_sprite_ptr),Y
-     AND #&80
-     BEQ ppr_old_disabled
-     LDA #1
-     BNE ppr_old_enabled_done
-   .ppr_old_disabled
-     LDA #0
-   .ppr_old_enabled_done
+     BEQ ppr_snap_a
+     ; B
+     LDA portal_b_enabled
      STA portal_old_enabled
+     LDA portal_b_room
+     STA portal_old_room
+     LDA portal_b_x
+     STA portal_old_x
+     LDA portal_b_y
+     STA portal_old_y
+     JMP ppr_compute_new
+   .ppr_snap_a
+     LDA portal_a_enabled
+     STA portal_old_enabled
+     LDA portal_a_room
+     STA portal_old_room
+     LDA portal_a_x
+     STA portal_old_x
+     LDA portal_a_y
+     STA portal_old_y
 
-     ; x
-     LDY #0
+   .ppr_compute_new
+     ; Compute new x.
      ; Wall portal can snap to either the left or right 8px column within the
      ; 16px reticle span. reticle_debug_reason distinguishes:
      ;   2 = left column match
@@ -2287,22 +2294,39 @@ CHELL_JUMP_LEFT_BASE        = 36
    .ppr_x_left
      LDA reticle_cell_x
    .ppr_x_store
-     STA (temp_sprite_ptr),Y
+     STA temp
 
      ; y (clamp away from final row so 2-cell-tall stamps don't overflow)
-     INY
      LDA reticle_cell_y
      CMP #15
      BNE ppr_y_ok
      LDA #14
    .ppr_y_ok
-     STA (temp_sprite_ptr),Y
+     STA temp_y
 
-     ; Ensure enabled (flags bit7)
-     LDY #5
-     LDA (temp_sprite_ptr),Y
-     ORA #&80
-     STA (temp_sprite_ptr),Y
+     ; Commit new state.
+     LDA portal_kind
+     BEQ ppr_set_a
+     ; B
+     LDA #1
+     STA portal_b_enabled
+     LDA current_room
+     STA portal_b_room
+     LDA temp
+     STA portal_b_x
+     LDA temp_y
+     STA portal_b_y
+     JMP ppr_done
+   .ppr_set_a
+     LDA #1
+     STA portal_a_enabled
+     LDA current_room
+     STA portal_a_room
+     LDA temp
+     STA portal_a_x
+     LDA temp_y
+     STA portal_a_y
+   .ppr_done
 
      LDA #1
      STA portal_pending
@@ -2320,9 +2344,12 @@ CHELL_JUMP_LEFT_BASE        = 36
      RTS
 
   .apu_go
-     ; Erase old stamp if it was previously enabled.
+     ; Erase old stamp if it was previously enabled AND visible in this room.
      LDA portal_old_enabled
      BEQ apu_stamp_new
+     LDA portal_old_room
+     CMP current_room
+     BNE apu_stamp_new
 
      ; Redraw tile (old_x, old_y)
      LDX portal_old_x
@@ -2339,86 +2366,30 @@ CHELL_JUMP_LEFT_BASE        = 36
      JSR redraw_tile_xy
 
   .apu_stamp_new
-     ; temp_sprite_ptr := per-room object table pointer
-     LDA current_room
-     ASL A
-     TAX
-     LDA static_objects_room_pointers,X
-     STA temp_sprite_ptr
-     LDA static_objects_room_pointers+1,X
-     STA temp_sprite_ptr+1
-
-     ; Select entry 0 (A) or entry 1 (B).
+     ; Stamp the newly placed portal if it is visible in this room.
      LDA portal_kind
-     BEQ apu_have_entry
-     LDA temp_sprite_ptr
-     CLC
-     ADC #10              ; STATIC_OBJ_ENTRY_SIZE
-     STA temp_sprite_ptr
-     BCC apu_have_entry
-     INC temp_sprite_ptr+1
-  .apu_have_entry
-
-     ; Skip if disabled (shouldn't happen after placement, but cheap).
-     LDY #5
-     LDA (temp_sprite_ptr),Y
-     AND #&80
+     BEQ apu_try_a
+     ; B
+     LDA portal_b_enabled
      BEQ apu_done
-
-     ; screen_ptr := &5800 + y*512 + x*16
-     LDA #<(&5800)
-     STA screen_ptr
-     LDA #>(&5800)
-     STA screen_ptr+1
-
-     ; y*512 => add (y*2) to high byte
-     LDY #1
-     LDA (temp_sprite_ptr),Y
-     ASL A
-     CLC
-     ADC screen_ptr+1
-     STA screen_ptr+1
-
-     ; x*16 => add to low byte
-     LDY #0
-     LDA (temp_sprite_ptr),Y
-     TAY
-     LDA times16_table,Y
-     CLC
-     ADC screen_ptr
-     STA screen_ptr
-     BCC apu_x_ok
-     INC screen_ptr+1
-  .apu_x_ok
-
-     ; sprite_ptr
-     LDY #6
-     LDA (temp_sprite_ptr),Y
-     STA sprite_ptr
-     INY
-     LDA (temp_sprite_ptr),Y
-     STA sprite_ptr+1
-
-     ; mask_ptr
-     LDY #8
-     LDA (temp_sprite_ptr),Y
-     STA mask_ptr
-     INY
-     LDA (temp_sprite_ptr),Y
-     STA mask_ptr+1
-
-     ; A=stripe_count, X=bytes_per_stripe, Y=stride
-     LDY #2
-     LDA (temp_sprite_ptr),Y
-     STA temp
-     LDY #3
-     LDA (temp_sprite_ptr),Y
-     TAX
-     LDY #4
-     LDA (temp_sprite_ptr),Y
-     TAY
-     LDA temp
-     JSR stamp_striped_masked
+     LDA portal_b_room
+     CMP current_room
+     BNE apu_done
+     LDA #1
+     LDX portal_b_x
+     LDY portal_b_y
+     JSR stamp_portal_xy
+     JMP apu_done
+  .apu_try_a
+     LDA portal_a_enabled
+     BEQ apu_done
+     LDA portal_a_room
+     CMP current_room
+     BNE apu_done
+     LDA #0
+     LDX portal_a_x
+     LDY portal_a_y
+     JSR stamp_portal_xy
 
   .apu_done
      LDA #0
@@ -2465,6 +2436,100 @@ CHELL_JUMP_LEFT_BASE        = 36
 
      LDA temp
      JSR render_cell8x16
+     RTS
+
+
+; Stamp portal sprite at tile coordinates.
+; Inputs:
+; - A = kind (0=red, 1=yellow)
+; - X = tile_x (0..15)
+; - Y = tile_y (0..15)
+; Uses fixed stamp geometry: 8x32 (1 tile wide x 2 tiles tall).
+.stamp_portal_xy
+     ; Preserve kind.
+     STA temp
+
+     ; screen_ptr := &5800 + y*512 + x*16
+     LDA #<(&5800)
+     STA screen_ptr
+     LDA #>(&5800)
+     STA screen_ptr+1
+
+     ; y*512 => add (y*2) to high byte
+     TYA
+     ASL A
+     CLC
+     ADC screen_ptr+1
+     STA screen_ptr+1
+
+     ; x*16 => add to low byte
+     TXA
+     TAY
+     LDA times16_table,Y
+     CLC
+     ADC screen_ptr
+     STA screen_ptr
+     BCC spx_ok
+     INC screen_ptr+1
+  .spx_ok
+
+     ; sprite_ptr/mask_ptr (x0 variant)
+     LDA temp
+     BEQ spx_red
+     LDA #<portal_v_yel_r_x0
+     STA sprite_ptr
+     LDA #>portal_v_yel_r_x0
+     STA sprite_ptr+1
+     LDA #<portal_v_yel_r_x0_mask
+     STA mask_ptr
+     LDA #>portal_v_yel_r_x0_mask
+     STA mask_ptr+1
+     JMP spx_stamp
+  .spx_red
+     LDA #<portal_v_red_r_x0
+     STA sprite_ptr
+     LDA #>portal_v_red_r_x0
+     STA sprite_ptr+1
+     LDA #<portal_v_red_r_x0_mask
+     STA mask_ptr
+     LDA #>portal_v_red_r_x0_mask
+     STA mask_ptr+1
+
+  .spx_stamp
+     ; A=stripe_count, X=bytes_per_stripe, Y=stride
+     LDA #4
+     LDX #16
+     LDY #32
+     JSR stamp_striped_masked
+     RTS
+
+
+; Stamp portals that belong to current_room.
+.stamp_portals_for_current_room
+     ; Portal A
+     LDA portal_a_enabled
+     BEQ spcr_b
+     LDA portal_a_room
+     CMP current_room
+     BNE spcr_b
+     LDA #0
+     LDX portal_a_x
+     LDY portal_a_y
+     JSR stamp_portal_xy
+
+  .spcr_b
+     ; Portal B
+     LDA portal_b_enabled
+     BEQ spcr_done
+     LDA portal_b_room
+     CMP current_room
+     BNE spcr_done
+     LDA #1
+     LDX portal_b_x
+     LDY portal_b_y
+     JSR stamp_portal_xy
+
+  .spcr_done
      RTS
 
 ; Return C=1 if SHIFT key is held.
