@@ -52,7 +52,9 @@ rm -f "${OUT_SSD}"
   --out-sprites sprites/generated_objects_sprites.asm \
   --out-masks sprites/generated_objects_masks.asm \
   --spec "portal_v_red_r:sprites/Portal V - Red (Right).csv" \
-  --spec "portal_v_yel_r:sprites/Portal V - Yellow (Right).csv"
+  --spec "portal_v_red_l^:sprites/Portal V - Red (Right).csv" \
+  --spec "portal_v_yel_r:sprites/Portal V - Yellow (Right).csv" \
+  --spec "portal_v_yel_l^:sprites/Portal V - Yellow (Right).csv"
 
 ./tools/gen-tiles \
   --in "sprites/NewTiles - Grid.csv" \

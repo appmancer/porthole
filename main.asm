@@ -64,9 +64,10 @@ ORG &70
 .reticle_cell_x      SKIP 1    ; 0..14 (portal span X, top-left tile_x)
 .reticle_cell_y      SKIP 1    ; 0..15 (portal grid Y)
 .reticle_state       SKIP 1    ; 0=blocked, 1=portalable
-.reticle_active      SKIP 1    ; 0/1: draw reticle
-.reticle_prev_active SKIP 1    ; previous frame reticle_active
-.reticle_move_cd     SKIP 1    ; reticle move repeat cooldown
+ .reticle_active      SKIP 1    ; 0/1: draw reticle
+ .reticle_prev_active SKIP 1    ; previous frame reticle_active
+ .reticle_move_cd     SKIP 1    ; reticle move repeat cooldown
+ .reticle_wall_orient SKIP 1    ; 0=left wall (tile 3), 1=right wall (tile 5)
 
 .exit_dst            SKIP 1    ; scratch: exit destination room index
 
@@ -100,10 +101,12 @@ ORG &70
  .portal_a_room       SKIP 1
  .portal_a_x          SKIP 1
  .portal_a_y          SKIP 1
+ .portal_a_orient     SKIP 1    ; 0=wall_left, 1=wall_right
  .portal_b_enabled    SKIP 1
  .portal_b_room       SKIP 1
  .portal_b_x          SKIP 1
  .portal_b_y          SKIP 1
+ .portal_b_orient     SKIP 1    ; 0=wall_left, 1=wall_right
 
  ; --- Reticle LOS scratch ---
 ; All values are in pixels unless noted.
@@ -241,9 +244,10 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA reticle_active
     STA reticle_prev_active
     STA reticle_move_cd
-    STA reticle_cell_x
-    STA reticle_cell_y
-    STA reticle_state
+     STA reticle_cell_x
+     STA reticle_cell_y
+     STA reticle_state
+     STA reticle_wall_orient
 
     STA chell_dirty
     STA reticle_dirty
@@ -266,10 +270,12 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA portal_a_room
      STA portal_a_x
      STA portal_a_y
+     STA portal_a_orient
      STA portal_b_enabled
      STA portal_b_room
      STA portal_b_x
      STA portal_b_y
+     STA portal_b_orient
 
     ; Default: face right.
     LDA #1
@@ -1221,6 +1227,8 @@ CHELL_JUMP_LEFT_BASE        = 36
   .reticle_floor_ceiling_match
     LDA #1
     STA reticle_debug_reason
+    LDA #0
+    STA reticle_wall_orient
     JMP reticle_set_green
 
     ; -------- Wall test (1x2) --------
@@ -1260,7 +1268,17 @@ CHELL_JUMP_LEFT_BASE        = 36
     BNE reticle_try_wall_right
      LDA #2
      STA reticle_debug_reason
-     JMP reticle_set_green
+     ; temp is tile type (3=left wall, 5=right wall)
+     LDA temp
+     CMP #5
+     BNE wall_left_is_left
+     LDA #1
+     BNE wall_left_orient_done
+   .wall_left_is_left
+     LDA #0
+   .wall_left_orient_done
+     STA reticle_wall_orient
+      JMP reticle_set_green
 
   .reticle_try_wall_right
     ; Try right column: (tile_x1, y) and (tile_x1, y+1)
@@ -1288,9 +1306,19 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA (tilemap_ptr),Y
     CMP temp
     BNE reticle_try_backwall
-     LDA #3
-     STA reticle_debug_reason
-     JMP reticle_set_green
+      LDA #3
+      STA reticle_debug_reason
+      ; temp is tile type (3=left wall, 5=right wall)
+      LDA temp
+      CMP #5
+      BNE wall_right_is_left
+      LDA #1
+      BNE wall_right_orient_done
+    .wall_right_is_left
+      LDA #0
+    .wall_right_orient_done
+      STA reticle_wall_orient
+      JMP reticle_set_green
 
     ; -------- Back-wall test (2x2 empties) --------
     ; Back wall is represented by empty tiles (id 0).
@@ -1301,9 +1329,11 @@ CHELL_JUMP_LEFT_BASE        = 36
     ; Try top-left at (x0, y)
     JSR reticle_backwall_at_y
     BCC reticle_set_blocked
-     LDA #4
-     STA reticle_debug_reason
-     JMP reticle_set_green
+      LDA #4
+      STA reticle_debug_reason
+      LDA #0
+      STA reticle_wall_orient
+      JMP reticle_set_green
 
 ; Check back-wall portalability (2x2 empty) at current reticle_cell_y.
 ; Returns C=1 if tile(y,x0..x1) and tile(y+1,x0..x1) are all 0.
@@ -1380,6 +1410,7 @@ CHELL_JUMP_LEFT_BASE        = 36
   .reticle_set_blocked
     LDA #0
     STA reticle_debug_reason
+    STA reticle_wall_orient
     LDA reticle_state
     BEQ reticle_done
     LDA #0
@@ -2304,6 +2335,11 @@ CHELL_JUMP_LEFT_BASE        = 36
    .ppr_y_ok
      STA temp_y
 
+     ; Wall orientation (tile type) computed by reticle validation.
+     ; 0=left wall (tile 3), 1=right wall (tile 5)
+     LDA reticle_wall_orient
+     STA row_counter
+
      ; Commit new state.
      LDA portal_kind
      BEQ ppr_set_a
@@ -2316,6 +2352,8 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA portal_b_x
      LDA temp_y
      STA portal_b_y
+     LDA row_counter
+     STA portal_b_orient
      JMP ppr_done
    .ppr_set_a
      LDA #1
@@ -2326,6 +2364,8 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA portal_a_x
      LDA temp_y
      STA portal_a_y
+     LDA row_counter
+     STA portal_a_orient
    .ppr_done
 
      LDA #1
@@ -2375,6 +2415,8 @@ CHELL_JUMP_LEFT_BASE        = 36
      LDA portal_b_room
      CMP current_room
      BNE apu_done
+     LDA portal_b_orient
+     STA row_counter
      LDA #1
      LDX portal_b_x
      LDY portal_b_y
@@ -2383,13 +2425,15 @@ CHELL_JUMP_LEFT_BASE        = 36
   .apu_try_a
      LDA portal_a_enabled
      BEQ apu_done
-     LDA portal_a_room
-     CMP current_room
-     BNE apu_done
-     LDA #0
-     LDX portal_a_x
-     LDY portal_a_y
-     JSR stamp_portal_xy
+      LDA portal_a_room
+      CMP current_room
+      BNE apu_done
+      LDA portal_a_orient
+      STA row_counter
+      LDA #0
+       LDX portal_a_x
+       LDY portal_a_y
+       JSR stamp_portal_xy
 
   .apu_done
      LDA #0
@@ -2444,8 +2488,9 @@ CHELL_JUMP_LEFT_BASE        = 36
 ; - A = kind (0=red, 1=yellow)
 ; - X = tile_x (0..15)
 ; - Y = tile_y (0..15)
+; - row_counter = orient (0=left wall, 1=right wall)
 ; Uses fixed stamp geometry: 8x32 (1 tile wide x 2 tiles tall).
-.stamp_portal_xy
+  .stamp_portal_xy
      ; Preserve kind.
      STA temp
 
@@ -2473,35 +2518,108 @@ CHELL_JUMP_LEFT_BASE        = 36
      INC screen_ptr+1
   .spx_ok
 
-     ; sprite_ptr/mask_ptr (x0 variant)
+      ; sprite_ptr/mask_ptr (unshifted 8x32 inside 16x32)
+      ; Choose based on portal kind + orientation.
+      ; Note: our source CSVs are the "(Right)" wall variant, so:
+      ; - *_r_* = right-wall portal art (tile id 5)
+      ; - *_l_* = left-wall portal art, generated by flip_x
+      ;
+      ; Flipped inputs synthesize x0..x3 shifts; x3 corresponds to the
+      ; unshifted variant when flip_x is enabled.
+      ; When the portal pixels live in the *right* half of the 16px sprite, we
+      ; start 16 bytes into each stripe.
      LDA temp
      BEQ spx_red
-     LDA #<portal_v_yel_r_x0
-     STA sprite_ptr
-     LDA #>portal_v_yel_r_x0
-     STA sprite_ptr+1
-     LDA #<portal_v_yel_r_x0_mask
-     STA mask_ptr
-     LDA #>portal_v_yel_r_x0_mask
-     STA mask_ptr+1
-     JMP spx_stamp
+
+      ; Yellow
+      LDA row_counter
+      BEQ spx_yel_leftwall
+      ; right wall: use authored right-wall sprite
+      LDA #<portal_v_yel_r_x0
+      STA sprite_ptr
+      LDA #>portal_v_yel_r_x0
+      STA sprite_ptr+1
+      LDA #<portal_v_yel_r_x0_mask
+      STA mask_ptr
+      LDA #>portal_v_yel_r_x0_mask
+      STA mask_ptr+1
+      JMP spx_stamp
+   .spx_yel_leftwall
+      ; left wall: use flipped sprite, unshifted = x3
+      LDA #<portal_v_yel_l_x3
+      STA sprite_ptr
+      LDA #>portal_v_yel_l_x3
+      STA sprite_ptr+1
+      LDA #<portal_v_yel_l_x3_mask
+      STA mask_ptr
+      LDA #>portal_v_yel_l_x3_mask
+      STA mask_ptr+1
+
+      ; Offset into right half (columns 2+3) of each 16x32 stripe.
+      LDA sprite_ptr
+      CLC
+      ADC #16
+      STA sprite_ptr
+      BCC spx_yel_ptr_ok
+      INC sprite_ptr+1
+   .spx_yel_ptr_ok
+      LDA mask_ptr
+      CLC
+      ADC #16
+      STA mask_ptr
+      BCC spx_yel_mask_ok
+      INC mask_ptr+1
+   .spx_yel_mask_ok
+      JMP spx_stamp
+
   .spx_red
-     LDA #<portal_v_red_r_x0
-     STA sprite_ptr
-     LDA #>portal_v_red_r_x0
-     STA sprite_ptr+1
-     LDA #<portal_v_red_r_x0_mask
-     STA mask_ptr
-     LDA #>portal_v_red_r_x0_mask
-     STA mask_ptr+1
+      ; Red
+      LDA row_counter
+      BEQ spx_red_leftwall
+      ; right wall: use authored right-wall sprite
+      LDA #<portal_v_red_r_x0
+      STA sprite_ptr
+      LDA #>portal_v_red_r_x0
+      STA sprite_ptr+1
+      LDA #<portal_v_red_r_x0_mask
+      STA mask_ptr
+      LDA #>portal_v_red_r_x0_mask
+      STA mask_ptr+1
+      JMP spx_stamp
+   .spx_red_leftwall
+      ; left wall: use flipped sprite, unshifted = x3
+      LDA #<portal_v_red_l_x3
+      STA sprite_ptr
+      LDA #>portal_v_red_l_x3
+      STA sprite_ptr+1
+      LDA #<portal_v_red_l_x3_mask
+      STA mask_ptr
+      LDA #>portal_v_red_l_x3_mask
+      STA mask_ptr+1
+
+      ; Offset into right half (columns 2+3) of each 16x32 stripe.
+      LDA sprite_ptr
+      CLC
+      ADC #16
+      STA sprite_ptr
+      BCC spx_red_ptr_ok
+      INC sprite_ptr+1
+   .spx_red_ptr_ok
+      LDA mask_ptr
+      CLC
+      ADC #16
+      STA mask_ptr
+      BCC spx_red_mask_ok
+      INC mask_ptr+1
+   .spx_red_mask_ok
 
   .spx_stamp
-     ; A=stripe_count, X=bytes_per_stripe, Y=stride
-     LDA #4
-     LDX #16
-     LDY #32
-     JSR stamp_striped_masked
-     RTS
+      ; A=stripe_count, X=bytes_per_stripe, Y=stride
+      LDA #4
+      LDX #16
+      LDY #32
+      JSR stamp_striped_masked
+      RTS
 
 
 ; Stamp portals that belong to current_room.
@@ -2512,6 +2630,8 @@ CHELL_JUMP_LEFT_BASE        = 36
      LDA portal_a_room
      CMP current_room
      BNE spcr_b
+     LDA portal_a_orient
+     STA row_counter
      LDA #0
      LDX portal_a_x
      LDY portal_a_y
@@ -2524,6 +2644,8 @@ CHELL_JUMP_LEFT_BASE        = 36
      LDA portal_b_room
      CMP current_room
      BNE spcr_done
+     LDA portal_b_orient
+     STA row_counter
      LDA #1
      LDX portal_b_x
      LDY portal_b_y
