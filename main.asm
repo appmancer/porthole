@@ -420,14 +420,36 @@ CHELL_JUMP_LEFT_BASE        = 36
         LDA #1
         STA reticle_active
 
-        JSR poll_reticle_keys
-        BCC reticle_no_dirty
-        LDA #1
-        STA reticle_dirty
- .reticle_no_dirty
-        ; While in reticle mode, gameplay time is frozen.
-        ; Chell does not step or fall; only the reticle updates.
-        JMP update_finish
+         JSR poll_reticle_keys
+         BCC reticle_no_dirty
+         LDA #1
+         STA reticle_dirty
+  .reticle_no_dirty
+
+         ; Portal placement (edge-triggered) while in reticle mode.
+         ; Only place when the reticle is currently valid (green).
+         LDA reticle_state
+         BEQ reticle_place_done
+
+         ; Prefer Portal A if both pressed.
+         LDA keys_pressed
+         AND #64
+         BEQ reticle_check_place_b
+         LDA #0
+         JSR place_portal_from_reticle
+         JMP reticle_place_done
+
+  .reticle_check_place_b
+         LDA keys_pressed
+         AND #&80
+         BEQ reticle_place_done
+         LDA #1
+         JSR place_portal_from_reticle
+
+  .reticle_place_done
+         ; While in reticle mode, gameplay time is frozen.
+         ; Chell does not step or fall; only the reticle updates.
+         JMP update_finish
 
 .update_normal_mode
        ; If we just released SHIFT, deactivate reticle and mark it dirty so render
@@ -1981,13 +2003,15 @@ CHELL_JUMP_LEFT_BASE        = 36
  
 ; --- Input sampling ---
 ;
- ; keys_held bits (this repo conventions):
- ;   bit0: left        (Z or cursor left)
- ;   bit1: right       (X or cursor right)
- ;   bit2: jump        (RETURN)
- ;   bit3: reticle     (SHIFT held)
- ;   bit4: reticle up  (':' / cursor up)
- ;   bit5: reticle down('/' / cursor down)
+  ; keys_held bits (this repo conventions):
+  ;   bit0: left        (Z or cursor left)
+  ;   bit1: right       (X or cursor right)
+  ;   bit2: jump        (RETURN)
+  ;   bit3: reticle     (SHIFT held)
+  ;   bit4: reticle up  (':' / cursor up)
+  ;   bit5: reticle down('/' / cursor down)
+  ;   bit6: portal A    ('A')
+  ;   bit7: portal B    ('S')
 ;
 ; Sample keyboard once this frame and build:
 ;   keys_held    = held bits
@@ -2060,11 +2084,11 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA keys_held
  .sample_no_reticle_up
 
-     ; Reticle down ('/' or cursor down)
-     ; '/' = INKEY(-105)
-     LDX #&97
-     JSR is_key_pressed
-     BCS sample_set_reticle_down
+      ; Reticle down ('/' or cursor down)
+      ; '/' = INKEY(-105)
+      LDX #&97
+      JSR is_key_pressed
+      BCS sample_set_reticle_down
 
      ; cursor down = 139 => INKEY(-117)
      LDX #&8B
@@ -2072,11 +2096,29 @@ CHELL_JUMP_LEFT_BASE        = 36
      BCC sample_no_reticle_down
  .sample_set_reticle_down
      LDA keys_held
-     ORA #32
-     STA keys_held
- .sample_no_reticle_down
- 
-     ; keys_pressed = keys_held & ~keys_prev
+      ORA #32
+      STA keys_held
+  .sample_no_reticle_down
+
+      ; Portal A ('A')
+      LDX #&BE            ; INKEY(-66) = 'A'
+      JSR is_key_pressed
+      BCC sample_no_portal_a
+      LDA keys_held
+      ORA #64
+      STA keys_held
+  .sample_no_portal_a
+
+      ; Portal B ('S')
+      LDX #&AE            ; INKEY(-82) = 'S'
+      JSR is_key_pressed
+      BCC sample_no_portal_b
+      LDA keys_held
+      ORA #&80
+      STA keys_held
+  .sample_no_portal_b
+  
+      ; keys_pressed = keys_held & ~keys_prev
 
 
     LDA keys_prev
@@ -2146,6 +2188,65 @@ CHELL_JUMP_LEFT_BASE        = 36
      RTS
  .key_not_pressed
      CLC
+     RTS
+
+
+; Place a portal by updating the current room's static-object entry.
+; This is a first-pass implementation: we restamp the whole room by setting
+; room_dirty.
+;
+; Input:
+; - A = 0 for Portal A (red)
+; - A = 1 for Portal B (yellow)
+;
+.place_portal_from_reticle
+     PHA
+
+     ; temp_sprite_ptr := per-room object table pointer
+     LDA current_room
+     ASL A
+     TAX
+     LDA static_objects_room_pointers,X
+     STA temp_sprite_ptr
+     LDA static_objects_room_pointers+1,X
+     STA temp_sprite_ptr+1
+
+     ; Select entry 0 (A) or entry 1 (B).
+     PLA
+     BEQ ppr_have_entry
+     LDA temp_sprite_ptr
+     CLC
+     ADC #10              ; STATIC_OBJ_ENTRY_SIZE
+     STA temp_sprite_ptr
+     BCC ppr_have_entry
+     INC temp_sprite_ptr+1
+   .ppr_have_entry
+
+     ; x
+     LDY #0
+     LDA reticle_cell_x
+     STA (temp_sprite_ptr),Y
+
+     ; y (clamp away from final row so 2-cell-tall stamps don't overflow)
+     INY
+     LDA reticle_cell_y
+     CMP #15
+     BNE ppr_y_ok
+     LDA #14
+   .ppr_y_ok
+     STA (temp_sprite_ptr),Y
+
+     ; Ensure enabled (flags bit7)
+     LDY #5
+     LDA (temp_sprite_ptr),Y
+     ORA #&80
+     STA (temp_sprite_ptr),Y
+
+     ; Force a full restamp next render.
+     LDA #1
+     STA room_dirty
+     STA chell_dirty
+     STA reticle_dirty
      RTS
 
 ; Return C=1 if SHIFT key is held.
