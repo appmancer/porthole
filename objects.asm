@@ -34,13 +34,13 @@ STATIC_OBJ_FLAG_ENABLED = &80
     EQUW portal_v_red_r_x0
     EQUW portal_v_red_r_x0_mask
 
-    ; Portal B (TEMP: uses red sprite)
+    ; Yellow portal V (right)
   .room0_portal_yel_x
     EQUB 2,2,4,16,32
 .room0_obj1_flags
     EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
-    EQUW portal_v_red_r_x0
-    EQUW portal_v_red_r_x0_mask
+    EQUW portal_v_yel_r_x0
+    EQUW portal_v_yel_r_x0_mask
 
     ; End
     EQUB 0,0,0
@@ -56,13 +56,13 @@ STATIC_OBJ_FLAG_ENABLED = &80
     EQUW portal_v_red_r_x0
     EQUW portal_v_red_r_x0_mask
 
-    ; Portal B (TEMP: uses red sprite)
+    ; Yellow portal V (right)
   .room1_portal_yel_x
     EQUB 2,2,4,16,32
   .room1_obj1_flags
     EQUB STATIC_OBJ_FLAG_MASKED + STATIC_OBJ_FLAG_ENABLED
-    EQUW portal_v_red_r_x0
-    EQUW portal_v_red_r_x0_mask
+    EQUW portal_v_yel_r_x0
+    EQUW portal_v_yel_r_x0_mask
 
     ; End
     EQUB 0,0,0
