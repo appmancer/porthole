@@ -3484,14 +3484,16 @@ CHELL_JUMP_LEFT_BASE        = 36
       BNE apu_erase_fc_have_y
       DEY
   .apu_erase_fc_have_y
-      TYA
+      ; Preserve adjusted Y across redraw_tile_xy (it clobbers Y).
+      STY temp_y
+      LDA temp_y
       JSR redraw_tile_xy
 
       LDX portal_old_x
       CPX #15
       BEQ apu_stamp_new
       INX
-      TYA
+      LDA temp_y
       JSR redraw_tile_xy
 
   .apu_stamp_new
