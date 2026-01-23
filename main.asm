@@ -368,13 +368,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 
         JSR update_screen_ptr_from_reticle
 
-        ; Back-wall portal reticle is centred on the 2x2 join point, which is
-        ; 8px below the tile row top.
-        LDA reticle_debug_reason
-        AND #&7F
-        CMP #4
-        BNE render_reticle_pos_ok
-        INC screen_ptr+1
+        ; Reticle is drawn tile-aligned to the 16px portal grid.
  .render_reticle_pos_ok
         JSR save_reticle_under
         JSR draw_reticle_current
@@ -2224,7 +2218,21 @@ CHELL_JUMP_LEFT_BASE        = 36
 
      ; x
      LDY #0
+     ; Wall portal can snap to either the left or right 8px column within the
+     ; 16px reticle span. reticle_debug_reason distinguishes:
+     ;   2 = left column match
+     ;   3 = right column match
+     LDA reticle_debug_reason
+     AND #&7F
+     CMP #3
+     BNE ppr_x_left
      LDA reticle_cell_x
+     CLC
+     ADC #1
+     JMP ppr_x_store
+   .ppr_x_left
+     LDA reticle_cell_x
+   .ppr_x_store
      STA (temp_sprite_ptr),Y
 
      ; y (clamp away from final row so 2-cell-tall stamps don't overflow)
