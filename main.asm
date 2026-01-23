@@ -96,17 +96,26 @@ ORG &70
  .portal_old_room     SKIP 1
  .portal_old_enabled  SKIP 1    ; 0/1: whether old portal was enabled
 
- ; Portal instances (global per level)
- .portal_a_enabled    SKIP 1
- .portal_a_room       SKIP 1
- .portal_a_x          SKIP 1
- .portal_a_y          SKIP 1
- .portal_a_orient     SKIP 1    ; 0=wall_left, 1=wall_right
- .portal_b_enabled    SKIP 1
- .portal_b_room       SKIP 1
- .portal_b_x          SKIP 1
- .portal_b_y          SKIP 1
- .portal_b_orient     SKIP 1    ; 0=wall_left, 1=wall_right
+  ; Portal instances (global per level)
+  .portal_a_enabled    SKIP 1
+  .portal_a_room       SKIP 1
+  .portal_a_x          SKIP 1
+  .portal_a_y          SKIP 1
+  .portal_a_orient     SKIP 1    ; 0=wall_left, 1=wall_right
+  .portal_b_enabled    SKIP 1
+  .portal_b_room       SKIP 1
+  .portal_b_x          SKIP 1
+  .portal_b_y          SKIP 1
+  .portal_b_orient     SKIP 1    ; 0=wall_left, 1=wall_right
+
+  ; Portal teleportation (MVP wiring)
+  .teleport_pending    SKIP 1    ; 0/1: overlap+intent detected; pending teleport
+  .teleport_entry_kind SKIP 1    ; 0=A (red), 1=B (yellow)
+  .teleport_cooldown   SKIP 1    ; frames remaining before portal can re-trigger
+  .teleport_exit_room  SKIP 1
+  .teleport_exit_x     SKIP 1
+  .teleport_exit_y     SKIP 1
+  .teleport_exit_orient SKIP 1
 
  ; --- Reticle LOS scratch ---
 ; All values are in pixels unless noted.
@@ -151,6 +160,13 @@ TERMINAL_VELOCITY_DOWN      = 1      ; max falling speed (8px steps)
 JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
 RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
 FALL_STEP_PERIOD            = 2      ; move down 1 stripe every N frames
+
+PORTAL_EXIT_NUDGE           = 2
+PORTAL_COOLDOWN_FRAMES      = 8
+
+; Approx visible bounds (used for portal exit placement).
+; When facing right, Chell's visible "nose" is around x+10 (see will_collide_right).
+CHELL_NOSE_X_RIGHT          = 10
 
 CHELL_RUN_LEFT_BASE         = 12
 CHELL_IDLE_RIGHT_BASE       = 24
@@ -276,6 +292,14 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA portal_b_x
      STA portal_b_y
      STA portal_b_orient
+
+     STA teleport_pending
+     STA teleport_entry_kind
+     STA teleport_cooldown
+     STA teleport_exit_room
+     STA teleport_exit_x
+     STA teleport_exit_y
+     STA teleport_exit_orient
 
     ; Default: face right.
     LDA #1
@@ -532,8 +556,15 @@ CHELL_JUMP_LEFT_BASE        = 36
        STA chell_dirty
 
   .update_finish
-        ; Room exits (screen transitions).
-        JSR check_room_exits
+        ; Portal entry detection (overlap + intent only; no teleport yet).
+        JSR check_portal_entry_intent
+
+        ; If a portal entry was detected, perform the teleport now.
+        ; (We can later split this into pending + consume phases.)
+        JSR maybe_teleport
+
+         ; Room exits (screen transitions).
+         JSR check_room_exits
 
         ; While in reticle mode we ignore aim-based redraws.
         LDA reticle_active
@@ -597,7 +628,437 @@ CHELL_JUMP_LEFT_BASE        = 36
         LDA #1
         STA dirty_flag
 
- .df_done
+  .df_done
+         RTS
+
+
+; Detect Chell walking into a portal.
+;
+; Rule (wall portals only for now): trigger when Chell overlaps the portal rect
+; (8x32) and is moving into the face (left portal => moving left, right portal
+; => moving right). We also require the *other* portal to be enabled so the
+; eventual teleport has a destination.
+;
+; Output:
+; - teleport_pending=1
+; - teleport_entry_kind=0/1
+;
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
+.check_portal_entry_intent
+        ; Don't re-trigger until the pending teleport is consumed.
+        LDA teleport_pending
+        BNE cpei_done
+
+        ; Post-teleport cooldown.
+        LDA teleport_cooldown
+        BEQ cpei_cd_done
+        DEC teleport_cooldown
+        JMP cpei_done
+.cpei_cd_done
+
+        ; Only consider entry when the player is actively pushing left/right.
+        LDA move_held
+        BEQ cpei_done
+
+        ; Cache Chell rect (approx).
+        ; We bias the leading edge to better match what you see on screen:
+        ; - moving right: use the "nose" point used by will_collide_right (x+10)
+        ; - moving left: inset slightly to match will_collide_left (x+3)
+        JSR calc_char_x
+        STA screen_ptr        ; chell_left_x (raw)
+        STA temp              ; chell_left_x (effective)
+
+        LDA anim_dir
+        BEQ cpei_x_left
+        ; Right: chell_right_x = left + 10
+        LDA screen_ptr
+        CLC
+        ADC #10
+        STA temp_y
+        JMP cpei_x_done
+
+.cpei_x_left
+        ; Left: chell_left_x = left + 3, chell_right_x = left + 15
+        LDA screen_ptr
+        CLC
+        ADC #3
+        STA temp
+        LDA screen_ptr
+        CLC
+        ADC #15
+        STA temp_y
+
+.cpei_x_done
+
+        JSR calc_char_y
+        STA row_counter       ; chell_top_y
+        CLC
+        ADC #31
+        STA col_counter       ; chell_bottom_y
+
+        ; Prefer portal A if both overlap (shouldn't happen with non-overlap rule).
+        JSR cpei_try_portal_a
+        BCS cpei_done
+        JSR cpei_try_portal_b
+
+.cpei_done
+        RTS
+
+
+; If teleport_pending is set, teleport Chell to the other portal.
+; Wall portals only (0=left wall, 1=right wall).
+;
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr
+.maybe_teleport
+        LDA teleport_pending
+        BNE mt_go
+        RTS
+
+.mt_go
+        ; Determine exit portal kind (other portal).
+        LDA teleport_entry_kind
+        EOR #1
+        STA temp                ; exit_kind (0=A,1=B)
+
+        ; Load exit portal into (row_counter=orient, X=tile_x, Y=tile_y, temp_y=room).
+        LDA temp
+        BEQ mt_exit_a
+        ; Exit B
+        LDA portal_b_enabled
+        BNE mt_b_enabled
+        JMP mt_clear
+.mt_b_enabled
+        LDA portal_b_room
+        STA temp_y
+        LDX portal_b_x
+        LDY portal_b_y
+        LDA portal_b_orient
+        STA row_counter
+        JMP mt_have_exit
+
+.mt_exit_a
+        LDA portal_a_enabled
+        BNE mt_a_enabled
+        JMP mt_clear
+.mt_a_enabled
+        LDA portal_a_room
+        STA temp_y
+        LDX portal_a_x
+        LDY portal_a_y
+        LDA portal_a_orient
+        STA row_counter
+
+.mt_have_exit
+        ; Preserve exit portal coords/orient across room-switch work (JSRs clobber X/Y).
+        LDA temp_y
+        STA teleport_exit_room
+        STX teleport_exit_x
+        STY teleport_exit_y
+        LDA row_counter
+        STA teleport_exit_orient
+
+        ; If exit is in a different room, switch now.
+        LDA teleport_exit_room
+        CMP current_room
+        BEQ mt_room_ok
+
+        LDA teleport_exit_room
+        STA current_room
+        JSR set_room_tilemap
+        JSR set_room_portalmap
+        JSR build_material_planes_from_tilemap
+
+        ; Force full redraw on next render.
+        LDA #1
+        STA room_dirty
+        STA chell_dirty
+        ; Cancel reticle.
+        LDA #0
+        STA reticle_active
+        STA reticle_prev_active
+        STA reticle_has_under
+        STA chell_has_under
+
+.mt_room_ok
+        ; Restore exit portal coords/orient (room switch clobbers X/Y/etc).
+        LDX teleport_exit_x
+        LDY teleport_exit_y
+        LDA teleport_exit_orient
+        STA row_counter
+
+        ; Compute portal rect in pixels.
+        ; portal_top_y = tile_y*16
+        TYA
+        ASL A
+        ASL A
+        ASL A
+        ASL A
+        STA col_counter          ; portal_top_y
+
+        ; portal_left_x = tile_x*8 (+8 if left-wall portal art lives in right half)
+        TXA
+        ASL A
+        ASL A
+        ASL A
+        STA screen_ptr           ; portal_left_x base
+        LDA row_counter
+        BEQ mt_leftwall
+        JMP mt_portal_x_ok
+.mt_leftwall
+        LDA screen_ptr
+        CLC
+        ADC #8
+        STA screen_ptr
+
+.mt_portal_x_ok
+        ; Compute new Chell top-left x from exit orientation.
+        LDA row_counter
+        BEQ mt_exit_to_right
+        ; right wall => exit to left: x = portal_left_x - 16 - nudge
+        LDA screen_ptr
+        SEC
+        SBC #(16+PORTAL_EXIT_NUDGE)
+        BCS mt_x_store
+        LDA #0
+        JMP mt_x_store
+
+.mt_exit_to_right
+        ; left wall => exit to right.
+        ; Place Chell so her visible "nose" (x+CHELL_NOSE_X_RIGHT) sits just
+        ; outside the portal's right edge.
+        ; new_x = (portal_left_x+7+PORTAL_EXIT_NUDGE) - CHELL_NOSE_X_RIGHT
+        LDA screen_ptr
+        CLC
+        ADC #(7+PORTAL_EXIT_NUDGE)
+        SEC
+        SBC #CHELL_NOSE_X_RIGHT
+        CMP #128
+        BCC mt_x_store
+        LDA #127
+
+.mt_x_store
+        STA temp                 ; new_x
+
+        ; new_y = portal_top_y
+        LDA col_counter
+        STA temp_y               ; new_y
+
+        ; Write Chell position from pixel coords.
+        ; Y
+        LDA temp_y
+        AND #&F0
+        STA char_tile_pos
+        LDA temp_y
+        AND #&0F
+        STA char_y_offset
+
+        ; X
+        LDA temp
+        LSR A
+        LSR A
+        LSR A
+        ORA char_tile_pos
+        STA char_tile_pos
+
+        LDA temp
+        AND #7
+        CMP #4
+        BCC mt_sub_lo
+        ; sub 4..7
+        SEC
+        SBC #4
+        STA char_pixel_offset
+        LDA #8
+        STA char_byte_offset
+        JMP mt_x_done
+.mt_sub_lo
+        STA char_pixel_offset
+        LDA #0
+        STA char_byte_offset
+.mt_x_done
+
+        ; Facing away from the wall.
+        ; left wall (0) => face right (1), right wall (1) => face left (0)
+        LDA row_counter
+        EOR #1
+        STA anim_dir
+        STA last_anim_dir
+
+        ; Clear grounded state; preserve vertical velocity for now.
+        LDA #0
+        STA char_grounded
+
+        ; Avoid immediate re-trigger / edge effects.
+        LDA #0
+        STA move_held
+        STA last_move_held
+        LDA #PORTAL_COOLDOWN_FRAMES
+        STA teleport_cooldown
+        LDA #8
+        STA exit_cooldown
+
+        ; Mark for redraw.
+        LDA #1
+        STA chell_dirty
+
+.mt_clear
+        LDA #0
+        STA teleport_pending
+        RTS
+
+
+; Try portal A. SEC => pending set.
+.cpei_try_portal_a
+        LDA portal_a_enabled
+        BEQ cpei_a_no
+        LDA portal_b_enabled
+        BEQ cpei_a_no
+        LDA portal_a_room
+        CMP current_room
+        BNE cpei_a_no
+
+        ; Orientation must match push direction.
+        ; 0=left wall => must be pushing left (anim_dir=0)
+        ; 1=right wall => must be pushing right (anim_dir=1)
+        LDA portal_a_orient
+        CMP anim_dir
+        BNE cpei_a_no
+
+        ; Overlap test against portal rect.
+        LDX portal_a_x
+        ; Left-wall portals are drawn in the right half of the 16px stamp.
+        LDA portal_a_orient
+        BNE cpei_a_x_ok
+        CPX #15
+        BEQ cpei_a_x_ok
+        INX
+.cpei_a_x_ok
+        LDY portal_a_y
+        JSR cpei_overlap_tile_xy_8x32
+        BCC cpei_a_no
+
+        LDA #1
+        STA teleport_pending
+        LDA #0
+        STA teleport_entry_kind
+        SEC
+        RTS
+
+.cpei_a_no
+        CLC
+        RTS
+
+
+; Try portal B. SEC => pending set.
+.cpei_try_portal_b
+        LDA portal_b_enabled
+        BEQ cpei_b_no
+        LDA portal_a_enabled
+        BEQ cpei_b_no
+        LDA portal_b_room
+        CMP current_room
+        BNE cpei_b_no
+
+        ; Orientation must match push direction.
+        LDA portal_b_orient
+        CMP anim_dir
+        BNE cpei_b_no
+
+        ; Overlap test against portal rect.
+        LDX portal_b_x
+        ; Left-wall portals are drawn in the right half of the 16px stamp.
+        LDA portal_b_orient
+        BNE cpei_b_x_ok
+        CPX #15
+        BEQ cpei_b_x_ok
+        INX
+.cpei_b_x_ok
+        LDY portal_b_y
+        JSR cpei_overlap_tile_xy_8x32
+        BCC cpei_b_no
+
+        LDA #1
+        STA teleport_pending
+        LDA #1
+        STA teleport_entry_kind
+        SEC
+        RTS
+
+.cpei_b_no
+        CLC
+        RTS
+
+
+; Overlap test: Chell rect (temp..temp_y, row_counter..col_counter)
+; vs portal tile rect at (X=tile_x,Y=tile_y) sized 8x32 pixels.
+;
+; Returns: C=1 if overlap, C=0 otherwise.
+; Clobbers: A
+.cpei_overlap_tile_xy_8x32
+        ; portal_left_x = tile_x*8
+        TXA
+        ASL A
+        ASL A
+        ASL A
+
+        ; stash portal_left_x
+        STA screen_ptr
+
+        ; If chell_right_x < portal_left_x => no overlap
+        LDA temp_y
+        CMP screen_ptr
+        BCS cpei_x_ok0         ; chell_right_x >= portal_left_x
+        ; chell_right_x < portal_left_x
+        CLC
+        RTS
+.cpei_x_ok0
+
+        ; portal_right_x = portal_left_x + 7
+        LDA screen_ptr
+        CLC
+        ADC #7
+        ; If chell_left_x > portal_right_x => no overlap
+        CMP temp
+        BEQ cpei_x_ok1
+        BCS cpei_x_ok1         ; portal_right_x >= chell_left_x
+        ; portal_right_x < chell_left_x
+        CLC
+        RTS
+.cpei_x_ok1
+
+        ; portal_top_y = tile_y*16
+        TYA
+        ASL A
+        ASL A
+        ASL A
+        ASL A
+
+        ; stash portal_top_y
+        STA screen_ptr+1
+
+        ; If chell_bottom_y < portal_top_y => no overlap
+        LDA col_counter
+        CMP screen_ptr+1
+        BCS cpei_y_ok0         ; chell_bottom_y >= portal_top_y
+        ; chell_bottom_y < portal_top_y
+        CLC
+        RTS
+.cpei_y_ok0
+
+        ; portal_bottom_y = portal_top_y + 31
+        LDA screen_ptr+1
+        CLC
+        ADC #31
+        ; If chell_top_y > portal_bottom_y => no overlap
+        CMP row_counter
+        BEQ cpei_y_ok1
+        BCS cpei_y_ok1         ; portal_bottom_y >= chell_top_y
+        ; portal_bottom_y < chell_top_y
+        CLC
+        RTS
+.cpei_y_ok1
+
+        SEC
         RTS
 
 
