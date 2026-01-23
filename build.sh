@@ -54,7 +54,11 @@ rm -f "${OUT_SSD}"
   --spec "portal_v_red_r:sprites/Portal V - Red (Right).csv" \
   --spec "portal_v_red_l^:sprites/Portal V - Red (Right).csv" \
   --spec "portal_v_yel_r:sprites/Portal V - Yellow (Right).csv" \
-  --spec "portal_v_yel_l^:sprites/Portal V - Yellow (Right).csv"
+  --spec "portal_v_yel_l^:sprites/Portal V - Yellow (Right).csv" \
+  --spec "portal_h_red_floor:sprites/Portal H - Red (Floor).csv" \
+  --spec "portal_h_red_ceil:sprites/Portal H - Red (Ceil).csv" \
+  --spec "portal_h_yel_floor:sprites/Portal H - Yellow (Floor).csv" \
+  --spec "portal_h_yel_ceil:sprites/Portal H - Yellow (Ceil).csv"
 
 ./tools/gen-tiles \
   --in "sprites/NewTiles - Grid.csv" \
