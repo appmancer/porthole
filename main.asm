@@ -37,13 +37,23 @@ ORG &70
 .action_held        SKIP 1
 .action_prev        SKIP 1
 .action_pressed     SKIP 1
+
+  ; Portal placement requests.
+  ; - Set on A/S key-down (edge).
+  ; - If reticle is not green that frame, it stays set until either:
+  ;   - placement succeeds, or
+  ;   - reticle is moved (or reticle mode is exited).
+  ; bit0 = A, bit1 = B
+  .portal_req        SKIP 1
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 
-.temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
-.chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
-.saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
-.chelldata_fh       SKIP 1    ; File handle for CHDATA
+ .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
+ .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
+ .obj_bank           SKIP 1    ; ROMSEL value for Object SWRAM bank
+  .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
+ .chelldata_fh       SKIP 1    ; File handle for CHDATA
+ .objdata_fh        SKIP 1    ; File handle for OBJDAT
  .anim_frame              SKIP 1    ; Animation frame (0..3)
  .anim_dir                SKIP 1    ; Direction (0=left,1=right)
  .last_anim_dir           SKIP 1    ; Previous direction for redraw
@@ -156,6 +166,9 @@ ROMSEL    = &FE30          ; Master paged ROM/SWRAM bank select
 CHELL_SWRAM_BANK_DEFAULT = 4
 CHELLDATA_BUF         = &7B00  ; Temp buffer in screen scratch
 
+; Object (portal stamp) sprite+mask data lives in sideways RAM.
+OBJ_SWRAM_BANK_DEFAULT = 5
+
 ; Render list storage lives in screen scratch so it survives MOS calls.
 RENDER_LIST_BASE      = &78C0
 RENDER_COUNT          = RENDER_LIST_BASE + 0
@@ -163,6 +176,11 @@ RENDER_IDS            = RENDER_LIST_BASE + 1   ; 2 bytes
 RENDER_FLAGS          = RENDER_LIST_BASE + 3   ; 2 bytes
 RENDER_NEW_PTR_LO     = RENDER_LIST_BASE + 5   ; 2 bytes
 RENDER_NEW_PTR_HI     = RENDER_LIST_BASE + 7   ; 2 bytes
+
+; Scratch state stored in the "below playfield" screen RAM.
+; This avoids using MOS workspace zero-page addresses (e.g. &A0..) that file I/O can clobber.
+PORTAL_REQ_SNAP_POS   = &7FF0   ; (x<<4)|y
+PORTAL_REQ_SNAP_ORIENT= &7FF1
 
 GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
 GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
@@ -238,9 +256,13 @@ CHELL_JUMP_LEFT_BASE        = 36
     JSR set_room_tilemap
     JSR set_room_portalmap
 
-    ; Load Chell sprite+mask data into sideways RAM.
-    ; (Do this before enabling shadow screen so OS file I/O stays simple.)
-    JSR load_chell_sprites
+     ; Load Chell sprite+mask data into sideways RAM.
+     ; (Do this before enabling shadow screen so OS file I/O stays simple.)
+     JSR load_chell_sprites
+
+      ; Load portal stamp sprites+masks into sideways RAM.
+      ; Must happen before shadow screen is enabled (OS file I/O stays simpler).
+      JSR load_obj_sprites
 
     ; Filing-system calls may clobber ZP, so restore our room pointers.
     JSR set_room_tilemap
@@ -275,7 +297,8 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA keys_prev
     STA action_held
     STA action_prev
-    STA action_pressed
+     STA action_pressed
+     STA portal_req
     STA anim_frame
     STA move_held
     STA last_move_held
@@ -506,7 +529,7 @@ CHELL_JUMP_LEFT_BASE        = 36
 ; --- Update pipeline ---
 ; Updates Chell state from input and physics.
 ; Sets dirty_flag if redraw is needed.
-  .update_chell
+.update_chell
        ; Reset per-object dirty flags.
        LDA #0
        STA chell_dirty
@@ -538,38 +561,106 @@ CHELL_JUMP_LEFT_BASE        = 36
          STA reticle_dirty
   .reticle_no_dirty
 
-         ; Portal placement (edge-triggered) while in reticle mode.
-         ; Only place when the reticle is currently valid (green).
-         LDA reticle_state
-         BEQ reticle_place_done
+          ; Portal placement request handling.
+          ; We latch A/S key-down into portal_req and allow placement on a later
+          ; green frame. To avoid "delayed shot at a new target" we snapshot the
+          ; current target on the press frame (portal_req bit7 marks snapshot-pending)
+          ; and cancel the request if the target changes afterward.
 
-         ; Prefer Portal A if both pressed.
-         LDA keys_pressed
-         AND #64
-         BEQ reticle_check_place_b
-         LDA #0
-         JSR place_portal_from_reticle
-         JMP reticle_place_done
+          LDA portal_req
+          BEQ reticle_req_ok
 
-  .reticle_check_place_b
-         LDA keys_pressed
-         AND #&80
-         BEQ reticle_place_done
-         LDA #1
-         JSR place_portal_from_reticle
+          ; temp = (reticle_cell_x<<4) | reticle_cell_y
+          LDA reticle_cell_x
+          ASL A
+          ASL A
+          ASL A
+          ASL A
+          ORA reticle_cell_y
+          STA temp
 
-  .reticle_place_done
+          ; Snapshot target if requested (bit7).
+          LDA portal_req
+          AND #&80
+          BEQ reticle_req_no_snap
+
+          LDA temp
+          STA PORTAL_REQ_SNAP_POS
+          LDA reticle_wall_orient
+          STA PORTAL_REQ_SNAP_ORIENT
+
+          ; Clear snapshot-pending flag.
+          LDA portal_req
+          AND #&7F
+          STA portal_req
+
+  .reticle_req_no_snap
+
+          ; If the target changed after the request was made, cancel it.
+          LDA portal_req
+          AND #3
+          BEQ reticle_req_ok
+
+          LDA temp
+          CMP PORTAL_REQ_SNAP_POS
+          BNE reticle_cancel_req
+          LDA reticle_wall_orient
+          CMP PORTAL_REQ_SNAP_ORIENT
+          BEQ reticle_req_ok
+
+  .reticle_cancel_req
+          LDA #0
+          STA portal_req
+
+  .reticle_req_ok
+
+          ; Portal placement while in reticle mode.
+          ; Use portal_req (latched edge) so a one-frame reticle flicker doesn't
+          ; force you to re-press.
+          ; Only place when the reticle is currently valid (green).
+          LDA reticle_state
+          BEQ reticle_place_done
+
+          ; Prefer Portal A if both pressed.
+          LDA portal_req
+          AND #1
+          BEQ reticle_check_place_b
+          LDA #0
+          JSR place_portal_from_reticle
+          ; Consume request (requires key-up before next placement).
+          LDA portal_req
+          AND #&FE
+          STA portal_req
+          JMP reticle_place_done
+
+   .reticle_check_place_b
+          LDA portal_req
+          AND #2
+          BEQ reticle_place_done
+          LDA #1
+          JSR place_portal_from_reticle
+          ; Consume request.
+          LDA portal_req
+          AND #&FD
+          STA portal_req
+
+   .reticle_place_done
          ; While in reticle mode, gameplay time is frozen.
          ; Chell does not step or fall; only the reticle updates.
          JMP update_finish
 
-.update_normal_mode
-       ; If we just released SHIFT, deactivate reticle and mark it dirty so render
-       ; can restore its last rectangle.
-       LDA reticle_active
-       BEQ normal_mode_skip_hide
+ .update_normal_mode
+       ; Portal placement requests are only meaningful in reticle mode.
+       ; Clear them when not in reticle mode so taps can't leak into gameplay.
        LDA #0
-       STA reticle_active
+       STA portal_req
+
+        ; If we just released SHIFT, deactivate reticle and mark it dirty so render
+        ; can restore its last rectangle.
+        LDA reticle_active
+        BEQ normal_mode_skip_hide
+        LDA #0
+        STA reticle_active
 
        LDA reticle_prev_active
        BEQ normal_mode_skip_hide
@@ -592,6 +683,11 @@ CHELL_JUMP_LEFT_BASE        = 36
        STA chell_dirty
 
   .update_finish
+        ; While reticle mode is active, gameplay time is frozen.
+        ; Don't allow teleports or room transitions to advance.
+        LDA reticle_active
+        BNE update_finish_no_gameplay
+
         ; Portal entry detection (overlap + intent only; no teleport yet).
         JSR check_portal_entry_intent
 
@@ -599,8 +695,10 @@ CHELL_JUMP_LEFT_BASE        = 36
         ; (We can later split this into pending + consume phases.)
         JSR maybe_teleport
 
-         ; Room exits (screen transitions).
-         JSR check_room_exits
+        ; Room exits (screen transitions).
+        JSR check_room_exits
+
+ .update_finish_no_gameplay
 
         ; While in reticle mode we ignore aim-based redraws.
         LDA reticle_active
@@ -3252,7 +3350,7 @@ CHELL_JUMP_LEFT_BASE        = 36
      LDA keys_held
      STA keys_prev
 
-      ; --- Action button (SPACE) ---
+       ; --- Action button (SPACE) ---
       ; Keep separate from keys_held (we've run out of bits).
       LDA action_held
       STA action_prev
@@ -3267,13 +3365,43 @@ CHELL_JUMP_LEFT_BASE        = 36
       STA action_held
  .sample_no_action
 
-      ; action_pressed = action_held & ~action_prev
-      LDA action_prev
-      EOR #&FF
-      AND action_held
-      STA action_pressed
+       ; action_pressed = action_held & ~action_prev
+       LDA action_prev
+       EOR #&FF
+       AND action_held
+       STA action_pressed
 
-     ; --- Aim sampling ---
+      ; --- Portal placement requests (A/S) ---
+      ; We latch the A/S key-down edges into portal_req so if the reticle is
+      ; briefly not green on that exact frame, the placement still happens on the
+      ; next green frame.
+      ;
+      ; portal_req is consumed/cancelled in reticle mode.
+
+      ; If A just pressed, set request bit0.
+      LDA keys_pressed
+      AND #64
+      BEQ sample_no_portal_req_a
+      LDA portal_req
+      ORA #&81
+      STA portal_req
+  .sample_no_portal_req_a
+
+      ; If S just pressed, set request bit1.
+      LDA keys_pressed
+      AND #&80
+      BEQ sample_no_portal_req_b
+      LDA portal_req
+      ORA #&82
+      STA portal_req
+  .sample_no_portal_req_b
+
+      ; portal_req is sticky after a tap. It is cleared when:
+      ; - the portal is successfully placed (consumed),
+      ; - the reticle moves, or
+      ; - reticle mode is exited.
+
+      ; --- Aim sampling ---
      ; aim_held: 0=none, 1=up, 2=down
      ; While SHIFT is held (reticle mode), aim keys are repurposed.
      LDA #0
@@ -3654,12 +3782,21 @@ CHELL_JUMP_LEFT_BASE        = 36
       BNE apu_erase_fc_have_y
       DEY
   .apu_erase_fc_have_y
-      ; Preserve adjusted Y across redraw_tile_xy (it clobbers Y).
-      STY temp_y
-      LDA temp_y
-      JSR redraw_tile_xy
+       ; Preserve adjusted Y across redraw_tile_xy (it clobbers Y).
+       STY temp_y
+       ; Redraw both tiles in the 2x1 footprint.
+       LDX portal_old_x
+       LDA temp_y
+       JSR redraw_tile_xy
 
-      JMP apu_stamp_new
+       LDX portal_old_x
+       CPX #15
+       BEQ apu_stamp_new
+       INX
+       LDA temp_y
+       JSR redraw_tile_xy
+
+       JMP apu_stamp_new
 
   .apu_erase_back
       ; Back wall: 2x2 tiles at (x,y),(x+1,y),(x,y+1),(x+1,y+1)
@@ -3814,8 +3951,8 @@ CHELL_JUMP_LEFT_BASE        = 36
 ; - row_counter = orient (0=left wall, 1=right wall)
 ; Uses fixed stamp geometry: 8x32 (1 tile wide x 2 tiles tall).
   .stamp_portal_xy
-      ; Preserve kind.
-      STA temp
+       ; Preserve kind.
+       STA temp
 
      ; screen_ptr := &5800 + y*512 + x*16
      LDA #<(&5800)
@@ -3853,12 +3990,20 @@ CHELL_JUMP_LEFT_BASE        = 36
       ; start 16 bytes into each stripe.
       ; Floor/ceiling: 16x16 (2 stripes, 32 bytes/stripe).
       ; Back wall: 16x32 (4 stripes, 32 bytes/stripe).
-      LDA row_counter
-      CMP #PORTAL_ORIENT_BACK
-      BEQ spx_is_back
-      CMP #PORTAL_ORIENT_FLOOR
-      BCS spx_not_wall
-      JMP spx_is_wall
+      ;
+      ; Note: sprite+mask bytes live in object SWRAM; page it in for reads.
+      SEI
+      LDA ROMSEL
+      STA saved_romsel
+      LDA obj_bank
+      STA ROMSEL
+
+       LDA row_counter
+       CMP #PORTAL_ORIENT_BACK
+       BEQ spx_is_back
+       CMP #PORTAL_ORIENT_FLOOR
+       BCS spx_not_wall
+       JMP spx_is_wall
  .spx_not_wall
 
       LDA temp
@@ -3868,91 +4013,91 @@ CHELL_JUMP_LEFT_BASE        = 36
       LDA row_counter
       CMP #PORTAL_ORIENT_CEIL
       BEQ spx_fc_yel_ceil
-      ; floor
-      LDA #<portal_h_yel_floor_x0
-      STA sprite_ptr
-      LDA #>portal_h_yel_floor_x0
-      STA sprite_ptr+1
-      LDA #<portal_h_yel_floor_x0_mask
-      STA mask_ptr
-      LDA #>portal_h_yel_floor_x0_mask
-      STA mask_ptr+1
-      JMP spx_fc_stamp
- .spx_fc_yel_ceil
-      LDA #<portal_h_yel_ceil_x0
-      STA sprite_ptr
-      LDA #>portal_h_yel_ceil_x0
-      STA sprite_ptr+1
-      LDA #<portal_h_yel_ceil_x0_mask
-      STA mask_ptr
-      LDA #>portal_h_yel_ceil_x0_mask
-      STA mask_ptr+1
-      JMP spx_fc_stamp
+       ; floor
+        LDA #<portal_h_yel_floor_x0
+        STA sprite_ptr
+        LDA #>portal_h_yel_floor_x0
+        STA sprite_ptr+1
+        LDA #<portal_h_yel_floor_x0_mask
+        STA mask_ptr
+        LDA #>portal_h_yel_floor_x0_mask
+        STA mask_ptr+1
+       JMP spx_fc_stamp
+  .spx_fc_yel_ceil
+        LDA #<portal_h_yel_ceil_x0
+        STA sprite_ptr
+        LDA #>portal_h_yel_ceil_x0
+        STA sprite_ptr+1
+        LDA #<portal_h_yel_ceil_x0_mask
+        STA mask_ptr
+        LDA #>portal_h_yel_ceil_x0_mask
+        STA mask_ptr+1
+       JMP spx_fc_stamp
 
  .spx_fc_red
       LDA row_counter
       CMP #PORTAL_ORIENT_CEIL
       BEQ spx_fc_red_ceil
-      ; floor
-      LDA #<portal_h_red_floor_x0
-      STA sprite_ptr
-      LDA #>portal_h_red_floor_x0
-      STA sprite_ptr+1
-      LDA #<portal_h_red_floor_x0_mask
-      STA mask_ptr
-      LDA #>portal_h_red_floor_x0_mask
-      STA mask_ptr+1
-      JMP spx_fc_stamp
- .spx_fc_red_ceil
-      LDA #<portal_h_red_ceil_x0
-      STA sprite_ptr
-      LDA #>portal_h_red_ceil_x0
-      STA sprite_ptr+1
-      LDA #<portal_h_red_ceil_x0_mask
-      STA mask_ptr
-      LDA #>portal_h_red_ceil_x0_mask
-      STA mask_ptr+1
+       ; floor
+        LDA #<portal_h_red_floor_x0
+        STA sprite_ptr
+        LDA #>portal_h_red_floor_x0
+        STA sprite_ptr+1
+        LDA #<portal_h_red_floor_x0_mask
+        STA mask_ptr
+        LDA #>portal_h_red_floor_x0_mask
+        STA mask_ptr+1
+       JMP spx_fc_stamp
+  .spx_fc_red_ceil
+        LDA #<portal_h_red_ceil_x0
+        STA sprite_ptr
+        LDA #>portal_h_red_ceil_x0
+        STA sprite_ptr+1
+        LDA #<portal_h_red_ceil_x0_mask
+        STA mask_ptr
+        LDA #>portal_h_red_ceil_x0_mask
+        STA mask_ptr+1
 
- .spx_fc_stamp
-      ; A=stripe_count, X=bytes_per_stripe, Y=stride
-      LDA #2
-      LDX #32
-      LDY #32
-      JSR stamp_striped_masked
-      RTS
+  .spx_fc_stamp
+       ; A=stripe_count, X=bytes_per_stripe, Y=stride
+       LDA #2
+       LDX #32
+       LDY #32
+       JSR stamp_striped_masked
+       JMP spx_done
 
  .spx_is_back
       LDA temp
       BEQ spx_back_red
 
-      ; Yellow back wall
-      LDA #<portal_b_yel_x0
-      STA sprite_ptr
-      LDA #>portal_b_yel_x0
-      STA sprite_ptr+1
-      LDA #<portal_b_yel_x0_mask
-      STA mask_ptr
-      LDA #>portal_b_yel_x0_mask
-      STA mask_ptr+1
-      JMP spx_back_stamp
+       ; Yellow back wall
+        LDA #<portal_b_yel_x0
+        STA sprite_ptr
+        LDA #>portal_b_yel_x0
+        STA sprite_ptr+1
+        LDA #<portal_b_yel_x0_mask
+        STA mask_ptr
+        LDA #>portal_b_yel_x0_mask
+        STA mask_ptr+1
+       JMP spx_back_stamp
 
- .spx_back_red
-      LDA #<portal_b_red_x0
-      STA sprite_ptr
-      LDA #>portal_b_red_x0
-      STA sprite_ptr+1
-      LDA #<portal_b_red_x0_mask
-      STA mask_ptr
-      LDA #>portal_b_red_x0_mask
-      STA mask_ptr+1
+  .spx_back_red
+        LDA #<portal_b_red_x0
+        STA sprite_ptr
+        LDA #>portal_b_red_x0
+        STA sprite_ptr+1
+        LDA #<portal_b_red_x0_mask
+        STA mask_ptr
+        LDA #>portal_b_red_x0_mask
+        STA mask_ptr+1
 
- .spx_back_stamp
-      ; A=stripe_count, X=bytes_per_stripe, Y=stride
-      LDA #4
-      LDX #32
-      LDY #32
-      JSR stamp_striped_masked
-      RTS
+  .spx_back_stamp
+       ; A=stripe_count, X=bytes_per_stripe, Y=stride
+       LDA #4
+       LDX #32
+       LDY #32
+       JSR stamp_striped_masked
+       JMP spx_done
 
  .spx_is_wall
       LDA temp
@@ -3961,26 +4106,26 @@ CHELL_JUMP_LEFT_BASE        = 36
       ; Yellow
       LDA row_counter
       BEQ spx_yel_leftwall
-      ; right wall: use authored right-wall sprite
-      LDA #<portal_v_yel_r_x0
-      STA sprite_ptr
-      LDA #>portal_v_yel_r_x0
-      STA sprite_ptr+1
-      LDA #<portal_v_yel_r_x0_mask
-      STA mask_ptr
-      LDA #>portal_v_yel_r_x0_mask
-      STA mask_ptr+1
-      JMP spx_stamp
-   .spx_yel_leftwall
-      ; left wall: use flipped sprite, unshifted = x3
-      LDA #<portal_v_yel_l_x3
-      STA sprite_ptr
-      LDA #>portal_v_yel_l_x3
-      STA sprite_ptr+1
-      LDA #<portal_v_yel_l_x3_mask
-      STA mask_ptr
-      LDA #>portal_v_yel_l_x3_mask
-      STA mask_ptr+1
+       ; right wall: use authored right-wall sprite
+        LDA #<portal_v_yel_r_x0
+        STA sprite_ptr
+        LDA #>portal_v_yel_r_x0
+        STA sprite_ptr+1
+        LDA #<portal_v_yel_r_x0_mask
+        STA mask_ptr
+        LDA #>portal_v_yel_r_x0_mask
+        STA mask_ptr+1
+       JMP spx_stamp
+    .spx_yel_leftwall
+       ; left wall: use flipped sprite, unshifted = x3
+        LDA #<portal_v_yel_l_x3
+        STA sprite_ptr
+        LDA #>portal_v_yel_l_x3
+        STA sprite_ptr+1
+        LDA #<portal_v_yel_l_x3_mask
+        STA mask_ptr
+        LDA #>portal_v_yel_l_x3_mask
+        STA mask_ptr+1
 
       ; Offset into right half (columns 2+3) of each 16x32 stripe.
       LDA sprite_ptr
@@ -4003,26 +4148,26 @@ CHELL_JUMP_LEFT_BASE        = 36
       ; Red
       LDA row_counter
       BEQ spx_red_leftwall
-      ; right wall: use authored right-wall sprite
-      LDA #<portal_v_red_r_x0
-      STA sprite_ptr
-      LDA #>portal_v_red_r_x0
-      STA sprite_ptr+1
-      LDA #<portal_v_red_r_x0_mask
-      STA mask_ptr
-      LDA #>portal_v_red_r_x0_mask
-      STA mask_ptr+1
-      JMP spx_stamp
-   .spx_red_leftwall
-      ; left wall: use flipped sprite, unshifted = x3
-      LDA #<portal_v_red_l_x3
-      STA sprite_ptr
-      LDA #>portal_v_red_l_x3
-      STA sprite_ptr+1
-      LDA #<portal_v_red_l_x3_mask
-      STA mask_ptr
-      LDA #>portal_v_red_l_x3_mask
-      STA mask_ptr+1
+       ; right wall: use authored right-wall sprite
+        LDA #<portal_v_red_r_x0
+        STA sprite_ptr
+        LDA #>portal_v_red_r_x0
+        STA sprite_ptr+1
+        LDA #<portal_v_red_r_x0_mask
+        STA mask_ptr
+        LDA #>portal_v_red_r_x0_mask
+        STA mask_ptr+1
+       JMP spx_stamp
+    .spx_red_leftwall
+       ; left wall: use flipped sprite, unshifted = x3
+        LDA #<portal_v_red_l_x3
+        STA sprite_ptr
+        LDA #>portal_v_red_l_x3
+        STA sprite_ptr+1
+        LDA #<portal_v_red_l_x3_mask
+        STA mask_ptr
+        LDA #>portal_v_red_l_x3_mask
+        STA mask_ptr+1
 
       ; Offset into right half (columns 2+3) of each 16x32 stripe.
       LDA sprite_ptr
@@ -4041,11 +4186,18 @@ CHELL_JUMP_LEFT_BASE        = 36
    .spx_red_mask_ok
 
   .spx_stamp
-      ; A=stripe_count, X=bytes_per_stripe, Y=stride
-      LDA #4
-      LDX #16
-      LDY #32
-      JSR stamp_striped_masked
+       ; A=stripe_count, X=bytes_per_stripe, Y=stride
+       LDA #4
+       LDX #16
+       LDY #32
+       JSR stamp_striped_masked
+       JMP spx_done
+
+  .spx_done
+      ; Restore ROMSEL and re-enable IRQs.
+      LDA saved_romsel
+      STA ROMSEL
+      CLI
       RTS
 
 
@@ -4812,6 +4964,182 @@ CHELL_JUMP_LEFT_BASE        = 36
     JSR OSBYTE
     RTS
 
+; Load portal stamp sprites+masks into sideways RAM.
+;
+; We cannot safely `*LOAD` straight into `&8000` because filing system ROM code
+; also lives in the `&8000..&BFFF` paged ROM window.
+;
+; Instead we stream OBJDAT in 256-byte chunks into `CHELLDATA_BUF` and copy each
+; chunk into the target SWRAM bank.
+.load_obj_sprites
+    ; Keep the OS/language ROM visible across filing-system calls.
+    LDA ROMSEL
+    STA saved_romsel
+
+    ; Choose which ROMSEL value actually maps writable SWRAM in this environment.
+    ; (Real Master: bank number alone; B2 may require bit 7.)
+    JSR select_obj_romsel
+    BCC obj_bank_ok
+
+    LDX #<msg_no_swr
+    LDY #>msg_no_swr
+    JSR print_string_xy
+ .objdat_hang
+    JMP objdat_hang
+
+ .obj_bank_ok
+    ; Keep filing system ROM visible for OSFIND/OSGBPB.
+    LDA saved_romsel
+    STA ROMSEL
+
+    ; Open OBJDAT for input.
+    LDA #&40
+    LDX #<fname_objdat
+    LDY #>fname_objdat
+    JSR OSFIND
+    BNE objdat_open_ok
+    JMP objdat_open_fail
+ .objdat_open_ok
+    STA objdata_fh
+
+    ; dst := &8000 (in SWRAM bank)
+    LDA #&00
+    STA temp_mask_ptr
+    LDA #&80
+    STA temp_mask_ptr+1
+
+    ; Use OSGBPB to read 256 bytes per page.
+    LDA #&40
+    STA row_counter
+ .objdat_page_loop
+    ; Build OSGBPB control block.
+    LDA objdata_fh
+    STA gpb_block+0
+
+    LDA #<CHELLDATA_BUF
+    STA gpb_block+1
+    LDA #>CHELLDATA_BUF
+    STA gpb_block+2
+    LDA #0
+    STA gpb_block+3
+    STA gpb_block+4
+
+    ; 256 bytes
+    LDA #0
+    STA gpb_block+5
+    LDA #1
+    STA gpb_block+6
+    LDA #0
+    STA gpb_block+7
+    STA gpb_block+8
+
+    ; seq pointer (ignored for A=4, but keep it 0)
+    LDA #0
+    STA gpb_block+9
+    STA gpb_block+10
+    STA gpb_block+11
+    STA gpb_block+12
+
+    ; Read bytes from media, ignoring new sequential pointer.
+    LDA #4
+    LDX #<gpb_block
+    LDY #>gpb_block
+    JSR OSGBPB
+    BCS objdat_read_fail
+
+    ; Copy into SWRAM page with ROMSEL held stable.
+    SEI
+    LDA obj_bank
+    STA ROMSEL
+
+    LDA #<CHELLDATA_BUF
+    STA temp_sprite_ptr
+    LDA #>CHELLDATA_BUF
+    STA temp_sprite_ptr+1
+
+    LDY #0
+ .objdat_copy_loop
+    LDA (temp_sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    BNE objdat_copy_loop
+
+    ; Sanity check against the page we just copied (checks &8000 writeability too).
+    JSR sanity_check_chell_swrambank
+    BCS objdat_copy_fail
+
+    ; Restore ROMSEL for filing system.
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
+
+    INC temp_mask_ptr+1
+    DEC row_counter
+    BNE objdat_page_loop
+
+    ; Close file.
+    LDA #0
+    LDY objdata_fh
+    JSR OSFIND
+
+    ; Leave normal ROM selected.
+    LDA saved_romsel
+    STA ROMSEL
+    RTS
+
+ .objdat_open_fail
+    LDX #<msg_objdat_open_fail
+    LDY #>msg_objdat_open_fail
+    JSR print_string_xy
+    JMP objdat_hang
+
+ .objdat_read_fail
+    ; Restore ROMSEL before printing.
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
+    LDX #<msg_objdat_read_fail
+    LDY #>msg_objdat_read_fail
+    JSR print_string_xy
+    JMP objdat_hang
+
+ .objdat_copy_fail
+    ; Restore ROMSEL before printing.
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
+    LDX #<msg_swr_copy_fail
+    LDY #>msg_swr_copy_fail
+    JSR print_string_xy
+    JMP objdat_hang
+
+; Select a ROMSEL value for object SWRAM writes.
+; Tries bank 5, then bank 5|&80 (B2 quirk).
+;
+; Output:
+; - `obj_bank` set
+; - ROMSEL set to `obj_bank`
+; Returns: C=0 if ok, C=1 if no mapping worked.
+.select_obj_romsel
+    LDA #OBJ_SWRAM_BANK_DEFAULT
+    JSR romsel_writable
+    BCC obj_romsel_ok
+
+    LDA #OBJ_SWRAM_BANK_DEFAULT
+    ORA #&80
+    JSR romsel_writable
+    BCS obj_romsel_fail
+
+  .obj_romsel_ok
+    STA obj_bank
+    STA ROMSEL
+    CLC
+    RTS
+
+  .obj_romsel_fail
+    SEC
+    RTS
+
 ; Load Chell sprite+mask data into sideways RAM.
 ;
 ; We cannot safely `*LOAD` straight into `&8000` because filing system ROM code
@@ -4968,6 +5296,9 @@ CHELL_JUMP_LEFT_BASE        = 36
 .fname_chdata
     EQUS "CHDATA",13
 
+.fname_objdat
+    EQUS "OBJDAT",13
+
 .gpb_block
     SKIP 13
 
@@ -5107,6 +5438,12 @@ CHELL_JUMP_LEFT_BASE        = 36
 
 .msg_chdata_read_fail
     EQUS "CHDATA READ FAIL",13,0
+
+.msg_objdat_open_fail
+    EQUS "OBJDAT OPEN FAIL",13,0
+
+.msg_objdat_read_fail
+    EQUS "OBJDAT READ FAIL",13,0
 
 .msg_swr_copy_fail
     EQUS "SWRAM COPY FAIL",13,0
@@ -5325,16 +5662,29 @@ INCLUDE "tilemap.asm"
 INCLUDE "objects.asm"
 INCLUDE "render.asm"
 INCLUDE "lookup_tables.asm"
-INCLUDE "sprites/generated_objects_sprites.asm"
-INCLUDE "sprites/generated_objects_masks.asm"
 
 .end
 
 SAVE "PORTHLE", start, end
 PUTBASIC "program.bas", "PROGRAM"
 
+; Object stamp sprite+mask data file for sideways RAM.
+; This is loaded at runtime into a sideways RAM bank mapped at &8000..&BFFF.
+ORG &8000
+.objdata_start
+INCLUDE "sprites/generated_objects_sprites.asm"
+INCLUDE "sprites/generated_objects_masks.asm"
+
+; Pad to full 16KB SWRAM bank.
+ORG &C000
+.objdata_end
+SAVE "OBJDAT", objdata_start, objdata_end
+
 ; Chell sprite+mask data file for sideways RAM.
 ; This is loaded at runtime into a sideways RAM bank mapped at &8000..&BFFF.
+
+; Reuse the &8000..&BFFF assembly window for a second banked-data file.
+CLEAR &8000, &C000
 ORG &8000
 .chelldata_start
 INCLUDE "sprites/generated_chell_sprites.asm"

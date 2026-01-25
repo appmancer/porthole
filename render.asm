@@ -278,7 +278,9 @@
 ; - A: stripe count (1,2,4)
 ; - X: bytes to process per stripe (16 for 8px-wide, 32 for 16px-wide)
 ; - Y: source stride per stripe (usually 16 or 32)
-.stamp_striped_masked
+ .stamp_striped_masked
+    ; Keep the blit atomic: MOS IRQ handlers may use/modify ZP.
+    SEI
     STA row_counter
     STX col_counter
     STY temp_y
@@ -357,6 +359,7 @@
     STA screen_ptr+1
     PLA
     STA screen_ptr
+    CLI
     RTS
 
 ; Fill the visible playfield (32 bytes x 256 scanlines = 8192 bytes) with cyan.

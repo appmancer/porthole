@@ -39,6 +39,9 @@ For PORTHOLE we still keep the guiding principle:
 - **Shadow screen (LYNNE)**: used for screen memory when we enable it.
 - **Sideways RAM**: a candidate for bulk assets or additional buffers if we choose.
 
+For the current working memory map and the update-then-render (PoP-style)
+bank-mapping policy, see `memory_map.md`.
+
 ### Screen Geometry (current)
 
 - Display is a custom MODE 5:

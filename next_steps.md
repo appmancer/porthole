@@ -2,11 +2,6 @@
 
 ## Portal Teleportation MVP
 
-### Bug Reports
-
-- Portal placement: pressing A on a floor/ceiling target sometimes stamps both red and yellow sprites.
-- Reticle mode: Chell flashes while moving the reticle (we should only redraw Chell OR the reticle, not both).
-
 ### Current Status
 
 - Portals support 4 orientations: wall-left, wall-right, floor, ceiling.
@@ -26,7 +21,6 @@
 - Tighten ceiling/floor placement rules:
   - require clearance for a 16x32 exit volume so you can’t place a portal that forces Chell into geometry.
   - clamp/validate against top/bottom-of-room so exit never wraps.
-- Fix yellow floor/ceiling portal art if still matching red (CSV palette indices).
 - Finish “canonical portal rects” for all orientations and use them everywhere (draw, overlap, exit placement, exit nudges).
 - Add high-speed tunnelling protection: swept/stepped portal hit detection so fast flings can’t skip the portal rect.
 - Revisit anti-ping-pong: store last-exit portal id (kind + room + orient + xy) and ignore re-entry until you’ve moved away.

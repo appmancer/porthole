@@ -35,6 +35,8 @@ When working in this repo, assume the agent is an expert in writing 65C02 games 
 
 Reference material lives under `books/` (e.g. Master ROM/SWRAM + MOS behaviour).
 
+Memory map notes live in `memory_map.md`.
+
 ## Display mode (custom MODE 5)
 
 The game runs in a **customized MODE 5**:
