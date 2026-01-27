@@ -647,6 +647,8 @@ INCLUDE "ui.asm"
 
 INCLUDE "loaders.asm"
 
+INCLUDE "timing.asm"
+
 INCLUDE "room_runtime.asm"
 
 ; Chell movement and physics.

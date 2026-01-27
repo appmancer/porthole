@@ -1,5 +1,6 @@
 ; loaders.asm
 ; Shadow-screen and sideways-RAM loader utilities.
+; (VSync/delay helpers live in timing.asm.)
 ;
 ; Kept in its own file so `main.asm` stays navigable.
 
@@ -502,27 +503,3 @@
 
 .msg_swr_copy_fail
     EQUS "SWRAM COPY FAIL",13,0
-
-
-; Wait for vertical sync (VBlank).
-; Uses OSBYTE 19 (&13): "Wait for vertical sync".
-.wait_vsync
-    LDA #19
-    LDX #0
-    LDY #0
-    JSR OSBYTE
-    RTS
-
-
-; Simple delay to make the demo visible.
-.short_delay
-    LDY #&30
-.delay_outer
-    LDX #&FF
-.delay_inner
-    DEX
-    BNE delay_inner
-
-    DEY
-    BNE delay_outer
-    RTS
