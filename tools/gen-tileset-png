@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Generate a Tiled-friendly PNG tilesheet from our tile CSV.
+
+This is an authoring convenience tool (not required for building the game).
+
+Input:
+  - `sprites/NewTiles - Grid.csv` style file (same format as tools/gen-tiles)
+
+Output:
+  - A PNG tilesheet containing tile 0 (cyan fill) then tiles from the CSV
+    in file order.
+
+The tilesheet is laid out in a regular grid so it can be used as a Tiled
+"Based on Tileset Image" tileset.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import struct
+import zlib
+from pathlib import Path
+
+
+PIXEL_RE = re.compile(r"[0-3.]")
+
+
+def pixels_from_line(line: str, *, path: Path, line_index: int) -> list[str]:
+    tokens = [m.group(0) for m in PIXEL_RE.finditer(line)]
+    if not tokens:
+        return []
+    if len(tokens) < 8:
+        raise ValueError(f"{path}: line {line_index + 1}: expected >=8 pixels, got {len(tokens)}")
+    return tokens[:8]
+
+
+def parse_tile_blocks(path: Path) -> list[list[list[str]]]:
+    blocks: list[list[list[str]]] = []
+    current: list[list[str]] = []
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line_index, line in enumerate(lines):
+        # Treat label rows as separators.
+        if line.lstrip().startswith("T"):
+            if current:
+                blocks.append(current)
+                current = []
+            continue
+
+        pixels = pixels_from_line(line, path=path, line_index=line_index)
+        if not pixels:
+            if current:
+                blocks.append(current)
+                current = []
+            continue
+
+        current.append(pixels)
+
+    if current:
+        blocks.append(current)
+
+    for i, b in enumerate(blocks):
+        if len(b) != 16:
+            raise ValueError(f"{path}: tile block {i + 1} has {len(b)} rows (expected 16)")
+
+    return blocks
+
+
+def parse_pixel(ch: str) -> int | None:
+    if ch == ".":
+        return None
+    v = ord(ch) - ord("0")
+    if not (0 <= v <= 3):
+        raise ValueError(f"pixel value out of range: {ch}")
+    return v
+
+
+def rgba_for_mode5_index(v: int | None) -> tuple[int, int, int, int]:
+    # Tiled preview palette mapping:
+    #   . = transparent
+    #   0 = black
+    #   1 = red
+    #   2 = cyan
+    #   3 = yellow
+    if v is None:
+        return (0x00, 0x00, 0x00, 0x00)
+    if v == 0:
+        return (0x00, 0x00, 0x00, 0xFF)
+    if v == 1:
+        return (0xFF, 0x00, 0x00, 0xFF)
+    if v == 2:
+        return (0x00, 0xFF, 0xFF, 0xFF)
+    if v == 3:
+        return (0xFF, 0xFF, 0x00, 0xFF)
+    raise ValueError(f"bad colour index: {v}")
+
+
+def write_png_rgba(path: Path, *, width: int, height: int, pixels_rgba: bytes) -> None:
+    if len(pixels_rgba) != width * height * 4:
+        raise ValueError("bad pixel buffer length")
+
+    def chunk(typ: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(typ)
+        crc = zlib.crc32(data, crc)
+        return struct.pack(">I", len(data)) + typ + data + struct.pack(">I", crc & 0xFFFFFFFF)
+
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)  # 8-bit RGBA
+
+    # PNG scanlines: each row prefixed by filter byte 0.
+    stride = width * 4
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)
+        raw.extend(pixels_rgba[y * stride : (y + 1) * stride])
+    idat = zlib.compress(bytes(raw), level=9)
+
+    out = bytearray()
+    out += sig
+    out += chunk(b"IHDR", ihdr)
+    out += chunk(b"IDAT", idat)
+    out += chunk(b"IEND", b"")
+    path.write_bytes(bytes(out))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--in", dest="in_path", required=True)
+    ap.add_argument("--out", dest="out_path", required=True)
+    ap.add_argument("--cols", type=int, default=16, help="tiles per row")
+    ap.add_argument("--scale-x", type=int, default=2, help="horizontal pixel scale (MODE 5 pixels are wide)")
+    ap.add_argument("--scale-y", type=int, default=1, help="vertical pixel scale")
+    args = ap.parse_args()
+
+    in_path = Path(args.in_path)
+    out_path = Path(args.out_path)
+    cols = args.cols
+    scale_x = args.scale_x
+    scale_y = args.scale_y
+    if cols <= 0:
+        raise SystemExit("--cols must be > 0")
+    if scale_x <= 0 or scale_y <= 0:
+        raise SystemExit("--scale-x/--scale-y must be > 0")
+
+    blocks = parse_tile_blocks(in_path)
+
+    # Tile 0: fully transparent (preview-only). The engine's tile 0 is a solid fill,
+    # but for authoring we want empty space to show the map background colour.
+    tiles: list[list[list[int | None]]] = []
+    tiles.append([[None] * 8 for _ in range(16)])
+    for b in blocks:
+        tiles.append([[parse_pixel(ch) for ch in row] for row in b])
+
+    tile_w, tile_h = 8 * scale_x, 16 * scale_y
+    rows = (len(tiles) + cols - 1) // cols
+    width = cols * tile_w
+    height = rows * tile_h
+
+    buf = bytearray(width * height * 4)
+
+    for i, t in enumerate(tiles):
+        tx = (i % cols) * tile_w
+        ty = (i // cols) * tile_h
+        for py in range(16):
+            for px in range(8):
+                r, g, b, a = rgba_for_mode5_index(t[py][px])
+                for sy in range(scale_y):
+                    for sx in range(scale_x):
+                        x = tx + px * scale_x + sx
+                        y = ty + py * scale_y + sy
+                        o = (y * width + x) * 4
+                        buf[o + 0] = r
+                        buf[o + 1] = g
+                        buf[o + 2] = b
+                        buf[o + 3] = a
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    write_png_rgba(out_path, width=width, height=height, pixels_rgba=bytes(buf))
+
+
+if __name__ == "__main__":
+    main()

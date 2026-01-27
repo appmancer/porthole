@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Convert legacy glyph roomNN.txt files into Tiled TMX.
+
+We keep the existing tile ID meanings by encoding gids as (tile_id + 1) with a
+tileset firstgid of 1. This means:
+  - gid 1 -> engine tile 0 (empty/cyan)
+  - gid 2 -> engine tile 1
+  - ...
+
+The resulting TMX is intended to be committed as the new source of truth.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+
+GLYPH_TO_TILE_ID: dict[str, int] = {
+    ".": 0,
+    "█": 1,
+    "╥": 2,
+    "╢": 3,
+    "╨": 4,
+    "╟": 5,
+    "╮": 6,
+    "╭": 7,
+    "╰": 8,
+    "╯": 9,
+    "┐": 10,
+    "┌": 11,
+    "└": 12,
+    "┘": 13,
+    "╞": 14,
+    "═": 15,
+    "╡": 16,
+    "╘": 17,
+    "╛": 18,
+}
+
+
+def read_room_txt(path: Path) -> list[int]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if len(lines) != 16:
+        raise SystemExit(f"{path}: expected 16 lines, got {len(lines)}")
+
+    out: list[int] = []
+    for y, line in enumerate(lines):
+        toks = line.split()
+        if len(toks) != 16:
+            raise SystemExit(f"{path}: line {y + 1}: expected 16 tokens, got {len(toks)}")
+        for x, tok in enumerate(toks):
+            try:
+                out.append(GLYPH_TO_TILE_ID[tok])
+            except KeyError:
+                raise SystemExit(f"{path}: line {y + 1}, col {x + 1}: unknown token {tok!r}")
+    return out
+
+
+def emit_tmx(*, gids: list[int], tileset_source: str) -> str:
+    if len(gids) != 256:
+        raise ValueError("expected 256 gids")
+
+    # TMX CSV prefers line breaks; 16 values per row for readability.
+    rows = []
+    for y in range(16):
+        rows.append(",".join(str(gids[y * 16 + x]) for x in range(16)))
+    csv = ",\n".join(rows)
+
+    return "\n".join(
+        [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<map version=\"1.10\" tiledversion=\"1.10\" orientation=\"orthogonal\" renderorder=\"right-down\" width=\"16\" height=\"16\" tilewidth=\"16\" tileheight=\"16\" infinite=\"0\" backgroundcolor=\"#40FFFF\" nextlayerid=\"2\" nextobjectid=\"1\">",
+            f"  <tileset firstgid=\"1\" source=\"{tileset_source}\"/>",
+            "  <layer id=\"1\" name=\"tiles\" width=\"16\" height=\"16\">",
+            "    <data encoding=\"csv\">",
+            f"{csv}",
+            "    </data>",
+            "  </layer>",
+            "</map>",
+            "",
+        ]
+    )
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--level", required=True, help="level directory, e.g. levels/level1")
+    ap.add_argument(
+        "--tileset",
+        default="../../tiled/porthole.tsx",
+        help="TMX <tileset source=...> path (relative to the roomNN.tmx file)",
+    )
+    ap.add_argument("--force", action="store_true", help="overwrite existing .tmx")
+    args = ap.parse_args()
+
+    level_dir = Path(args.level)
+    for txt in sorted(level_dir.glob("room*.txt")):
+        tmx = txt.with_suffix(".tmx")
+        if tmx.exists() and not args.force:
+            continue
+
+        tile_ids = read_room_txt(txt)
+        # gid 0 is "no tile"; we intentionally use gid=(tile_id+1) so the room
+        # is fully painted (including background tile 0).
+        gids = [tid + 1 for tid in tile_ids]
+        tmx.write_text(emit_tmx(gids=gids, tileset_source=args.tileset), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

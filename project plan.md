@@ -180,13 +180,62 @@ But start with correctness and simplicity.
   - `sprites/generated_chell_masks.asm`
 - `build.sh` runs the generator before assembling.
 
-### Backgrounds (future)
+### Rooms / Backgrounds (current)
 
-We want an equivalent pipeline for backgrounds:
+We already have a repeatable room pipeline, and we now treat Tiled as the source of truth for both tiles and gameplay objects.
 
-- authoring format (tilemap CSV, Tiled export, custom editor, etc.)
-- converter to beebasm includes or compressed blobs
-- room-load routine to build/decompress into clean buffer
+Authoring files
+
+- Room tiles are authored per-room under `levels/<level>/`:
+  - `roomNN.tmx` (Tiled TMX, preferred)
+  - `roomNN.txt` (legacy glyph grid, still supported)
+- Room transitions (flick-screen exits) are authored in TMX objectgroup `meta`:
+  - rectangle objects of type `edge_exit`
+  - property `to=roomNN`
+- Gameplay objects (cube/button/pad/exit) are authored in TMX objectgroup `objects`:
+  - point objects with type `cube|button|pad|exit`
+  - required property `id=<string>` unique across the whole level (for persistence)
+  - property `channel=<int>` (defaults to 0 in tooling if omitted)
+- Legacy gameplay metadata (`roomNN.meta`) remains as a fallback only (see `levels/meta_spec.md`).
+
+Build outputs
+
+- `tools/gen-level` compiles the authored rooms into `levels/generated_level1.asm`:
+  - room tilemaps (256 bytes per room)
+  - edge-exit lookup tables (per-room)
+  - gameplay object tables (per-room for now; will evolve to persistent level-global indices)
+
+Tiles
+
+- Tile pixel art source: `sprites/NewTiles - Grid.csv`
+- `tools/gen-tiles` compiles it into `sprites/generated_tiles.asm` (tile IDs must stay stable).
+- For Tiled authoring, `tools/gen-tileset-png` can generate a preview tilesheet at `tiled/porthole_tiles.png`.
+
+Gameplay object sprites
+
+- Object sprites are authored as CSVs under `sprites/` and compiled via `tools/gen-sprites`.
+- Current object sprite contracts:
+  - `cube`: 16x16 masked
+  - `button`: 16x16 masked, 2 states (inactive/active)
+  - `pad`: 16x16 masked, 2 states (up/down)
+  - `exit`: 16x32 masked, 2 states (closed/open) so Chell can pass through
+- State ordering convention for 2-block CSVs: block 0 = inactive/up/closed, block 1 = active/down/open.
+
+Persistence + signals (design direction)
+
+We need puzzle state to persist across room transitions, so we treat objects as level-global entities.
+
+- Authoring identity: every TMX object has a stable `id` (string), unique across the whole level.
+- Build-time mapping: convert `id` strings to a stable `obj_index` and emit compact runtime tables:
+  - `obj_defs[]`: type, channel, initial flags, home room/x/y
+  - per-room lists of `obj_index` values
+- Runtime state arrays indexed by `obj_index`:
+  - `obj_state[]` (pressed/open bits etc.)
+  - `obj_room[]`, `obj_x[]`, `obj_y[]` (cube requires these; others can be fixed to home)
+- Signals are derived each frame from state + contacts:
+  - `pad` pressed if Chell stands on it OR cube rests on it
+  - `button` pressed on SPACE (action key) while Chell overlaps the button zone
+  - `exit` open if `signal_bits & (1<<channel)`
 
 ## Switching Rules
 
@@ -541,7 +590,11 @@ If we want the portal blend depth to be easy to stamp quickly, prefer depths tha
 
 ## Next Implementation Steps
 
-1) We are working on portal placement. We seem to have a blitter routine that will put the `red-right`portal on screen. We should implement a list of object in the room that we can stamp when we enter the room. Placing a portal adds the portal to the list.
+1) Implement persistent Tiled-authored objects (cube/button/pad/exit) using stable TMX `id` values and level-global state arrays.
+
+2) Hook up signals (channel bits) so pad/button drive exit open/closed in the 2-room playground; button uses SPACE (action key).
+
+3) Continue portal placement/teleportation improvements (tracked in `next_steps.md`) without duplicating object/persistence background here.
 
 ## Open Questions
 

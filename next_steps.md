@@ -1,35 +1,36 @@
 # Next Steps
 
-## Portal Teleportation MVP
+This file tracks concrete, prioritized actions.
+Detailed background/design context lives in `project plan.md`.
 
-### Current Status
+## P0: Persistent Objects + Signals (2-Room Playground)
 
-- Portals support 4 orientations: wall-left, wall-right, floor, ceiling.
-- Entry detection: overlap + "push into face" using velocity (`dot(v, n_enter) < 0`).
-  - Floor/ceiling entry uses `char_prev_vy` so entry can trigger on the landing frame.
-- Entry alignment guards:
-  - walls: Chell center Y must be within `PORTAL_ALIGN_TOL_Y` of portal center Y (prevents hair-grazes)
-  - floor/ceiling: Chell left X must be within `PORTAL_ALIGN_TOL_X` of portal left X
-- Teleportation: immediate teleport to the other portal, including cross-room transition.
-- Exit placement: pixel-space nudge + simple visual-bound tuning.
-- Momentum mapping implemented for all orientations (preserves components in portal frame).
-- Re-trigger guard: cooldown frames; during cooldown only re-entry to the last-exit portal is blocked (enables bouncy elevator).
-- Teleport exit Y is quantized/clamped to the 8px stripe grid (avoids invalid `char_y_offset` values that can break gravity).
+1) Build output: emit “persistent level-global objects” (DONE)
 
-### Next Work
+   - `levels/generated_level1.asm` now emits:
+     - `OBJ_COUNT`, `OBJ_DEF_SIZE`
+     - `.obj_defs` entries: `type_id, channel, init_flags, home_room, home_x, home_y`
+     - `.obj_room_counts`, `.obj_room_ptrs`, plus per-room `..._obj_indices` lists of `obj_index` bytes
+   - `obj_index` ordering is deterministic: sort by TMX `id` string; legacy `__meta__:` ids sort last.
 
-- Tighten ceiling/floor placement rules:
-  - require clearance for a 16x32 exit volume so you can’t place a portal that forces Chell into geometry.
-  - clamp/validate against top/bottom-of-room so exit never wraps.
-- Finish “canonical portal rects” for all orientations and use them everywhere (draw, overlap, exit placement, exit nudges).
-- Add high-speed tunnelling protection: swept/stepped portal hit detection so fast flings can’t skip the portal rect.
-- Revisit anti-ping-pong: store last-exit portal id (kind + room + orient + xy) and ignore re-entry until you’ve moved away.
+2) Runtime: add persistent object state arrays and room materialization
+   
+   - Allocate per-object arrays indexed by `obj_index`: `obj_state[]`, plus `obj_room/x/y` at least for cube.
+   - On room entry, do not respawn; render objects whose `obj_room == current_room`.
 
-### Test Scenarios (B2)
+3) Implement channel-driven behavior
+   
+   - `pad`: pressed if Chell stands on it OR cube rests on it.
+   - `button`: pressed by SPACE while Chell overlaps interaction zone.
+   - `exit`: open if signal bit for `channel` is set.
 
-- Run into right-wall portal -> out left-wall portal: velocity exits moving left.
-- Run into left-wall portal -> out right-wall portal: velocity exits moving right.
-- Fall into floor portal -> out ceiling portal: emerges downward.
-- Jump into ceiling portal -> out floor portal: emerges upward.
-- Jump so only hair/feet grazes a high portal: should NOT trigger unless vertically aligned.
-- Skim past/parallel to portal face: should not trigger.
+4) Rendering for object state changes (MVP-safe)
+   
+   - If any object’s visible state changes, set `room_dirty=1` and redraw tilemap + objects next frame (safe with save-under).
+   - Later optimize to restamp only changed object rects.
+
+Acceptance checks (P0)
+
+- Room00: pad(channel 0) and exit(channel 0) behave: pad pressed -> exit opens.
+- Room01: cube spawns from TMX and persists if moved/left in another room.
+- Leaving and returning to rooms preserves cube position and any puzzle state.

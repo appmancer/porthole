@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Copy roomNN.meta directives into roomNN.tmx object layers.
+
+This is a one-time migration helper so TMX can become the single source of truth.
+
+What it does:
+- Reads `exit ...` and `obj ...` directives from `roomNN.meta`.
+- Writes/overwrites TMX object layers:
+  - objectgroup name: "meta" (edge exits)
+    - object type: "edge_exit" (rectangle on the room border)
+    - property: to="roomNN"
+  - objectgroup name: "objects" (gameplay objects)
+    - object type: one of cube/button/pad/exit
+    - point at cell origin (x*tile_w, y*tile_h)
+
+It does not delete `.meta` files.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+
+ROOM_RE = re.compile(r"room(\d\d)\.tmx$")
+
+
+OBJECT_TYPES = {"cube", "button", "pad", "exit"}
+
+
+def parse_meta(path: Path) -> tuple[list[tuple[str, int, int, str]], list[tuple[str, int, int]]]:
+    # exits: (edge, a0, a1, dst)
+    exits: list[tuple[str, int, int, str]] = []
+    objects: list[tuple[str, int, int]] = []
+    if not path.exists():
+        return exits, objects
+
+    for line_index, raw in enumerate(path.read_text(encoding="utf-8").splitlines()):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        toks = line.split()
+        if toks[0] == "exit":
+            if len(toks) < 6 or toks[4] != "->":
+                raise SystemExit(f"{path}: line {line_index + 1}: malformed exit")
+            edge = toks[1].strip().lower()
+            if edge not in ("left", "right", "up", "down"):
+                raise SystemExit(f"{path}: line {line_index + 1}: bad edge {edge!r}")
+            try:
+                a0 = int(toks[2])
+                a1 = int(toks[3])
+            except ValueError:
+                raise SystemExit(f"{path}: line {line_index + 1}: bad range")
+            if not (0 <= a0 <= a1 <= 15):
+                raise SystemExit(f"{path}: line {line_index + 1}: range must be 0..15")
+            dst = toks[5].strip()
+            if not re.match(r"^room\d\d$", dst):
+                raise SystemExit(f"{path}: line {line_index + 1}: bad room id {dst!r}")
+            exits.append((edge, a0, a1, dst))
+            continue
+
+        if toks[0] == "obj":
+            if len(toks) < 4:
+                raise SystemExit(f"{path}: line {line_index + 1}: malformed obj")
+            typ = toks[1].strip().lower()
+            if typ not in OBJECT_TYPES:
+                raise SystemExit(f"{path}: line {line_index + 1}: unknown obj type {typ!r}")
+            try:
+                x = int(toks[2])
+                y = int(toks[3])
+            except ValueError:
+                raise SystemExit(f"{path}: line {line_index + 1}: bad obj coords")
+            if not (0 <= x <= 15 and 0 <= y <= 15):
+                raise SystemExit(f"{path}: line {line_index + 1}: obj coords must be 0..15")
+            objects.append((typ, x, y))
+            continue
+
+        raise SystemExit(f"{path}: line {line_index + 1}: unknown directive {toks[0]!r}")
+
+    return exits, objects
+
+
+def ensure_objectgroup(root: ET.Element, *, name: str, layer_id: int) -> ET.Element:
+    # Remove existing group with this name (we overwrite).
+    for og in list(root.findall("objectgroup")):
+        if (og.get("name") or "") == name:
+            root.remove(og)
+    og = ET.Element("objectgroup", {"id": str(layer_id), "name": name})
+    root.append(og)
+    return og
+
+
+def add_properties(obj_el: ET.Element, props: dict[str, str]) -> None:
+    if not props:
+        return
+    props_el = ET.SubElement(obj_el, "properties")
+    for k, v in props.items():
+        ET.SubElement(props_el, "property", {"name": k, "value": v})
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--level", required=True, help="level directory, e.g. levels/level1")
+    ap.add_argument("--force", action="store_true", help="write TMX even if no .meta exists")
+    args = ap.parse_args()
+
+    level_dir = Path(args.level)
+    tmx_paths = sorted(level_dir.glob("room*.tmx"))
+    if not tmx_paths:
+        raise SystemExit(f"no room*.tmx files found in {level_dir}")
+
+    for tmx_path in tmx_paths:
+        if not ROOM_RE.search(tmx_path.name):
+            continue
+        meta_path = tmx_path.with_suffix(".meta")
+        exits, objects = parse_meta(meta_path)
+        if not args.force and not exits and not objects:
+            continue
+
+        root = ET.fromstring(tmx_path.read_text(encoding="utf-8"))
+        if root.tag != "map":
+            raise SystemExit(f"{tmx_path}: expected <map> root")
+
+        map_w = int(root.get("width") or "0")
+        map_h = int(root.get("height") or "0")
+        tile_w = int(root.get("tilewidth") or "0")
+        tile_h = int(root.get("tileheight") or "0")
+        if (map_w, map_h) != (16, 16):
+            raise SystemExit(f"{tmx_path}: expected 16x16 map")
+        if tile_w <= 0 or tile_h <= 0:
+            raise SystemExit(f"{tmx_path}: bad tile size")
+
+        # Allocate ids.
+        next_id = int(root.get("nextobjectid") or "1")
+        next_layer_id = int(root.get("nextlayerid") or "1")
+
+        og_meta = ensure_objectgroup(root, name="meta", layer_id=next_layer_id)
+        next_layer_id += 1
+        for edge, a0, a1, dst in exits:
+            if edge in ("left", "right"):
+                x = 0 if edge == "left" else (map_w - 1) * tile_w
+                y = a0 * tile_h
+                w = tile_w
+                h = (a1 - a0 + 1) * tile_h
+            else:
+                x = a0 * tile_w
+                y = 0 if edge == "up" else (map_h - 1) * tile_h
+                w = (a1 - a0 + 1) * tile_w
+                h = tile_h
+
+            obj = ET.SubElement(
+                og_meta,
+                "object",
+                {
+                    "id": str(next_id),
+                    "name": f"edge_exit_{edge}_{dst}",
+                    "type": "edge_exit",
+                    "x": str(x),
+                    "y": str(y),
+                    "width": str(w),
+                    "height": str(h),
+                },
+            )
+            next_id += 1
+            add_properties(obj, {"to": dst})
+
+        og_obj = ensure_objectgroup(root, name="objects", layer_id=next_layer_id)
+        next_layer_id += 1
+        for typ, cx, cy in objects:
+            obj = ET.SubElement(
+                og_obj,
+                "object",
+                {
+                    "id": str(next_id),
+                    "name": f"{typ}_{cx}_{cy}",
+                    "type": typ,
+                    "x": str(cx * tile_w),
+                    "y": str(cy * tile_h),
+                },
+            )
+            next_id += 1
+            ET.SubElement(obj, "point")
+
+        root.set("nextobjectid", str(next_id))
+        root.set("nextlayerid", str(next_layer_id))
+
+        # Write back.
+        xml = ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
+        tmx_path.write_text(xml + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,21 +1,22 @@
 # Room Metadata Spec (.meta)
 
-This document describes the per-room metadata file format used by the level build tools.
+This document describes the per-room metadata format used by the level build tools.
 
 The goals are:
 
-- Keep `roomNN.txt` as tiles-only (16x16 grid of glyph tokens).
-- Put exits, spawns, and gameplay objects in a sidecar file.
+- Keep room tile authoring as tiles-only (16x16 grid).
+- Put exits, spawns, and gameplay objects outside the tile layer (authoring convenience).
 - Make authoring simple while generating compact runtime lookup tables.
 
 ## Files
 
-- Room tiles: `levels/<level>/roomNN.txt`
-- Room metadata: `levels/<level>/roomNN.meta`
+- Room tiles: `levels/<level>/roomNN.tmx` (preferred) or `levels/<level>/roomNN.txt` (legacy)
+- Room metadata (preferred): TMX object layers inside `roomNN.tmx`
+- Room metadata (legacy): `levels/<level>/roomNN.meta`
 
 Example:
 
-- `levels/level1/room00.txt`
+- `levels/level1/room00.tmx`
 - `levels/level1/room00.meta`
 
 ## Syntax rules
@@ -48,6 +49,20 @@ Exit matching uses Chell's **feet** for now.
 - `feet_cell_x = top_left_cell_x + 1` (approx "center" of her 2-cell width)
 
 We can refine this later (full overlap tests, pixel-accurate feet position, etc.).
+
+## TMX object layers (preferred)
+
+Tiled authoring uses two object layers:
+
+- `meta`: room-to-room edge exits
+  - rectangle objects of type `edge_exit`
+  - required property: `to=roomNN`
+  - place rectangles on the outer border; the build derives the edge and cell range from geometry
+- `objects`: gameplay objects
+  - point objects with type `cube|button|pad|exit`
+  - placed on the tile grid; coordinates are interpreted as cell origin
+
+The build tool prefers TMX object layers when present and falls back to parsing `.meta`.
 
 ## Exits
 
@@ -155,3 +170,37 @@ obj exit 14 10
 ```
 
 Object coordinates are in cell units, and represent the object's anchor (typically top-left of its footprint).
+
+## Planned: Signals, Doors, Lasers (Not Implemented Yet)
+
+We plan to extend `.meta` to support **signal channels** (bits) and more object types (doors, laser emitters/targets).
+
+Design reference: `levels/signals_and_lasers.md`.
+
+### Proposed syntax (sketch)
+
+Drivers publish a signal bit:
+
+```text
+obj button <x> <y> out <sig>
+obj pad    <x> <y> out <sig>
+obj target <x> <y> out <sig>
+```
+
+Emitters trace a ray; targets drive signals:
+
+```text
+obj laser <x> <y> dir <left|right|up|down>
+```
+
+Consumers read signals:
+
+```text
+obj door <x> <y> in <sig>
+obj dropper <x> <y> in <sig>
+```
+
+Notes:
+
+- Signals are intended to be **level-global**, so remote puzzles work (laser in one room opens door in another).
+- Start with single-input semantics (`in <sig>`). Add AND/masks later only if needed.

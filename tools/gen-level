@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
-"""Generate beebasm room tilemaps from glyph-based room text files.
+"""Generate beebasm room tilemaps from authored room files.
 
-Reads `roomNN.txt` files (16 lines x 16 space-separated glyph tokens) and emits
-beebasm `EQUB` data for:
+Supported inputs (per level directory):
+
+- `roomNN.tmx` (Tiled TMX) (preferred when present)
+- `roomNN.txt` (legacy glyph grid: 16 lines x 16 space-separated glyph tokens)
+
+Emits beebasm `EQUB` data for:
 
 - `room_pointers` (tilemap pointers)
 - `portal_room_pointers` (portalability layer pointers)
 - per-room tilemap data (256 bytes each)
 - per-room portalmap data (256 bytes each, currently all zeros)
 
-This is a build-time tool; the game never parses text at runtime.
+This is a build-time tool; the game never parses authoring files at runtime.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import re
 from dataclasses import dataclass
 from pathlib import Path
+import struct
+import xml.etree.ElementTree as ET
+import zlib
 
 
-ROOM_RE = re.compile(r"room(\d\d)\.txt$")
+ROOM_RE = re.compile(r"room(\d\d)\.(txt|tmx)$")
 
 
 GLYPH_TO_TILE_ID: dict[str, int] = {
@@ -46,6 +54,338 @@ GLYPH_TO_TILE_ID: dict[str, int] = {
 }
 
 
+OBJECT_TYPE_TO_ID: dict[str, int] = {
+    "cube": 1,
+    "button": 2,
+    "pad": 3,
+    "exit": 4,
+}
+
+
+OBJ_DEF_SIZE = 6
+
+
+TILED_FLIP_FLAGS = 0xE0000000
+
+
+def _parse_room_index(path: Path) -> int:
+    m = ROOM_RE.search(path.name)
+    if not m:
+        raise ValueError(f"room filename must match roomNN.(tmx|txt): {path}")
+    return int(m.group(1))
+
+
+def parse_room_txt(path: Path) -> list[int]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if len(lines) != 16:
+        raise ValueError(f"{path}: expected 16 lines, got {len(lines)}")
+
+    tiles: list[int] = []
+    for y, line in enumerate(lines):
+        tokens = line.split()
+        if len(tokens) != 16:
+            raise ValueError(f"{path}: line {y + 1}: expected 16 tokens, got {len(tokens)}")
+        for x, tok in enumerate(tokens):
+            if tok not in GLYPH_TO_TILE_ID:
+                raise ValueError(f"{path}: line {y + 1}, col {x + 1}: unknown token {tok!r}")
+            tiles.append(GLYPH_TO_TILE_ID[tok])
+
+    if len(tiles) != 256:
+        raise AssertionError("internal: tiles length")
+    return tiles
+
+
+def _tiled_decode_data(data_el: ET.Element, *, path: Path) -> list[int]:
+    encoding = (data_el.get("encoding") or "").strip().lower()
+    compression = (data_el.get("compression") or "").strip().lower()
+
+    if not encoding:
+        # XML form: <tile gid="..."/> repeated.
+        gids: list[int] = []
+        for tile_el in data_el.findall("tile"):
+            gids.append(int(tile_el.get("gid") or "0"))
+        return gids
+
+    if encoding == "csv":
+        text = (data_el.text or "").strip()
+        if not text:
+            return []
+        return [int(x.strip()) for x in text.replace("\n", "").split(",") if x.strip() != ""]
+
+    if encoding == "base64":
+        raw = base64.b64decode((data_el.text or "").strip())
+        if compression in ("", None):
+            blob = raw
+        elif compression == "gzip":
+            import gzip
+
+            blob = gzip.decompress(raw)
+        elif compression == "zlib":
+            blob = zlib.decompress(raw)
+        else:
+            raise ValueError(f"{path}: unsupported TMX compression {compression!r}")
+
+        if len(blob) % 4 != 0:
+            raise ValueError(f"{path}: TMX layer data length not multiple of 4")
+        gids = [v[0] for v in struct.iter_unpack("<I", blob)]
+        return gids
+
+    raise ValueError(f"{path}: unsupported TMX encoding {encoding!r}")
+
+
+def _tiled_properties(el: ET.Element) -> dict[str, str]:
+    props: dict[str, str] = {}
+    props_el = el.find("properties")
+    if props_el is None:
+        return props
+    for p in props_el.findall("property"):
+        name = (p.get("name") or "").strip()
+        if not name:
+            continue
+        # Most properties use value=; some (rare) use inline text.
+        value = p.get("value")
+        if value is None:
+            value = (p.text or "").strip()
+        props[name] = value
+    return props
+
+
+def _parse_float_int(value: str | None, *, path: Path, what: str) -> int:
+    if value is None:
+        raise ValueError(f"{path}: missing {what}")
+    try:
+        f = float(value)
+    except ValueError:
+        raise ValueError(f"{path}: bad {what}={value!r}")
+    i = int(round(f))
+    if abs(f - i) > 1e-6:
+        raise ValueError(f"{path}: {what} must be an integer, got {value!r}")
+    return i
+
+
+def _parse_room_id(dst: str, *, path: Path) -> str:
+    dst = dst.strip()
+    if not dst:
+        raise ValueError(f"{path}: empty destination room id")
+    if not re.match(r"^room\d\d$", dst):
+        raise ValueError(f"{path}: bad room id {dst!r}")
+    return dst
+
+
+def _parse_exits_and_objects_from_tmx(
+    root: ET.Element,
+    *,
+    path: Path,
+    map_w: int,
+    map_h: int,
+    tile_w: int,
+    tile_h: int,
+) -> tuple[dict[str, list[tuple[int, int, str]]], list[tuple[str, int, int, str, int]], bool, bool]:
+    exits = {"left": [], "right": [], "up": [], "down": []}
+    objects: list[tuple[str, int, int, str, int]] = []
+
+    has_exit_group = False
+    has_objects_group = False
+
+    # Exits are authored as rectangles on the room border, in an object layer
+    # called "meta" (preferred) or "exits".
+    ogroups = root.findall("objectgroup")
+
+    def is_exit_group(name: str) -> bool:
+        n = name.strip().lower()
+        return n in ("meta", "exits")
+
+    def is_objects_group(name: str) -> bool:
+        n = name.strip().lower()
+        return n in ("objects",)
+
+    for og in ogroups:
+        og_name = og.get("name") or ""
+        if is_exit_group(og_name):
+            has_exit_group = True
+        if is_objects_group(og_name):
+            has_objects_group = True
+        for obj in og.findall("object"):
+            obj_type = (obj.get("type") or "").strip()
+            obj_name = (obj.get("name") or "").strip()
+            props = _tiled_properties(obj)
+
+            # --- Edge exits ---
+            if is_exit_group(og_name) and (obj_type.lower() in ("edge_exit", "exit", "edgeexit")):
+                dst = props.get("to") or props.get("dst")
+                if dst is None:
+                    raise ValueError(f"{path}: exit object missing property 'to'")
+                dst = _parse_room_id(dst, path=path)
+
+                # Geometry is in pixels.
+                x = _parse_float_int(obj.get("x"), path=path, what="object x")
+                y = _parse_float_int(obj.get("y"), path=path, what="object y")
+                w = _parse_float_int(obj.get("width") or "0", path=path, what="object width")
+                h = _parse_float_int(obj.get("height") or "0", path=path, what="object height")
+
+                if w <= 0 or h <= 0:
+                    raise ValueError(f"{path}: exit object must be a rectangle with width/height")
+
+                # If edge is explicitly provided, use it; otherwise infer from border placement.
+                edge = (props.get("edge") or "").strip().lower()
+                if edge and edge not in exits:
+                    raise ValueError(f"{path}: bad exit edge property {edge!r}")
+
+                if not edge:
+                    left_x = 0
+                    right_x = (map_w - 1) * tile_w
+                    top_y = 0
+                    bot_y = (map_h - 1) * tile_h
+                    if x == left_x:
+                        edge = "left"
+                    elif x == right_x:
+                        edge = "right"
+                    elif y == top_y:
+                        edge = "up"
+                    elif y == bot_y:
+                        edge = "down"
+                    else:
+                        raise ValueError(
+                            f"{path}: exit object must touch room border (or set edge property); got x={x} y={y}"
+                        )
+
+                # Convert to cell ranges.
+                if edge in ("left", "right"):
+                    if w != tile_w:
+                        raise ValueError(f"{path}: {edge} exit must be 1 tile wide (width={tile_w})")
+                    if y % tile_h != 0 or h % tile_h != 0:
+                        raise ValueError(f"{path}: {edge} exit y/height must align to tile grid")
+                    a0 = y // tile_h
+                    a1 = (y + h) // tile_h - 1
+                else:
+                    if h != tile_h:
+                        raise ValueError(f"{path}: {edge} exit must be 1 tile tall (height={tile_h})")
+                    if x % tile_w != 0 or w % tile_w != 0:
+                        raise ValueError(f"{path}: {edge} exit x/width must align to tile grid")
+                    a0 = x // tile_w
+                    a1 = (x + w) // tile_w - 1
+
+                if not (0 <= a0 <= a1 <= 15):
+                    raise ValueError(f"{path}: exit range must be within 0..15 (inclusive), got {a0}..{a1}")
+                exits[edge].append((a0, a1, dst))
+                continue
+
+            # --- Gameplay objects (planned/optional) ---
+            if is_objects_group(og_name) and obj_type:
+                t = obj_type.strip().lower()
+                if t not in OBJECT_TYPE_TO_ID:
+                    raise ValueError(f"{path}: unknown object type {obj_type!r}")
+
+                obj_id = (props.get("id") or "").strip()
+                if not obj_id:
+                    raise ValueError(f"{path}: object {obj_type!r} missing required property 'id'")
+
+                chan_text = (props.get("channel") or "").strip()
+                if not chan_text:
+                    channel = 0
+                else:
+                    try:
+                        channel = int(chan_text)
+                    except ValueError:
+                        raise ValueError(f"{path}: object {obj_type!r} has non-integer channel={chan_text!r}")
+                    if not (0 <= channel <= 7):
+                        raise ValueError(f"{path}: object {obj_type!r} channel out of range (0..7), got {channel}")
+
+                x = _parse_float_int(obj.get("x"), path=path, what="object x")
+                y = _parse_float_int(obj.get("y"), path=path, what="object y")
+                if x % tile_w != 0 or y % tile_h != 0:
+                    raise ValueError(f"{path}: object {obj_type!r} must be placed on tile grid")
+                cx = x // tile_w
+                cy = y // tile_h
+                if not (0 <= cx <= 15 and 0 <= cy <= 15):
+                    raise ValueError(f"{path}: object {obj_type!r} out of bounds at {cx},{cy}")
+
+                # Exit sprite is 1x2 tiles (16x32) in our authoring grid.
+                if t == "exit" and cy > (map_h - 2):
+                    raise ValueError(f"{path}: exit object out of bounds for 1x2 footprint at {cx},{cy} (y must be <= {map_h - 2})")
+
+                objects.append((t, cx, cy, obj_id, channel))
+
+    return exits, objects, has_exit_group, has_objects_group
+
+
+def parse_room_tmx(
+    path: Path,
+) -> tuple[list[int], dict[str, list[tuple[int, int, str]]], list[tuple[str, int, int, str, int]], bool, bool]:
+    root = ET.fromstring(path.read_text(encoding="utf-8"))
+    if root.tag != "map":
+        raise ValueError(f"{path}: expected <map> root")
+
+    width = int(root.get("width") or "0")
+    height = int(root.get("height") or "0")
+    tilewidth = int(root.get("tilewidth") or "0")
+    tileheight = int(root.get("tileheight") or "0")
+
+    if (width, height) != (16, 16):
+        raise ValueError(f"{path}: expected 16x16 map, got {width}x{height}")
+    if (tilewidth, tileheight) not in ((8, 16), (16, 16)):
+        raise ValueError(f"{path}: expected tile size 8x16 or 16x16, got {tilewidth}x{tileheight}")
+
+    # Tilesets: we expect either one tileset, or multiple non-overlapping firstgid ranges.
+    tilesets: list[int] = []
+    for ts in root.findall("tileset"):
+        firstgid = int(ts.get("firstgid") or "0")
+        if firstgid <= 0:
+            raise ValueError(f"{path}: tileset firstgid must be >= 1")
+        tilesets.append(firstgid)
+    if not tilesets:
+        raise ValueError(f"{path}: no <tileset> found")
+    tilesets.sort()
+
+    def gid_to_tile_id(gid_raw: int) -> int:
+        if gid_raw == 0:
+            return 0
+        if gid_raw & TILED_FLIP_FLAGS:
+            raise ValueError(f"{path}: tile gid uses flip/rotate flags (unsupported): {gid_raw:#x}")
+
+        # Find owning tileset by firstgid.
+        firstgid = 0
+        for fg in tilesets:
+            if fg <= gid_raw:
+                firstgid = fg
+            else:
+                break
+        if firstgid == 0:
+            raise ValueError(f"{path}: gid {gid_raw} does not belong to any tileset")
+        return gid_raw - firstgid
+
+    # Choose the main tile layer.
+    layers = root.findall("layer")
+    if not layers:
+        raise ValueError(f"{path}: no <layer> found")
+
+    layer = None
+    for l in layers:
+        if (l.get("name") or "").strip().lower() == "tiles":
+            layer = l
+            break
+    if layer is None:
+        layer = layers[0]
+
+    data_el = layer.find("data")
+    if data_el is None:
+        raise ValueError(f"{path}: layer has no <data>")
+
+    gids = _tiled_decode_data(data_el, path=path)
+    if len(gids) != 256:
+        raise ValueError(f"{path}: expected 256 gids in layer data, got {len(gids)}")
+    tiles = [gid_to_tile_id(g) for g in gids]
+    exits, objects, has_exit_group, has_objects_group = _parse_exits_and_objects_from_tmx(
+        root,
+        path=path,
+        map_w=width,
+        map_h=height,
+        tile_w=tilewidth,
+        tile_h=tileheight,
+    )
+    return tiles, exits, objects, has_exit_group, has_objects_group
+
+
 @dataclass(frozen=True)
 class Room:
     name: str  # room00
@@ -55,12 +395,14 @@ class Room:
     exits_right: list[tuple[int, int, str]]
     exits_up: list[tuple[int, int, str]]
     exits_down: list[tuple[int, int, str]]
+    objects: list[tuple[str, int, int, str, int]]
 
 
-def parse_meta(meta_path: Path) -> dict[str, list[tuple[int, int, str]]]:
+def parse_meta(meta_path: Path) -> tuple[dict[str, list[tuple[int, int, str]]], list[tuple[str, int, int]]]:
     exits = {"left": [], "right": [], "up": [], "down": []}
+    objects: list[tuple[str, int, int]] = []
     if not meta_path.exists():
-        return exits
+        return exits, objects
 
     for line_index, raw in enumerate(meta_path.read_text(encoding="utf-8").splitlines()):
         line = raw.split("#", 1)[0].strip()
@@ -68,6 +410,23 @@ def parse_meta(meta_path: Path) -> dict[str, list[tuple[int, int, str]]]:
             continue
 
         toks = line.split()
+
+        if toks[0] == "obj":
+            if len(toks) < 4:
+                raise ValueError(f"{meta_path}: line {line_index + 1}: malformed obj")
+            typ = toks[1].strip().lower()
+            if typ not in OBJECT_TYPE_TO_ID:
+                raise ValueError(f"{meta_path}: line {line_index + 1}: unknown obj type {typ!r}")
+            try:
+                x = int(toks[2])
+                y = int(toks[3])
+            except ValueError:
+                raise ValueError(f"{meta_path}: line {line_index + 1}: bad obj coordinates")
+            if not (0 <= x <= 15 and 0 <= y <= 15):
+                raise ValueError(f"{meta_path}: line {line_index + 1}: obj coordinates out of range")
+            objects.append((typ, x, y))
+            continue
+
         if toks[0] != "exit":
             raise ValueError(f"{meta_path}: line {line_index + 1}: unknown directive {toks[0]!r}")
         # Minimal form: exit <edge> <a0> <a1> -> roomNN
@@ -102,35 +461,40 @@ def parse_meta(meta_path: Path) -> dict[str, list[tuple[int, int, str]]]:
 
         exits[edge].append((a0, a1, dst))
 
-    return exits
+    return exits, objects
 
 
 def parse_room(path: Path) -> Room:
-    m = ROOM_RE.search(path.name)
-    if not m:
-        raise ValueError(f"room filename must match roomNN.txt: {path}")
-    idx = int(m.group(1))
+    idx = _parse_room_index(path)
     name = f"room{idx:02d}"
 
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if len(lines) != 16:
-        raise ValueError(f"{path}: expected 16 lines, got {len(lines)}")
-
-    tiles: list[int] = []
-    for y, line in enumerate(lines):
-        tokens = line.split()
-        if len(tokens) != 16:
-            raise ValueError(f"{path}: line {y + 1}: expected 16 tokens, got {len(tokens)}")
-        for x, tok in enumerate(tokens):
-            if tok not in GLYPH_TO_TILE_ID:
-                raise ValueError(f"{path}: line {y + 1}, col {x + 1}: unknown token {tok!r}")
-            tiles.append(GLYPH_TO_TILE_ID[tok])
-
-    if len(tiles) != 256:
-        raise AssertionError("internal: tiles length")
+    tmx_exits: dict[str, list[tuple[int, int, str]]] | None = None
+    tmx_objects: list[tuple[str, int, int, str, int]] | None = None
+    tmx_has_exit_group = False
+    tmx_has_objects_group = False
+    if path.suffix.lower() == ".tmx":
+        tiles, tmx_exits, tmx_objects, tmx_has_exit_group, tmx_has_objects_group = parse_room_tmx(path)
+    elif path.suffix.lower() == ".txt":
+        tiles = parse_room_txt(path)
+    else:
+        raise ValueError(f"{path}: unsupported room format {path.suffix!r}")
 
     meta_path = path.with_suffix(".meta")
-    exits = parse_meta(meta_path)
+    meta_exits, meta_objects = parse_meta(meta_path)
+
+    # Source of truth:
+    # - If TMX has an exit/object objectgroup, prefer it.
+    # - Otherwise fall back to .meta (for incremental migration).
+    exits = meta_exits
+    # NOTE: legacy .meta objects do not carry id/channel.
+    # We keep them only as a fallback when a TMX objects group is absent.
+    objects: list[tuple[str, int, int, str, int]] = []
+    if meta_objects:
+        objects = [(typ, x, y, f"__meta__:{name}:{typ}@{x},{y}", 0) for (typ, x, y) in meta_objects]
+    if tmx_exits is not None and tmx_has_exit_group:
+        exits = tmx_exits
+    if tmx_objects is not None and tmx_has_objects_group:
+        objects = tmx_objects
     return Room(
         name=name,
         index=idx,
@@ -139,6 +503,7 @@ def parse_room(path: Path) -> Room:
         exits_right=exits["right"],
         exits_up=exits["up"],
         exits_down=exits["down"],
+        objects=objects,
     )
 
 
@@ -159,12 +524,17 @@ def main() -> None:
     level_dir = Path(args.level)
     out_path = Path(args.out)
 
-    room_paths = sorted(level_dir.glob("room*.txt"))
-    if not room_paths:
-        raise SystemExit(f"no room*.txt files found in {level_dir}")
+    # Collect room sources; prefer TMX when both exist for the same roomNN.
+    room_sources: dict[int, Path] = {}
+    for p in sorted(level_dir.glob("room*.txt")):
+        room_sources[_parse_room_index(p)] = p
+    for p in sorted(level_dir.glob("room*.tmx")):
+        room_sources[_parse_room_index(p)] = p
 
-    rooms = [parse_room(p) for p in room_paths]
-    rooms.sort(key=lambda r: r.index)
+    if not room_sources:
+        raise SystemExit(f"no room*.tmx or room*.txt files found in {level_dir}")
+
+    rooms = [parse_room(p) for _, p in sorted(room_sources.items(), key=lambda kv: kv[0])]
 
     # Enforce contiguous indices starting at 0 for now.
     for want, r in enumerate(rooms):
@@ -235,6 +605,107 @@ def main() -> None:
     emit_exit_tables("right", exits_right)
     emit_exit_tables("up", exits_up)
     emit_exit_tables("down", exits_down)
+
+    # TMX-authored object ids must be unique across the whole level.
+    seen_ids: dict[str, str] = {}
+    for r in rooms:
+        for typ, x, y, obj_id, _channel in r.objects:
+            # Ignore synthetic ids from legacy .meta fallback.
+            if obj_id.startswith("__meta__:"):
+                continue
+            if obj_id in seen_ids:
+                raise SystemExit(
+                    f"{level_dir}: duplicate object id {obj_id!r} (seen in {seen_ids[obj_id]} and {r.name}:{typ}@{x},{y})"
+                )
+            seen_ids[obj_id] = f"{r.name}:{typ}@{x},{y}"
+
+    # ---------------------------------------------------------------------
+    # Persistent gameplay objects (level-global)
+    #
+    # Emit:
+    # - OBJ_COUNT
+    # - .obj_defs: per-object definitions (level-global)
+    # - .obj_room_counts/.obj_room_ptrs and per-room lists of obj_index values
+    #
+    # obj_defs entry format (OBJ_DEF_SIZE bytes):
+    #   0: type_id
+    #   1: channel (0..7)
+    #   2: init_flags (runtime-defined; usually 0)
+    #   3: home_room_index
+    #   4: home_x (cell)
+    #   5: home_y (cell)
+    #
+    # Notes:
+    # - Stable obj_index is derived from the TMX "id" string and is consistent
+    #   across builds as long as ids are stable.
+    # - Legacy .meta fallback objects are included but are sorted last.
+
+    @dataclass(frozen=True)
+    class Obj:
+        obj_id: str
+        type_id: int
+        channel: int
+        home_room: int
+        home_x: int
+        home_y: int
+
+    objs: list[Obj] = []
+    for r in rooms:
+        for typ, x, y, obj_id, channel in r.objects:
+            if typ not in OBJECT_TYPE_TO_ID:
+                raise SystemExit(f"{level_dir}: {r.name}: unknown obj type {typ!r}")
+            objs.append(
+                Obj(
+                    obj_id=obj_id,
+                    type_id=OBJECT_TYPE_TO_ID[typ],
+                    channel=channel,
+                    home_room=r.index,
+                    home_x=x,
+                    home_y=y,
+                )
+            )
+
+    # Deterministic global ordering.
+    objs.sort(key=lambda o: (o.obj_id.startswith("__meta__:"), o.obj_id))
+    obj_id_to_index = {o.obj_id: i for i, o in enumerate(objs)}
+
+    lines.append(f"OBJ_COUNT = {len(objs)}")
+    lines.append(f"OBJ_DEF_SIZE = {OBJ_DEF_SIZE}")
+    lines.append("")
+
+    lines.append(".obj_defs")
+    if not objs:
+        lines.append("    ; (no objects)")
+    else:
+        flat: list[int] = []
+        for o in objs:
+            init_flags = 0
+            flat.extend([o.type_id, o.channel, init_flags, o.home_room, o.home_x, o.home_y])
+        lines.append(format_eqbytes(flat, per_line=16))
+    lines.append("")
+
+    # Per-room lists of obj_index values (authored presence, not dynamic position).
+    room_indices: list[list[int]] = [[] for _ in rooms]
+    for o in objs:
+        room_indices[o.home_room].append(obj_id_to_index[o.obj_id])
+
+    lines.append(".obj_room_counts")
+    for idxs in room_indices:
+        lines.append(f"    EQUB {len(idxs)}")
+    lines.append("")
+
+    lines.append(".obj_room_ptrs")
+    for i in range(len(room_indices)):
+        lines.append(f"    EQUW {level_name}_room{i:02d}_obj_indices")
+    lines.append("")
+
+    for i, idxs in enumerate(room_indices):
+        lines.append(f".{level_name}_room{i:02d}_obj_indices")
+        if not idxs:
+            lines.append("    ; (no objects)")
+        else:
+            lines.append(format_eqbytes(idxs, per_line=16))
+        lines.append("")
 
     for r in rooms:
         lines.append(f".{level_name}_{r.name}")
