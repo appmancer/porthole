@@ -1,0 +1,942 @@
+; reticle.asm
+; Reticle control + placement validity (including LOS).
+
+; Poll reticle movement while SHIFT is held.
+; Z/X/:/ move reticle over the placement grid:
+; - X in 8px tile columns (reticle_cell_x = top-left of 2-tile span)
+; - Y in 16px tile rows
+; Output: C=1 if redraw needed.
+.poll_reticle_keys
+    ; Use temp_y as our local "needs redraw" flag.
+    ; (temp is used inside is_portalable/is_solid, so don't use it here.)
+    LDA #0
+    STA temp_y
+
+    ; Ensure reticle is active.
+    LDA reticle_active
+    BNE reticle_already_active
+    LDA #1
+    STA reticle_active
+    LDA #1
+    STA temp_y
+.reticle_already_active
+
+    ; Entering reticle mode: snap reticle to Chell gun position.
+    LDA keys_pressed
+    AND #8
+    BEQ reticle_skip_snap
+
+    ; x = calc_char_x + 8 (roughly Chell center)
+    ; reticle_cell_x is the top-left 8px tile_x of a 2-tile-wide portal span.
+    JSR calc_char_x
+    CLC
+    ADC #8
+    LSR A
+    LSR A
+    LSR A
+    CMP #15
+    BCC reticle_snap_x_ok
+    LDA #14
+ .reticle_snap_x_ok
+    STA reticle_cell_x
+
+    ; y = calc_char_y + 16 (roughly mid-body)
+    JSR calc_char_y
+    CLC
+    ADC #16
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CMP #16
+    BCC reticle_snap_y_ok
+    LDA #15
+.reticle_snap_y_ok
+    STA reticle_cell_y
+
+    LDA #1
+    STA temp_y
+.reticle_skip_snap
+
+    ; Chell stays idle (stop horizontal stepping)
+    LDA move_held
+    STA last_move_held
+    LDA #0
+    STA move_held
+    STA move_cooldown
+
+    ; Reticle movement with simple repeat.
+    ; - If a direction was newly pressed, move immediately.
+    ; - Otherwise, repeat while held using a cooldown.
+
+    ; If any direction is newly pressed, bypass cooldown.
+    LDA keys_pressed
+    AND #(1+2+16+32)
+    BEQ reticle_cd_tick
+    LDA #0
+    STA reticle_move_cd
+
+ .reticle_cd_tick
+    LDA reticle_move_cd
+    BEQ reticle_try_move
+    DEC reticle_move_cd
+    JMP reticle_update_state
+
+ .reticle_try_move
+    ; Prefer left, then right, then up, then down.
+
+    ; Left
+    LDA keys_held
+    AND #1
+    BEQ reticle_try_right
+    LDA reticle_cell_x
+    BEQ reticle_try_right
+    DEC reticle_cell_x
+    LDA #4
+    STA reticle_move_cd
+    LDA #1
+    STA temp_y
+    JMP reticle_update_state
+
+ .reticle_try_right
+    ; Right
+    LDA keys_held
+    AND #2
+    BEQ reticle_try_up
+    LDA reticle_cell_x
+    CMP #14
+    BEQ reticle_try_up
+    INC reticle_cell_x
+    LDA #4
+    STA reticle_move_cd
+    LDA #1
+    STA temp_y
+    JMP reticle_update_state
+
+ .reticle_try_up
+    ; Up
+    LDA keys_held
+    AND #16
+    BEQ reticle_try_down
+    LDA reticle_cell_y
+    BEQ reticle_try_down
+    DEC reticle_cell_y
+    LDA #4
+    STA reticle_move_cd
+    LDA #1
+    STA temp_y
+    JMP reticle_update_state
+
+ .reticle_try_down
+    ; Down
+    LDA keys_held
+    AND #32
+    BEQ reticle_update_state
+    LDA reticle_cell_y
+    CMP #15
+    BEQ reticle_update_state
+    INC reticle_cell_y
+    LDA #4
+    STA reticle_move_cd
+    LDA #1
+    STA temp_y
+
+ .reticle_update_state
+    ; Update reticle_state from portalability (no LOS yet).
+    ;
+    ; In the side-on platform view:
+    ; - Floor/ceiling portals are 16x16 pixels (2 tiles wide x 1 tile tall)
+    ; - Wall portals are 8x32 pixels (1 tile wide x 2 tiles tall)
+    ; - Back-wall portals are 16x32 pixels (2 tiles wide x 2 tiles tall)
+    ;
+    ; Rules (current):
+    ; - Floor: two adjacent tiles must both be ╥ (tile id 2)
+    ; - Ceiling: two adjacent tiles must both be ╨ (tile id 4)
+    ; - Wall: two stacked tiles must both be ╢ (tile id 3) or both be ╟ (tile id 5)
+    ;   (we accept either the left or right 8px column within the 16px portal cell)
+
+    ; tile_x0 = reticle_cell_x (top-left)
+    LDA reticle_cell_x
+    STA col_counter
+    ; tile_x1 = tile_x0 + 1
+    CLC
+    ADC #1
+    STA row_counter
+
+    ; -------- Floor / ceiling test (2x1) --------
+    ; idx0 = times16_table[y] + tile_x0
+    LDY reticle_cell_y
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    STA temp
+
+    ; idx1 = idx0 + 1
+    INY
+    LDA (tilemap_ptr),Y
+    CMP temp
+    BNE reticle_try_wall
+
+    ; Must be floor or ceiling face.
+    LDA temp
+    CMP #2
+    BEQ reticle_floor_ceiling_match
+    CMP #4
+    BEQ reticle_floor_ceiling_match
+    JMP reticle_try_wall
+
+ .reticle_floor_ceiling_match
+    LDA #1
+    STA reticle_debug_reason
+    ; Orient from tile type: 2=floor face, 4=ceiling face
+    LDA temp
+    CMP #4
+    BEQ reticle_is_ceiling
+    LDA #PORTAL_ORIENT_FLOOR
+    BNE reticle_fc_orient_done
+ .reticle_is_ceiling
+    LDA #PORTAL_ORIENT_CEIL
+ .reticle_fc_orient_done
+    STA reticle_wall_orient
+    JMP reticle_set_green
+
+    ; -------- Wall test (1x2) --------
+ .reticle_try_wall
+    ; Need 2 tiles height.
+    LDA reticle_cell_y
+    CMP #15
+    BNE reticle_wall_height_ok
+    JMP reticle_set_blocked
+ .reticle_wall_height_ok
+
+    ; Try left column: (tile_x0, y) and (tile_x0, y+1)
+    LDY reticle_cell_y
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    STA temp
+
+    ; temp must be 3 (╢) or 5 (╟)
+    CMP #3
+    BEQ wall_left_ok_type
+    CMP #5
+    BNE reticle_try_wall_right
+ .wall_left_ok_type
+
+    ; Compare with below tile.
+    LDY reticle_cell_y
+    INY
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    CMP temp
+    BNE reticle_try_wall_right
+     LDA #2
+     STA reticle_debug_reason
+     ; temp is tile type (3=left wall, 5=right wall)
+     LDA temp
+     CMP #5
+     BNE wall_left_is_left
+     LDA #1
+     BNE wall_left_orient_done
+   .wall_left_is_left
+     LDA #0
+   .wall_left_orient_done
+     STA reticle_wall_orient
+      JMP reticle_set_green
+
+ .reticle_try_wall_right
+    ; Try right column: (tile_x1, y) and (tile_x1, y+1)
+    LDY reticle_cell_y
+    LDA times16_table,Y
+    CLC
+    ADC row_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    STA temp
+
+    CMP #3
+    BEQ wall_right_ok_type
+    CMP #5
+    BEQ wall_right_ok_type
+    JMP reticle_try_backwall
+ .wall_right_ok_type
+
+    LDY reticle_cell_y
+    INY
+    LDA times16_table,Y
+    CLC
+    ADC row_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    CMP temp
+    BNE reticle_try_backwall
+      LDA #3
+      STA reticle_debug_reason
+      ; temp is tile type (3=left wall, 5=right wall)
+      LDA temp
+      CMP #5
+      BNE wall_right_is_left
+      LDA #1
+      BNE wall_right_orient_done
+    .wall_right_is_left
+      LDA #0
+    .wall_right_orient_done
+      STA reticle_wall_orient
+      JMP reticle_set_green
+
+    ; -------- Back-wall test (2x2 empties) --------
+    ; Back wall is represented by empty tiles (id 0).
+    ; Requires a 2x2 empty space; the reticle indicates the centre point where
+    ; the four tiles meet.
+
+ .reticle_try_backwall
+     ; Try top-left at (x0, y)
+     JSR reticle_backwall_at_y
+     BCC reticle_set_blocked
+       LDA #4
+       STA reticle_debug_reason
+      LDA #PORTAL_ORIENT_BACK
+      STA reticle_wall_orient
+      JMP reticle_set_green
+
+
+; Check back-wall portalability (2x2 empty) at current reticle_cell_y.
+; Returns C=1 if tile(y,x0..x1) and tile(y+1,x0..x1) are all 0.
+.reticle_backwall_at_y
+    ; Need 2 tiles height.
+    LDA reticle_cell_y
+    CMP #15
+    BEQ backwall_fail
+
+    ; row y
+    LDY reticle_cell_y
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    BNE backwall_fail
+    INY
+    LDA (tilemap_ptr),Y
+    BNE backwall_fail
+
+    ; row y+1
+    LDY reticle_cell_y
+    INY
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+    LDA (tilemap_ptr),Y
+    BNE backwall_fail
+    INY
+    LDA (tilemap_ptr),Y
+    BNE backwall_fail
+
+    SEC
+    RTS
+
+ .backwall_fail
+    CLC
+    RTS
+
+
+ .reticle_set_green
+    ; Candidate surface match passed; now require line-of-sight.
+    JSR reticle_check_los
+    BCS reticle_set_green_now
+
+    ; LOS blocked: keep the base reason but mark it with bit 7.
+    LDA reticle_debug_reason
+    ORA #&80
+    STA reticle_debug_reason
+    JMP reticle_set_blocked_los
+
+ .reticle_set_green_now
+    LDA reticle_state
+    CMP #1
+    BEQ reticle_done
+    LDA #1
+    STA reticle_state
+    LDA #1
+    STA temp_y
+    JMP reticle_done
+
+  ; Blocked due to LOS. Do not clear reticle_debug_reason (it already contains
+  ; the base reason, possibly ORed with $80).
+ .reticle_set_blocked_los
+    LDA reticle_state
+    BEQ reticle_done
+    LDA #0
+    STA reticle_state
+    LDA #1
+    STA temp_y
+    JMP reticle_done
+
+ .reticle_set_blocked
+    LDA #0
+    STA reticle_debug_reason
+    STA reticle_wall_orient
+    LDA reticle_state
+    BEQ reticle_done
+    LDA #0
+    STA reticle_state
+    LDA #1
+    STA temp_y
+
+ .reticle_done
+    LDA temp_y
+    BEQ reticle_no_redraw
+    SEC
+    RTS
+ .reticle_no_redraw
+    CLC
+    RTS
+
+
+; --- Reticle line-of-sight ---
+;
+; Returns C=1 if Chell can see the candidate portal target, else C=0.
+; Uses the solid-tile plane (SOLID_TILE_PLANE) only.
+.reticle_check_los
+    ; Ray start (gun position) from Chell.
+    ; Use a point near the gun muzzle, biased by facing direction.
+    ; (This avoids starting inside nearby solid tiles when Chell hugs walls.)
+    JSR calc_char_x
+    STA temp
+
+    LDA anim_dir
+    BNE los_gun_right
+    ; facing left
+    LDA temp
+    CLC
+    ADC #2
+    STA los_x0
+    JMP los_gun_y
+  .los_gun_right
+    LDA temp
+    CLC
+    ADC #13
+    STA los_x0
+
+  .los_gun_y
+    JSR calc_char_y
+    CLC
+    ADC #12
+    STA los_y0
+
+    ; Compute ray target based on the chosen placement kind.
+    LDA reticle_debug_reason
+    AND #&7F
+    BNE reticle_los_kind_ok
+    CLC
+    RTS
+  .reticle_los_kind_ok
+    CMP #1
+    BEQ reticle_los_target_floor
+    CMP #2
+    BEQ reticle_los_target_wall_left
+    CMP #3
+    BEQ reticle_los_target_wall_right
+    CMP #4
+    BEQ reticle_los_target_backwall_y
+    CMP #5
+    BEQ reticle_los_target_backwall_yminus1
+    JMP reticle_los_fail
+
+  ; --- Floor/ceiling (2x1) ---
+  .reticle_los_target_floor
+    ; target_x = reticle_cell_x*8 + 8 (centre of 2-tile span)
+    LDA reticle_cell_x
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #8
+    STA los_x1
+
+    ; Compute tile top Y = reticle_cell_y*16.
+    LDA reticle_cell_y
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    STA los_y1
+
+    ; Choose the side of the solid tile that faces the shooter.
+    ; If shooter is above tile centre -> aim just above the tile; else just below.
+    CLC
+    ADC #8              ; A = tile_top + 8 (centre)
+    CMP los_y0
+    BCC los_floor_shooter_below
+
+    ; shooter above: y = tile_top - 1 (clamped)
+    LDA los_y1
+    BEQ los_floor_y_ok
+    DEC los_y1
+  .los_floor_y_ok
+    JMP reticle_los_nudge_and_cast
+
+  .los_floor_shooter_below
+    ; shooter below: y = tile_top + 16
+    LDA los_y1
+    CLC
+    ADC #16
+    STA los_y1
+    JMP reticle_los_nudge_and_cast
+
+  ; --- Wall (1x2), left column ---
+  .reticle_los_target_wall_left
+    LDA reticle_cell_x
+    JMP reticle_los_wall_common
+
+  ; --- Wall (1x2), right column ---
+  .reticle_los_target_wall_right
+    LDA reticle_cell_x
+    CLC
+    ADC #1
+  .reticle_los_wall_common
+    ; A = wall tile_x
+    ; Compute wall tile left pixel X = tile_x*8 in temp.
+    STA temp
+    ASL A
+    ASL A
+    ASL A
+    STA los_x1           ; provisional: tile_left
+
+    ; target_y = reticle_cell_y*16 + 16 (centre of 2-tile height)
+    LDA reticle_cell_y
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #16
+    STA los_y1
+
+    ; Choose the side of the solid tile that faces the shooter.
+    ; If shooter is left of tile centre -> x = tile_left - 1, else x = tile_left + 8.
+    LDA los_x1
+    CLC
+    ADC #4               ; tile centre X
+    CMP los_x0
+    BCC los_wall_shooter_right
+
+    ; shooter left: x = tile_left - 1 (clamped)
+    LDA los_x1
+    BEQ los_wall_x_ok
+    DEC los_x1
+  .los_wall_x_ok
+    JMP reticle_los_nudge_and_cast
+
+  .los_wall_shooter_right
+    ; shooter right: x = tile_left + 8
+    LDA los_x1
+    CLC
+    ADC #8
+    CMP #128
+    BCC los_wall_right_ok
+    LDA #127
+  .los_wall_right_ok
+    STA los_x1
+    JMP reticle_los_nudge_and_cast
+
+  ; --- Backwall (2x2 empty), at y ---
+  .reticle_los_target_backwall_y
+    LDA reticle_cell_y
+    JMP reticle_los_backwall_common
+
+  ; --- Backwall (2x2 empty), at y-1 ---
+  .reticle_los_target_backwall_yminus1
+    LDA reticle_cell_y
+    BEQ reticle_los_fail
+    SEC
+    SBC #1
+  .reticle_los_backwall_common
+    ; Preserve effective tile_y (in A) before computing X.
+    STA temp_y
+
+    ; target_x = reticle_cell_x*8 + 8 (centre)
+    LDA reticle_cell_x
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #8
+    STA los_x1
+
+    ; target_y = tile_y*16 + 16 (centre of 2-tile height)
+    ; Restore effective tile_y.
+    LDA temp_y
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #16
+    STA los_y1
+    ; Back-wall target is on a tile join; nudge toward shooter to avoid
+    ; boundary cases that can falsely hit solids.
+    JMP reticle_los_nudge_and_cast
+
+  ; Nudge target 1px toward the shooter (helps avoid grazing the destination wall).
+  .reticle_los_nudge_and_cast
+    ; Nudge X
+    LDA los_x1
+    CMP los_x0
+    BEQ reticle_los_nudge_y
+    BCC reticle_los_nudge_x_right
+    ; target > shooter: move target left
+    LDA los_x1
+    BEQ reticle_los_nudge_y
+    DEC los_x1
+    JMP reticle_los_nudge_y
+  .reticle_los_nudge_x_right
+    ; target < shooter: move target right
+    LDA los_x1
+    CMP #127
+    BEQ reticle_los_nudge_y
+    INC los_x1
+
+  .reticle_los_nudge_y
+    ; Nudge Y
+    LDA los_y1
+    CMP los_y0
+    BEQ reticle_los_cast
+    BCC reticle_los_nudge_y_down
+    ; target > shooter: move target up
+    LDA los_y1
+    BEQ reticle_los_cast
+    DEC los_y1
+    JMP reticle_los_cast
+  .reticle_los_nudge_y_down
+    ; target < shooter: move target down
+    LDA los_y1
+    CMP #255
+    BEQ reticle_los_cast
+    INC los_y1
+
+  .reticle_los_cast
+    JSR los_line_clear
+    RTS
+
+  .reticle_los_fail
+    CLC
+    RTS
+
+
+; Test line-of-sight from (los_x0,los_y0) to (los_x1,los_y1).
+; Returns C=1 if clear, else C=0.
+.los_line_clear
+    ; Compute step + abs delta for X.
+    LDA los_x1
+    SEC
+    SBC los_x0
+    BCS los_dx_pos
+    ; negative => sx = -1
+    LDA #&FF
+    STA los_sx
+    LDA los_x0
+    SEC
+    SBC los_x1
+    STA los_dx
+    JMP los_dx_done
+  .los_dx_pos
+    LDA #1
+    STA los_sx
+    STA temp              ; temp=1 (used only to avoid reloading)
+    LDA los_x1
+    SEC
+    SBC los_x0
+    STA los_dx
+  .los_dx_done
+
+    ; Compute step + abs delta for Y.
+    LDA los_y1
+    SEC
+    SBC los_y0
+    BCS los_dy_pos
+    ; negative => sy = -1
+    LDA #&FF
+    STA los_sy
+    LDA los_y0
+    SEC
+    SBC los_y1
+    STA los_dy
+    JMP los_dy_done
+  .los_dy_pos
+    LDA #1
+    STA los_sy
+    LDA los_y1
+    SEC
+    SBC los_y0
+    STA los_dy
+  .los_dy_done
+
+    ; Seed prev tile to the starting tile so we don't immediately fail when the
+    ; gun point is inside/overlapping solid (e.g. hugging a wall).
+    JSR los_seed_prev_tile
+
+    ; Choose major axis.
+    LDA los_dx
+    CMP los_dy
+    BCS los_x_major
+
+    ; --- Y-major ---
+    LDA los_dy
+    STA los_steps
+    LSR A
+    STA los_err
+  .los_y_loop
+    ; Block if we enter a solid tile.
+    JSR los_check_tile
+    BCS los_blocked
+
+    ; Reached target?
+    LDA los_x0
+    CMP los_x1
+    BNE los_y_not_done
+    LDA los_y0
+    CMP los_y1
+    BEQ los_clear
+  .los_y_not_done
+
+    LDA los_steps
+    BEQ los_blocked
+
+    ; Step Y.
+    LDA los_y0
+    CLC
+    ADC los_sy
+    STA los_y0
+
+    ; err -= dx; if borrow, step X and err += dy
+    LDA los_err
+    SEC
+    SBC los_dx
+    STA los_err
+    BCS los_y_err_ok
+    LDA los_x0
+    CLC
+    ADC los_sx
+    STA los_x0
+    LDA los_err
+    CLC
+    ADC los_dy
+    STA los_err
+  .los_y_err_ok
+
+    DEC los_steps
+    JMP los_y_loop
+
+  ; --- X-major ---
+  .los_x_major
+    LDA los_dx
+    STA los_steps
+    LSR A
+    STA los_err
+  .los_x_loop
+    JSR los_check_tile
+    BCS los_blocked
+
+    LDA los_x0
+    CMP los_x1
+    BNE los_x_not_done
+    LDA los_y0
+    CMP los_y1
+    BEQ los_clear
+  .los_x_not_done
+
+    LDA los_steps
+    BEQ los_blocked
+
+    ; Step X.
+    LDA los_x0
+    CLC
+    ADC los_sx
+    STA los_x0
+
+    ; err -= dy; if borrow, step Y and err += dx
+    LDA los_err
+    SEC
+    SBC los_dy
+    STA los_err
+    BCS los_x_err_ok
+    LDA los_y0
+    CLC
+    ADC los_sy
+    STA los_y0
+    LDA los_err
+    CLC
+    ADC los_dx
+    STA los_err
+  .los_x_err_ok
+
+    DEC los_steps
+    JMP los_x_loop
+
+  .los_clear
+    SEC
+    RTS
+
+  .los_blocked
+    CLC
+    RTS
+
+
+; Seed los_prev_tile to the tile containing the current (los_x0,los_y0), using
+; the same boundary-bias logic as los_check_tile, but without testing solidity.
+.los_seed_prev_tile
+    ; ---- tile_x ----
+    LDA los_x0
+    STA temp
+    AND #7
+    BNE los_seed_x_ok
+
+    LDA los_sx
+    CMP #1
+    BNE los_seed_x_left
+    LDA temp
+    CMP #127
+    BEQ los_seed_x_ok
+    INC temp
+    JMP los_seed_x_ok
+  .los_seed_x_left
+    LDA temp
+    BEQ los_seed_x_ok
+    DEC temp
+
+  .los_seed_x_ok
+    LDA temp
+    LSR A
+    LSR A
+    LSR A
+    STA col_counter
+
+    ; ---- tile_y ----
+    LDA los_y0
+    STA temp
+    AND #&0F
+    BNE los_seed_y_ok
+
+    LDA los_sy
+    CMP #1
+    BNE los_seed_y_up
+    LDA temp
+    CMP #255
+    BEQ los_seed_y_ok
+    INC temp
+    JMP los_seed_y_ok
+  .los_seed_y_up
+    LDA temp
+    BEQ los_seed_y_ok
+    DEC temp
+
+  .los_seed_y_ok
+    LDA temp
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAY
+
+    ; tilepos = tile_y*16 + tile_x
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    STA los_prev_tile
+    RTS
+
+
+; Check whether the ray has entered a new tile, and if so, test solidity.
+; Returns C=1 if blocked by a solid tile, else C=0.
+.los_check_tile
+    ; Convert pixel (x,y) to tile (8x16) with direction-aware boundary bias.
+    ; This avoids false hits when the ray runs exactly along a tile edge.
+
+    ; ---- tile_x ----
+    LDA los_x0
+    STA temp
+    AND #7
+    BNE los_tile_x_ok
+
+    ; On an 8px boundary: bias toward travel direction.
+    LDA los_sx
+    CMP #1
+    BNE los_tile_x_bias_left
+    ; moving right: x++ (clamp)
+    LDA temp
+    CMP #127
+    BEQ los_tile_x_ok
+    INC temp
+    JMP los_tile_x_ok
+  .los_tile_x_bias_left
+    ; moving left: x-- (clamp)
+    LDA temp
+    BEQ los_tile_x_ok
+    DEC temp
+
+  .los_tile_x_ok
+    LDA temp
+    LSR A
+    LSR A
+    LSR A
+    STA col_counter
+
+    ; ---- tile_y ----
+    LDA los_y0
+    STA temp
+    AND #&0F
+    BNE los_tile_y_ok
+
+    ; On a 16px boundary: bias toward travel direction.
+    LDA los_sy
+    CMP #1
+    BNE los_tile_y_bias_up
+    ; moving down: y++ (clamp)
+    LDA temp
+    CMP #255
+    BEQ los_tile_y_ok
+    INC temp
+    JMP los_tile_y_ok
+  .los_tile_y_bias_up
+    ; moving up: y-- (clamp)
+    LDA temp
+    BEQ los_tile_y_ok
+    DEC temp
+
+  .los_tile_y_ok
+    LDA temp
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAY
+
+    ; tilepos = tile_y*16 + tile_x
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+
+    ; Only test when we enter a new tile.
+    TYA
+    CMP los_prev_tile
+    BEQ los_tile_ok
+    STA los_prev_tile
+
+    LDA SOLID_TILE_PLANE,Y
+    BEQ los_tile_ok
+    SEC
+    RTS
+
+  .los_tile_ok
+    CLC
+    RTS
