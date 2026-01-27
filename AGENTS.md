@@ -137,4 +137,4 @@ These are project-level rules that should remain true even as features evolve.
 Large tool outputs can trigger TPM rate limits. Prefer small, incremental iterations:
 
 - Keep terminal output small (avoid full `git diff` dumps; prefer `--stat`).
-- When reverse engineering, extract small chunks and record findings in a repo file (e.g. `nevyron_notes.md`) instead of pasting long disassemblies into chat.
+- When reverse engineering, extract small chunks and record findings in a repo file (e.g. `reference/nevyron_notes.md`) instead of pasting long disassemblies into chat.

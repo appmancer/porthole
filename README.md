@@ -254,10 +254,10 @@ The repo contains several research notes that are worth reading for context:
 
 - `next_steps.md` – rendering + memory plan (buffers, save-under strategy, material planes).
 - `pop_beeb_lessons.md` – notes inspired by Prince of Persia/BBC techniques.
-- `spycat_notes.md` – notes on Spycat sprite formats and rendering.
+- `reference/spycat_notes.md` – notes on Spycat sprite formats and rendering.
 - `stardot_sprite_routines.md` – collected sprite routine references.
 - `retrosoftware_lessons.md`, `strykers_run_enhanced_lessons.md`, `codename_droid_lessons.md` – engine notes from other BBC projects.
-- `sprites/Chell Sprite Requirements.md` – checklist of sprite/overlay requirements.
+- `reference/sprites/Chell Sprite Requirements.md` – checklist of sprite/overlay requirements.
 
 Reference material is also stored under `books/`.
 

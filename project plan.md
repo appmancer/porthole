@@ -196,7 +196,7 @@ Authoring files
   - point objects with type `cube|button|pad|exit`
   - required property `id=<string>` unique across the whole level (for persistence)
   - property `channel=<int>` (defaults to 0 in tooling if omitted)
-- Legacy gameplay metadata (`roomNN.meta`) remains as a fallback only (see `levels/meta_spec.md`).
+- Legacy gameplay metadata (`roomNN.meta`) remains as a fallback only (see `reference/levels/meta_spec.md`).
 
 Build outputs
 

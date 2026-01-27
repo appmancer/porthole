@@ -175,7 +175,7 @@ Object coordinates are in cell units, and represent the object's anchor (typical
 
 We plan to extend `.meta` to support **signal channels** (bits) and more object types (doors, laser emitters/targets).
 
-Design reference: `levels/signals_and_lasers.md`.
+Design reference: `reference/levels/signals_and_lasers.md`.
 
 ### Proposed syntax (sketch)
 

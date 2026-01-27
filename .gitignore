@@ -27,7 +27,9 @@ STATUS.md
 Nevryon.ssd
 levels/room00.txt
 levels/level1/Level1txt
-nevyron_annotated_disasm.md
-nevyron_notes.md
+/nevyron_annotated_disasm.md
+/nevyron_notes.md
+/reference/nevyron_annotated_disasm.md
+/reference/nevyron_notes.md
 tools/b2-scan-zp.py
 tools/b2-watch-key.py

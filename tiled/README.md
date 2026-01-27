@@ -24,7 +24,7 @@ Room metadata
 - Preferred: author exits and gameplay objects directly in TMX object layers:
   - objectgroup `meta`: edge exits as rectangle objects of type `edge_exit` with property `to=roomNN`
   - objectgroup `objects`: gameplay objects as point objects with type `cube|button|pad|exit`
-- Legacy: `levels/<level>/roomNN.meta` (see `levels/meta_spec.md`)
+- Legacy: `levels/<level>/roomNN.meta` (see `reference/levels/meta_spec.md`)
 
 Migration helper
 

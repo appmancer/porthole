@@ -145,7 +145,7 @@ Note: if we later need pixel-accurate beam blocking, we can refine the grid, but
 
 ## Metadata / Authoring (Planned Extensions)
 
-`levels/meta_spec.md` currently supports:
+`reference/levels/meta_spec.md` currently supports:
 
 - `exit ... -> roomNN`
 - `obj cube|button|pad|exit x y`
