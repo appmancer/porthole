@@ -411,6 +411,20 @@
     JSR is_char_grounded
     BCC apply_airborne
 
+    ; If we were airborne last frame, landing changes pose (jump -> idle), so
+    ; force a redraw even if we didn't move this frame.
+    LDA char_grounded
+    BNE apply_grounded_already
+
+    LDA #1
+    STA char_grounded
+    LDA #0
+    STA char_vy
+    STA gravity_cooldown
+    SEC
+    RTS
+
+ .apply_grounded_already
     LDA #1
     STA char_grounded
     LDA #0
@@ -467,7 +481,7 @@
     STA temp
     JMP apply_gravity_only
 
-.hit_ground
+ .hit_ground
     ; Collided: stop and mark grounded.
     LDA #0
     STA char_vy
@@ -475,6 +489,10 @@
     STA fall_cooldown
     LDA #1
     STA char_grounded
+
+    ; Landing changes pose (jump -> idle), so force a redraw even if we didn't
+    ; move this frame.
+    STA temp
     JMP apply_return
 
 .hit_ceiling

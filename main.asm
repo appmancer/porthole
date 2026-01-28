@@ -613,10 +613,8 @@ CHELL_JUMP_LEFT_BASE        = 36
         LDA reticle_active
         BNE aim_change_done
 
-        ; Aim changes should trigger redraw while running (overlay changes).
+        ; Aim changes should trigger redraw while grounded (overlay changes).
         LDA char_grounded
-        BEQ aim_change_done
-        LDA move_held
         BEQ aim_change_done
         LDA aim_held
         CMP last_aim_held

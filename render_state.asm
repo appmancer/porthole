@@ -179,7 +179,43 @@
     STA chell_overlay_index
     RTS
 
- .cs_overlay_forward
+  .cs_overlay_forward
+    ; Airborne always uses gun-forward overlay.
+    ; Grounded idle can aim up/down via aim_held.
+    LDA char_grounded
+    BEQ cs_overlay_forward_noaim
+
+    ; Grounded idle: allow up/down aim overlays.
+    ; aim_held: 0=none, 1=up, 2=down
+    LDA aim_held
+    BEQ cs_overlay_idle_aimframe_ok
+    CMP #2
+    BNE cs_overlay_idle_aim_up
+    LDA #1
+    BNE cs_overlay_idle_aimframe_ok
+ .cs_overlay_idle_aim_up
+    LDA #2
+ .cs_overlay_idle_aimframe_ok
+    ASL A
+    ASL A
+    STA temp
+
+    ; Facing left adds 12.
+    LDA anim_dir
+    BNE cs_overlay_idle_dir_ok
+    LDA temp
+    CLC
+    ADC #CHELL_RUN_LEFT_BASE
+    STA temp
+ .cs_overlay_idle_dir_ok
+
+    LDA temp
+    CLC
+    ADC char_pixel_offset
+    STA chell_overlay_index
+    RTS
+
+ .cs_overlay_forward_noaim
     LDA anim_dir
     BNE cs_overlay_forward_right
     LDA #CHELL_RUN_LEFT_BASE
