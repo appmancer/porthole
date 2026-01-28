@@ -85,6 +85,16 @@ EQUW chell_rgun_l3_x1
 EQUW chell_rgun_l3_x2
 EQUW chell_rgun_l3_x3
 
+; Carrying cube overlays (single pose), right then left.
+EQUW chell_carry_r_x0
+EQUW chell_carry_r_x1
+EQUW chell_carry_r_x2
+EQUW chell_carry_r_x3
+EQUW chell_carry_l_x0
+EQUW chell_carry_l_x1
+EQUW chell_carry_l_x2
+EQUW chell_carry_l_x3
+
 ; Reticle sprites (16x16). Generated from `sprites/Reticles - Reference.csv`.
 ; reticle_x0 = blocked/unportalable, reticle_x1 = portalable.
 .reticle_sprite_table

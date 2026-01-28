@@ -1235,6 +1235,11 @@ SOLID_TILE_PLANE          = &7A00
     CMP #OBJ_TYPE_CUBE
     BNE rsp_obj_next
 
+    ; Carried cubes do not contribute to solidity.
+    LDA obj_state,Y
+    AND #OBJ_STATE_CARRIED
+    BNE rsp_obj_next
+
   .rsp_obj_stamp
     ; idx = obj_y*16 + obj_x
     LDA obj_y,Y

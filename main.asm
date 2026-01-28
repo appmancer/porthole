@@ -69,6 +69,7 @@ ORG &70
 
 .cube_tile_pos       SKIP 1    ; Cube cell position (cell_y*16 + cell_x)
 .cube_byte_offset    SKIP 1    ; Cube byte offset within cell (0/8)
+.carried_cube_idx    SKIP 1    ; $FF = none, else obj_index of carried cube
 .char_sprite_index   SKIP 1    ; Stable sprite index
 
 ; Precomputed render decisions for Chell (computed in update; used in render).
@@ -205,6 +206,10 @@ PORTAL_ORIENT_WALL_R         = 1
 PORTAL_ORIENT_FLOOR          = 2
 PORTAL_ORIENT_CEIL           = 3
 PORTAL_ORIENT_BACK           = 4
+
+; Overlay sprite indices (overlay_sprite_table).
+CHELL_OVERLAY_CARRY_RIGHT_BASE = 24
+CHELL_OVERLAY_CARRY_LEFT_BASE  = 28
 
 ; Persistent gameplay object type IDs (from tools/gen-level output).
 OBJ_TYPE_CUBE                = 1
@@ -366,8 +371,9 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA teleport_exit_x
      STA teleport_exit_y
      STA teleport_exit_orient
-     LDA #&FF
-     STA teleport_last_exit_kind
+      LDA #&FF
+      STA teleport_last_exit_kind
+      STA carried_cube_idx
 
     ; Default: face right.
     LDA #1

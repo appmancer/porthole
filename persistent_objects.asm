@@ -9,6 +9,8 @@
 ; Runtime object arrays are indexed by obj_index (0..OBJ_COUNT-1), initialized
 ; once from `.obj_defs` emitted by `tools/gen-level`.
 
+OBJ_STATE_CARRIED = &80
+
 ; Initialize per-object runtime arrays from generated obj_defs.
 ; Clobbers: A,X,Y,temp,temp_y
 .init_persistent_objects
@@ -320,6 +322,19 @@
     ; Preserve obj_index across stamp_striped_masked (uses Y as stride/loop).
     TYA
     PHA
+
+    ; Skip carried cubes (they're represented by Chell's overlay while held).
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BNE spo_not_carried
+    LDA obj_state,Y
+    AND #OBJ_STATE_CARRIED
+    BEQ spo_not_carried
+    PLA
+    TAY
+    RTS
+  .spo_not_carried
+
     ; screen_ptr := &5800 + y*512 + x*16
     LDA #<(&5800)
     STA screen_ptr
@@ -537,6 +552,11 @@
     CMP #OBJ_TYPE_CUBE
     BNE pad_cube_next
 
+    ; Ignore carried cubes.
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE pad_cube_next
+
     ; Same room?
     LDA obj_room,X
     CMP sprite_ptr          ; pad_room
@@ -594,6 +614,288 @@
 
   .button_done
     LDA col_counter
+    RTS
+
+
+; Handle SPACE edge for cube pickup/drop.
+;
+; Rule: SPACE near cube toggles pickup/drop.
+; - Pickup: cube must be in current_room, at Chell's feet tile_y, and overlap in X.
+; - Drop: attempts to place the cube on Chell's feet tile_y, in front of Chell if possible.
+;
+; Side effects:
+; - Marks objects_pending + obj_dirty so render patches/restamps object stamps.
+; - Sets chell_dirty so overlay updates immediately.
+;
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
+.handle_cube_pickup_drop
+    LDA action_pressed
+    BNE hcpd_go
+    RTS
+  .hcpd_go
+
+    ; Precompute Chell tile coords.
+    ; temp = chell_x (0..15)
+    LDA char_tile_pos
+    AND #15
+    STA temp
+    ; temp_y = chell_y (0..15)
+    LDA char_tile_pos
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    STA temp_y
+    ; row_counter = chell_bottom_y (tile y of feet)
+    ; char_tile_pos stores Chell's top tile row; sprite is 2 tiles tall.
+    LDA temp_y
+    CLC
+    ADC #1
+    STA row_counter
+
+    ; If already carrying, try to drop.
+    LDA carried_cube_idx
+    CMP #&FF
+    BNE hcpd_try_drop
+
+    ; --- Pickup ---
+    LDY #0
+  .hcpd_pick_loop
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BNE hcpd_pick_next
+    LDA obj_state,Y
+    AND #OBJ_STATE_CARRIED
+    BNE hcpd_pick_next
+    LDA obj_room,Y
+    CMP current_room
+    BNE hcpd_pick_next
+    LDA obj_y,Y
+    CMP row_counter
+    BNE hcpd_pick_next
+    ; Pickup should work when Chell is adjacent (cubes are solid, so overlap is rare).
+    JSR chell_near_2wide_obj
+    BCC hcpd_pick_next
+
+    ; Pick up cube Y.
+    TYA
+    STA carried_cube_idx
+    LDA obj_state,Y
+    ORA #OBJ_STATE_CARRIED
+    STA obj_state,Y
+
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+    STA chell_dirty
+    RTS
+
+  .hcpd_pick_next
+    INY
+    CPY #OBJ_COUNT
+    BNE hcpd_pick_loop
+    RTS
+
+
+; C=1 if Chell (temp=chell_x) is near object Y (obj_x[Y]) where both are 2 tiles wide.
+; Near means overlapping OR touching edges (|dx| <= 2).
+; Clobbers: A
+.chell_near_2wide_obj
+    ; dx = obj_left - chell_left
+    LDA obj_x,Y
+    SEC
+    SBC temp
+    BCS cno_dx_pos
+
+    ; dx negative: abs = chell_left - obj_left
+    LDA temp
+    SEC
+    SBC obj_x,Y
+  .cno_dx_pos
+    CMP #3
+    BCS cno_far
+    SEC
+    RTS
+  .cno_far
+    CLC
+    RTS
+
+
+  .hcpd_try_drop
+    ; Y := carried cube index
+    LDA carried_cube_idx
+    TAY
+
+    ; Try drop candidates: in front, behind, then aligned.
+    ; temp already holds chell_x.
+
+    ; candidate0: in front of facing (adjacent; Chell is 2 tiles wide)
+    LDA anim_dir
+    BEQ hcpd_cand0_left
+    ; facing right => x = chell_x + 2
+    LDA temp
+    CLC
+    ADC #2
+    JMP hcpd_try_place
+  .hcpd_cand0_left
+    ; facing left => x = chell_x - 2
+    LDA temp
+    SEC
+    SBC #2
+  .hcpd_try_place
+    JSR try_place_carried_cube_at_x
+    BCS hcpd_drop_success
+
+    ; candidate1: behind
+    LDA anim_dir
+    BEQ hcpd_cand1_left
+    ; facing right => behind is chell_x - 2
+    LDA temp
+    SEC
+    SBC #2
+    JMP hcpd_try_place2
+  .hcpd_cand1_left
+    ; facing left => behind is chell_x + 2
+    LDA temp
+    CLC
+    ADC #2
+  .hcpd_try_place2
+    JSR try_place_carried_cube_at_x
+    BCS hcpd_drop_success
+    RTS
+
+  .hcpd_drop_success
+    ; Drop succeeded: cube is now in room at new coords.
+    LDA #&FF
+    STA carried_cube_idx
+    LDA #1
+    STA chell_dirty
+
+  .hcpd_done
+    RTS
+
+
+; Try to place carried cube (Y=obj_index) at candidate tile X in A.
+; Uses row_counter = chell feet tile_y.
+;
+; Output: C=1 success (object updated + marked dirty), C=0 fail.
+; Clobbers: A,X,temp_y,col_counter
+.try_place_carried_cube_at_x
+    ; Reject if negative (wrapped) or outside 0..14 for 2-tile-wide cube.
+    CMP #&80
+    BCC tpc_chk_hi
+    JMP tpc_fail
+  .tpc_chk_hi
+    CMP #15
+    BCC tpc_range_ok
+    JMP tpc_fail
+  .tpc_range_ok
+
+    ; Ensure doesn't overlap Chell (both 2 tiles wide).
+    STA temp_y              ; cand_x
+
+    ; If cand_left >= chell_left+2 => ok
+    LDA temp
+    CLC
+    ADC #2
+    CMP temp_y
+    BCC tpc_check_world
+    BEQ tpc_check_world
+
+    ; If chell_left >= cand_left+2 => ok
+    LDA temp_y
+    CLC
+    ADC #2
+    CMP temp
+    BCC tpc_check_world
+    BEQ tpc_check_world
+
+    ; overlap
+    CLC
+    RTS
+
+  .tpc_check_world
+    ; Reject if solid tile at (x,y) or (x+1,y).
+    ; idx = row_counter*16 + cand_x
+    LDX row_counter
+    LDA times16_table,X
+    CLC
+    ADC temp_y
+    TAX
+    LDA SOLID_TILE_PLANE,X
+    BEQ tpc_tile0_ok
+    JMP tpc_fail
+  .tpc_tile0_ok
+    INX
+    LDA SOLID_TILE_PLANE,X
+    BEQ tpc_tile1_ok
+    JMP tpc_fail
+  .tpc_tile1_ok
+
+    ; Reject if another non-carried cube overlaps at same y.
+    LDX #0
+  .tpc_cube_scan
+    CPX carried_cube_idx
+    BEQ tpc_cube_next
+    LDA obj_type,X
+    CMP #OBJ_TYPE_CUBE
+    BNE tpc_cube_next
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE tpc_cube_next
+    LDA obj_room,X
+    CMP current_room
+    BNE tpc_cube_next
+    LDA obj_y,X
+    CMP row_counter
+    BNE tpc_cube_next
+
+    ; 2-wide overlap between obj_x[X] and cand_x(temp_y)
+    ; If obj_left >= cand_left+2 => no overlap
+    LDA temp_y
+    CLC
+    ADC #2
+    STA col_counter
+    LDA obj_x,X
+    CMP col_counter
+    BCS tpc_cube_next
+    ; If cand_left >= obj_left+2 => no overlap
+    LDA obj_x,X
+    CLC
+    ADC #2
+    STA col_counter
+    LDA temp_y
+    CMP col_counter
+    BCS tpc_cube_next
+
+    ; overlap => can't place
+    CLC
+    RTS
+
+  .tpc_cube_next
+    INX
+    CPX #OBJ_COUNT
+    BNE tpc_cube_scan
+
+    ; Place cube.
+    LDA current_room
+    STA obj_room,Y
+    LDA temp_y
+    STA obj_x,Y
+    LDA row_counter
+    STA obj_y,Y
+    LDA obj_state,Y
+    AND #&7F
+    STA obj_state,Y
+
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+    SEC
+    RTS
+
+  .tpc_fail
+    CLC
     RTS
 
 
@@ -674,6 +976,16 @@
     JMP rpobj_next
 
   .rpobj_in_room
+    ; Skip carried cubes (they're represented by Chell's overlay while held).
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BNE rpobj_not_carried
+    LDA obj_state,Y
+    AND #OBJ_STATE_CARRIED
+    BEQ rpobj_not_carried
+    JMP rpobj_next
+  .rpobj_not_carried
+
     ; screen_ptr := &5800 + y*512 + x*16
     LDA #<(&5800)
     STA screen_ptr

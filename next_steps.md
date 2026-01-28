@@ -7,11 +7,6 @@ Detailed background/design context lives in `project plan.md`.
 
 ## P1: Gameplay Interactions
 
-1) Pressure pad contact: Chell must stand on top of the pad
-
-   - Replace loose overlap check with a grounded-on-top check (foot Y aligned, support below, and X overlap).
-   - Acceptance: pad triggers only when Chell is actually standing on it, not when brushing/overlapping.
-
 2) Cube pickup/drop
 
    - SPACE near cube toggles pickup/drop.

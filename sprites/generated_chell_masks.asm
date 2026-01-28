@@ -409,6 +409,46 @@
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&EE,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+.chell_carry_r_x0_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&88
+    EQUB &FF,&FF,&FF,&EE,&00,&88,&00,&00,&FF,&FF,&FF,&77,&77,&33,&77,&77
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&88,&CC,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&00,&00,&88,&88,&FF,&FF,&FF,&77,&77,&77,&FF,&FF,&FF,&FF,&FF
+.chell_carry_r_x1_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&CC
+    EQUB &FF,&FF,&FF,&FF,&88,&CC,&00,&00,&FF,&FF,&FF,&33,&33,&11,&33,&33
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&EE,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&00,&88,&CC,&CC,&FF,&FF,&FF,&33,&33,&33,&77,&77,&FF,&FF,&FF
+.chell_carry_r_x2_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&EE
+    EQUB &FF,&FF,&FF,&FF,&CC,&EE,&00,&00,&FF,&FF,&FF,&99,&11,&00,&11,&11
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&EE,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&00,&CC,&EE,&EE,&FF,&FF,&FF,&11,&11,&11,&33,&33,&FF,&FF,&FF
+.chell_carry_r_x3_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&EE,&FF,&00,&00,&FF,&FF,&FF,&CC,&00,&00,&00,&00
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&88,&EE,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&11,&11,&FF,&FF,&FF
+.chell_carry_l_x3_mask
+    EQUB &FF,&FF,&FF,&EE,&EE,&CC,&EE,&EE,&FF,&FF,&FF,&77,&00,&11,&00,&00
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&11,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &EE,&EE,&EE,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&11,&11,&FF,&FF,&FF
+    EQUB &11,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+.chell_carry_l_x2_mask
+    EQUB &FF,&FF,&FF,&CC,&CC,&88,&CC,&CC,&FF,&FF,&FF,&FF,&11,&33,&00,&00
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&33,&33,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &CC,&CC,&CC,&EE,&EE,&FF,&FF,&FF,&00,&00,&11,&33,&33,&FF,&FF,&FF
+    EQUB &33,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+.chell_carry_l_x1_mask
+    EQUB &FF,&FF,&FF,&99,&88,&00,&88,&88,&FF,&FF,&FF,&FF,&33,&77,&00,&00
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&77,&77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &88,&88,&88,&CC,&CC,&FF,&FF,&FF,&00,&00,&33,&77,&77,&FF,&FF,&FF
+    EQUB &77,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+.chell_carry_l_x0_mask
+    EQUB &FF,&FF,&FF,&33,&00,&00,&00,&00,&FF,&FF,&FF,&FF,&77,&FF,&00,&00
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &00,&00,&00,&88,&88,&FF,&FF,&FF,&00,&11,&77,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
 .chell_jump_r_x0_mask
     EQUB &FF,&EE,&CC,&CC,&CC,&CC,&CC,&88,&11,&00,&00,&00,&00,&00,&00,&00
     EQUB &FF,&FF,&77,&33,&33,&33,&33,&11,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF

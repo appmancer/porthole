@@ -71,6 +71,16 @@ EQUW chell_rgun_l3_x1_mask
 EQUW chell_rgun_l3_x2_mask
 EQUW chell_rgun_l3_x3_mask
 
+; Carrying cube overlays (single pose), right then left.
+EQUW chell_carry_r_x0_mask
+EQUW chell_carry_r_x1_mask
+EQUW chell_carry_r_x2_mask
+EQUW chell_carry_r_x3_mask
+EQUW chell_carry_l_x0_mask
+EQUW chell_carry_l_x1_mask
+EQUW chell_carry_l_x2_mask
+EQUW chell_carry_l_x3_mask
+
 .reticle_mask_table
 EQUW reticle_x0_mask
 EQUW reticle_x1_mask

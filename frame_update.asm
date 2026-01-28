@@ -127,6 +127,9 @@
     LDA #0
     STA portal_req
 
+    ; Cube pickup/drop (SPACE edge).
+    JSR handle_cube_pickup_drop
+
     ; Keep the physics solidity plane up to date (tiles + standable objects).
     ; This lets Chell stand on cubes.
     JSR rebuild_solid_phys_plane

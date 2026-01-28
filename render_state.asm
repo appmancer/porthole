@@ -111,6 +111,25 @@
     STA chell_body_index
 
     ; --- Overlay sprite index ---
+    ; Carrying overrides gun overlays.
+    LDA carried_cube_idx
+    CMP #&FF
+    BEQ cs_overlay_not_carrying
+
+    ; Carry overlay: single pose, direction selects right/left base.
+    LDA anim_dir
+    BNE cs_overlay_carry_right
+    LDA #CHELL_OVERLAY_CARRY_LEFT_BASE
+    BNE cs_overlay_carry_base_ok
+ .cs_overlay_carry_right
+    LDA #CHELL_OVERLAY_CARRY_RIGHT_BASE
+ .cs_overlay_carry_base_ok
+    CLC
+    ADC char_pixel_offset
+    STA chell_overlay_index
+    RTS
+
+ .cs_overlay_not_carrying
     ; Jump/idle: always gun-forward overlay.
     LDA char_grounded
     BEQ cs_overlay_forward
