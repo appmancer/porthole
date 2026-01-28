@@ -221,39 +221,41 @@
     TYA
     PHA
 
-    ; Cache (x,y,type) in ZP for redraw calls.
-    LDA obj_y,Y
-    STA temp_y
+    ; Cache footprint top-left.
     LDA obj_x,Y
-    STA row_counter
+    STA row_counter          ; x
+    LDA obj_y,Y
+    STA temp_y               ; y
     LDA obj_type,Y
-    STA col_counter
+    STA col_counter          ; type
 
-    ; Top row: (x,y) and (x+1,y)
+    ; Row 0: (x,y) and (x+1,y)
     LDX row_counter
     LDA temp_y
     JSR redraw_tile_xy
 
     LDX row_counter
     CPX #15
-    BEQ apou_redraw_skip_topx
+    BEQ apou_maybe_row1
     INX
     LDA temp_y
     JSR redraw_tile_xy
-  .apou_redraw_skip_topx
 
-    ; If exit (16x32), also redraw bottom row.
+  .apou_maybe_row1
+    ; Exit is 16x32, so also redraw the row below.
     LDA col_counter
     CMP #OBJ_TYPE_EXIT
     BNE apou_redraw_restore
+
+    ; If already on bottom tile row, there's no valid second row to redraw.
     LDA temp_y
     CMP #15
-    BEQ apou_redraw_next
+    BEQ apou_redraw_restore
+
+    ; Row 1: (x,y+1) and (x+1,y+1)
     CLC
     ADC #1
-    STA temp_y
     LDX row_counter
-    LDA temp_y
     JSR redraw_tile_xy
 
     LDX row_counter
