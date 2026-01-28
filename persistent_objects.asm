@@ -16,6 +16,14 @@
     LDA #0
     STA sig_state
 
+    ; Clear redraw bookkeeping.
+    LDX #0
+  .ipo_clear_dirty
+    STA obj_dirty,X
+    INX
+    CPX #OBJ_COUNT
+    BNE ipo_clear_dirty
+
     LDX #0                  ; obj_index
     LDY #0                  ; byte offset into obj_defs
   .ipo_next
@@ -55,8 +63,9 @@
 ; - Drivers: pad/button set channel bits.
 ; - Consumers: exit reads channel bits.
 ;
-; If any visible object's state bit changes in the current room, sets `room_dirty=1`
-; so the background will be rebuilt next render.
+; If any visible object's state bit changes in the current room, sets
+; `objects_pending=1` and marks the object in `obj_dirty[]` so render can patch
+; only the affected object rects.
 ;
 ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr,sprite_ptr
 .update_signals_and_object_states
@@ -130,7 +139,8 @@
     CMP current_room
     BNE usos_driver_next
     LDA #1
-    STA room_dirty
+    STA objects_pending
+    STA obj_dirty,Y
     JMP usos_driver_next
 
   .usos_driver_next
@@ -176,13 +186,304 @@
     CMP current_room
     BNE usos_cons_next
     LDA #1
-    STA room_dirty
+    STA objects_pending
+    STA obj_dirty,Y
 
   .usos_cons_next
     INY
     CPY #OBJ_COUNT
     BNE usos_cons_loop
 
+    RTS
+
+
+; Patch background and restamp only the dirty persistent objects.
+;
+; Must be called during render after sprite restores, so we don't resurrect
+; stale pixels. This routine redraws the underlying tilemap for the object
+; footprint, restamps portals for the room (so portals remain behind objects),
+; then restamps the updated objects.
+;
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr,sprite_ptr,mask_ptr
+.apply_pending_object_updates
+    LDA objects_pending
+    BNE apou_go
+    RTS
+
+  .apou_go
+    ; Pass 1: redraw underlying tiles for each dirty object's footprint.
+    LDY #0
+  .apou_redraw_loop
+    LDA obj_dirty,Y
+    BEQ apou_redraw_next
+
+    ; Preserve obj_index across redraw_tile_xy (clobbers Y).
+    TYA
+    PHA
+
+    ; Cache (x,y,type) in ZP for redraw calls.
+    LDA obj_y,Y
+    STA temp_y
+    LDA obj_x,Y
+    STA row_counter
+    LDA obj_type,Y
+    STA col_counter
+
+    ; Top row: (x,y) and (x+1,y)
+    LDX row_counter
+    LDA temp_y
+    JSR redraw_tile_xy
+
+    LDX row_counter
+    CPX #15
+    BEQ apou_redraw_skip_topx
+    INX
+    LDA temp_y
+    JSR redraw_tile_xy
+  .apou_redraw_skip_topx
+
+    ; If exit (16x32), also redraw bottom row.
+    LDA col_counter
+    CMP #OBJ_TYPE_EXIT
+    BNE apou_redraw_restore
+    LDA temp_y
+    CMP #15
+    BEQ apou_redraw_next
+    CLC
+    ADC #1
+    STA temp_y
+    LDX row_counter
+    LDA temp_y
+    JSR redraw_tile_xy
+
+    LDX row_counter
+    CPX #15
+    BEQ apou_redraw_restore
+    INX
+    LDA temp_y
+    JSR redraw_tile_xy
+
+  .apou_redraw_restore
+    ; Restore obj_index.
+    PLA
+    TAY
+
+  .apou_redraw_next
+    INY
+    CPY #OBJ_COUNT
+    BNE apou_redraw_loop
+
+    ; Portals are part of the background; redraw_tile_xy erases them.
+    JSR stamp_portals_for_current_room
+
+    ; Pass 2: restamp dirty objects with ROMSEL held on obj_bank.
+    SEI
+    LDA ROMSEL
+    STA saved_romsel
+    LDA obj_bank
+    STA ROMSEL
+
+    LDY #0
+  .apou_stamp_loop
+    LDA obj_dirty,Y
+    BEQ apou_stamp_next
+
+    ; Stamp just this object.
+    JSR stamp_persistent_object
+
+    ; Clear dirty bit.
+    LDA #0
+    STA obj_dirty,Y
+
+  .apou_stamp_next
+    INY
+    CPY #OBJ_COUNT
+    BNE apou_stamp_loop
+
+    LDA saved_romsel
+    STA ROMSEL
+    CLI
+
+    LDA #0
+    STA objects_pending
+    RTS
+
+
+; Stamp a single persistent object (tile-aligned).
+; Input: Y=obj_index, screen_ptr scratch is clobbered.
+; Assumes ROMSEL already points at obj_bank.
+.stamp_persistent_object
+    ; Preserve obj_index across stamp_striped_masked (uses Y as stride/loop).
+    TYA
+    PHA
+    ; screen_ptr := &5800 + y*512 + x*16
+    LDA #<(&5800)
+    STA screen_ptr
+    LDA #>(&5800)
+    STA screen_ptr+1
+
+    ; y*512 => add (y*2) to high byte
+    LDA obj_y,Y
+    ASL A
+    CLC
+    ADC screen_ptr+1
+    STA screen_ptr+1
+
+    ; x*16 => add to low byte
+    LDA obj_x,Y
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC spo_x_ok
+    INC screen_ptr+1
+  .spo_x_ok
+
+    ; Choose sprite/mask + geometry from type/state.
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BNE spo_chk_button
+    JMP spo_cube
+
+  .spo_chk_button
+    CMP #OBJ_TYPE_BUTTON
+    BNE spo_chk_pad
+    JMP spo_button
+
+  .spo_chk_pad
+    CMP #OBJ_TYPE_PAD
+    BNE spo_chk_exit
+    JMP spo_pad
+
+  .spo_chk_exit
+    CMP #OBJ_TYPE_EXIT
+    BEQ spo_is_exit
+    JMP spo_done
+
+  .spo_is_exit
+    JMP spo_exit
+
+  .spo_cube
+    LDA #<obj_cube_x0
+    STA sprite_ptr
+    LDA #>obj_cube_x0
+    STA sprite_ptr+1
+    LDA #<obj_cube_x0_mask
+    STA mask_ptr
+    LDA #>obj_cube_x0_mask
+    STA mask_ptr+1
+    ; 16x16
+    LDA #2
+    LDX #32
+    LDY #32
+    JSR stamp_striped_masked
+    PLA
+    TAY
+    RTS
+
+  .spo_button
+    ; state bit0 selects x0/x1
+    LDA obj_state,Y
+    AND #1
+    BEQ spo_button0
+    LDA #<obj_button_x1
+    STA sprite_ptr
+    LDA #>obj_button_x1
+    STA sprite_ptr+1
+    LDA #<obj_button_x1_mask
+    STA mask_ptr
+    LDA #>obj_button_x1_mask
+    STA mask_ptr+1
+    JMP spo_button_stamp
+  .spo_button0
+    LDA #<obj_button_x0
+    STA sprite_ptr
+    LDA #>obj_button_x0
+    STA sprite_ptr+1
+    LDA #<obj_button_x0_mask
+    STA mask_ptr
+    LDA #>obj_button_x0_mask
+    STA mask_ptr+1
+  .spo_button_stamp
+    ; 16x16
+    LDA #2
+    LDX #32
+    LDY #32
+    JSR stamp_striped_masked
+    PLA
+    TAY
+    RTS
+
+  .spo_pad
+    ; state bit0 selects x0/x1
+    LDA obj_state,Y
+    AND #1
+    BEQ spo_pad0
+    LDA #<obj_pad_x1
+    STA sprite_ptr
+    LDA #>obj_pad_x1
+    STA sprite_ptr+1
+    LDA #<obj_pad_x1_mask
+    STA mask_ptr
+    LDA #>obj_pad_x1_mask
+    STA mask_ptr+1
+    JMP spo_pad_stamp
+  .spo_pad0
+    LDA #<obj_pad_x0
+    STA sprite_ptr
+    LDA #>obj_pad_x0
+    STA sprite_ptr+1
+    LDA #<obj_pad_x0_mask
+    STA mask_ptr
+    LDA #>obj_pad_x0_mask
+    STA mask_ptr+1
+  .spo_pad_stamp
+    ; 16x16
+    LDA #2
+    LDX #32
+    LDY #32
+    JSR stamp_striped_masked
+    PLA
+    TAY
+    RTS
+
+  .spo_exit
+    ; state bit0 selects x0/x1 (closed/open)
+    LDA obj_state,Y
+    AND #1
+    BEQ spo_exit0
+    LDA #<obj_exit_x1
+    STA sprite_ptr
+    LDA #>obj_exit_x1
+    STA sprite_ptr+1
+    LDA #<obj_exit_x1_mask
+    STA mask_ptr
+    LDA #>obj_exit_x1_mask
+    STA mask_ptr+1
+    JMP spo_exit_stamp
+  .spo_exit0
+    LDA #<obj_exit_x0
+    STA sprite_ptr
+    LDA #>obj_exit_x0
+    STA sprite_ptr+1
+    LDA #<obj_exit_x0_mask
+    STA mask_ptr
+    LDA #>obj_exit_x0_mask
+    STA mask_ptr+1
+  .spo_exit_stamp
+    ; 16x32
+    LDA #4
+    LDX #32
+    LDY #32
+    JSR stamp_striped_masked
+    PLA
+    TAY
+    RTS
+
+  .spo_done
+    PLA
+    TAY
     RTS
 
 

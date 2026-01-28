@@ -19,6 +19,13 @@
 .obj_y
     SKIP OBJ_COUNT
 
+
+; --- Persistent object redraw bookkeeping ---
+;
+; obj_dirty[i]=1 marks that object i needs a background patch + restamp.
+.obj_dirty
+    SKIP OBJ_COUNT
+
 ; Published signal bits for this frame (level-global).
 .sig_state
     SKIP 1

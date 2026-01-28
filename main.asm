@@ -24,8 +24,9 @@ ORG &70
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
 .rise_cooldown      SKIP 1    ; Frames until next upward step
 .fall_cooldown      SKIP 1    ; Frames until next downward step
-.room_dirty         SKIP 1    ; 0/1: room background needs redraw
-.exit_cooldown      SKIP 1    ; frames to ignore exits after transition
+  .room_dirty         SKIP 1    ; 0/1: room background needs redraw
+  .objects_pending    SKIP 1    ; 0/1: persistent objects need restamp
+  .exit_cooldown      SKIP 1    ; frames to ignore exits after transition
 .exit_probe0        SKIP 1    ; exit Y probe cell (y+8)>>4
 .exit_probe1        SKIP 1    ; exit Y probe cell (y+24)>>4
 .keys_held          SKIP 1    ; Bitfield: held keys this frame
@@ -50,10 +51,8 @@ ORG &70
 
  .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
  .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
- .obj_bank           SKIP 1    ; ROMSEL value for Object SWRAM bank
+  .obj_bank           SKIP 1    ; ROMSEL value for Object SWRAM bank
   .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
- .chelldata_fh       SKIP 1    ; File handle for CHDATA
- .objdata_fh        SKIP 1    ; File handle for OBJDAT
  .anim_frame              SKIP 1    ; Animation frame (0..3)
  .anim_dir                SKIP 1    ; Direction (0=left,1=right)
  .last_anim_dir           SKIP 1    ; Previous direction for redraw
@@ -298,6 +297,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA rise_cooldown
     STA fall_cooldown
     STA room_dirty
+    STA objects_pending
     STA exit_cooldown
     STA exit_probe0
     STA exit_probe1
@@ -463,6 +463,18 @@ CHELL_JUMP_LEFT_BASE        = 36
         STA reticle_dirty
   .render_no_portal_force
 
+        ; Persistent object visual changes: we will patch the background.
+        ; Force sprites to redraw so save-under captures the updated BG.
+        LDA objects_pending
+        BEQ render_no_obj_force
+        LDA #1
+        STA chell_dirty
+        LDA reticle_active
+        BEQ render_no_obj_force
+        LDA #1
+        STA reticle_dirty
+  .render_no_obj_force
+
         ; Handle reticle deactivation: restore last rect.
         LDA reticle_active
         BNE render_reticle_active
@@ -496,6 +508,9 @@ CHELL_JUMP_LEFT_BASE        = 36
   .render_portal_maybe
         ; If a portal was placed/moved, update background now (after restores).
         JSR apply_pending_portal_update
+
+        ; If persistent objects changed visually, patch and restamp them now.
+        JSR apply_pending_object_updates
 
  .render_draw_maybe
        ; Draw Chell if dirty.

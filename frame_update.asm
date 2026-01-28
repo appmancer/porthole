@@ -166,7 +166,7 @@
     LDA #0
     STA dirty_flag
 
-    ; Room redraw requested (room transition or object visual change).
+    ; Room redraw requested (room transition).
     LDA room_dirty
     BEQ df_skip_room
     LDA #1
@@ -185,6 +185,13 @@
     LDA #1
     STA dirty_flag
  .df_skip_portal
+
+    ; Persistent object visual updates need a background patch + restamp.
+    LDA objects_pending
+    BEQ df_skip_objects
+    LDA #1
+    STA dirty_flag
+ .df_skip_objects
 
     LDA reticle_active
     BEQ df_reticle_off

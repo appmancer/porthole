@@ -1,6 +1,11 @@
 ; loaders.asm
 ; Shadow-screen and sideways-RAM loader utilities.
 ; (VSync/delay helpers live in timing.asm.)
+
+; File handles must not live in MOS-clobbered ZP (e.g. &A0..).
+; Keep them in main RAM.
+.chelldata_fh     SKIP 1
+.objdata_fh       SKIP 1
 ;
 ; Kept in its own file so `main.asm` stays navigable.
 

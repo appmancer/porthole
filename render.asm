@@ -280,6 +280,9 @@
 ; - Y: source stride per stripe (usually 16 or 32)
  .stamp_striped_masked
     ; Keep the blit atomic: MOS IRQ handlers may use/modify ZP.
+    ; Preserve the caller's interrupt state so nested callers that already have
+    ; IRQs disabled don't get re-enabled at the end.
+    PHP
     SEI
     STA row_counter
     STX col_counter
@@ -359,7 +362,7 @@
     STA screen_ptr+1
     PLA
     STA screen_ptr
-    CLI
+    PLP
     RTS
 
 ; Fill the visible playfield (32 bytes x 256 scanlines = 8192 bytes) with cyan.
