@@ -46,6 +46,7 @@ ORG &70
   ;   - reticle is moved (or reticle mode is exited).
   ; bit0 = A, bit1 = B
   .portal_req        SKIP 1
+  .quickshot_latch    SKIP 1    ; bits6/7: A/S press consumed in normal mode
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 
@@ -148,11 +149,19 @@ ORG &70
 .los_dy        SKIP 1    ; abs(y1-y0)
 .los_err       SKIP 1    ; Bresenham error accumulator
 .los_steps     SKIP 1    ; loop counter (major axis delta)
-.los_sx        SKIP 1    ; step X (+1 or $FF)
-.los_sy        SKIP 1    ; step Y (+1 or $FF)
-.los_prev_tile SKIP 1    ; last visited tilepos (y*16+x), $FF = none
- 
- ; --- Render list (PoP-style pipeline) ---
+ .los_sx        SKIP 1    ; step X (+1 or $FF)
+ .los_sy        SKIP 1    ; step Y (+1 or $FF)
+ .los_prev_tile SKIP 1    ; last visited tilepos (y*16+x), $FF = none
+
+ ; --- Quick-shot portal raycast scratch ---
+ .shot_hit_tilepos SKIP 1 ; y*16 + x for first solid hit
+
+ ; --- Palette flash debug ---
+ .palette_flash_timer  SKIP 1   ; frames remaining to keep cyan->red mapping
+ .palette_flash_active SKIP 1   ; 0=inactive, else current phys for logical 2
+ .palette_flash_phys2  SKIP 1   ; desired physical colour for logical 2 while flashing
+  
+  ; --- Render list (PoP-style pipeline) ---
  ; Stored in screen scratch (not ZP) so MOS calls can't clobber it.
  ; Layout is a fixed 2-entry list.
  
@@ -343,10 +352,10 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA reticle_prev_ptr+1
     STA chell_has_under
     STA reticle_has_under
-    STA reticle_debug_reason
+     STA reticle_debug_reason
 
-     STA portal_pending
-     STA portal_kind
+      STA portal_pending
+      STA portal_kind
      STA portal_old_x
      STA portal_old_y
      STA portal_old_room
@@ -374,6 +383,12 @@ CHELL_JUMP_LEFT_BASE        = 36
       LDA #&FF
       STA teleport_last_exit_kind
       STA carried_cube_idx
+
+     STA palette_flash_timer
+     STA palette_flash_active
+     STA palette_flash_phys2
+
+     STA quickshot_latch
 
     ; Default: face right.
     LDA #1
@@ -434,6 +449,9 @@ CHELL_JUMP_LEFT_BASE        = 36
  ; Uses chell_dirty/reticle_dirty computed in the previous update.
  ; Reticle redraw condition includes chell_dirty because Chell can move under it.
   .render_frame_simple
+        ; Optional debug feedback: flash cyan->red for one frame.
+        JSR palette_flash_update
+
         ; Room transition: redraw background first.
         LDA room_dirty
         BEQ render_no_room_redraw

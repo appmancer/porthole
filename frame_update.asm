@@ -127,6 +127,9 @@
     LDA #0
     STA portal_req
 
+    ; Quick-shot portal firing (outside reticle mode).
+    JSR handle_quick_shot
+
     ; Cube pickup/drop (SPACE edge).
     JSR handle_cube_pickup_drop
 
@@ -164,7 +167,7 @@
 
 
 ; Sets dirty_flag if redraw is needed.
-.compute_dirty_flag
+ .compute_dirty_flag
     ; Dirty flag for next frame.
     ; - If Chell is dirty, we must redraw Chell.
     ; - If reticle is active and (reticle_dirty or chell_dirty), redraw reticle.
@@ -194,11 +197,19 @@
  .df_skip_portal
 
     ; Persistent object visual updates need a background patch + restamp.
-    LDA objects_pending
-    BEQ df_skip_objects
-    LDA #1
-    STA dirty_flag
- .df_skip_objects
+     LDA objects_pending
+     BEQ df_skip_objects
+     LDA #1
+     STA dirty_flag
+  .df_skip_objects
+
+     ; Palette flash (debug feedback) needs a render to apply and to restore.
+     LDA palette_flash_timer
+     ORA palette_flash_active
+     BEQ df_skip_pal
+     LDA #1
+     STA dirty_flag
+  .df_skip_pal
 
     LDA reticle_active
     BEQ df_reticle_off
@@ -218,4 +229,391 @@
     STA dirty_flag
 
  .df_done
-    RTS
+     RTS
+
+
+ ; Quick-shot portal placement (outside reticle mode).
+ ;
+ ; - On A/S key-down, fire a projected shot (tiles only) and place portal A/B.
+ ; - Direction uses aim_held (0=straight, 1=up, 2=down) and anim_dir.
+ ; - Disallows back-wall placement.
+ ;
+ ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
+  .handle_quick_shot
+      ; Allow hold-to-fire (one shot per press).
+      ; Clear consumed bits when keys are released.
+      LDA quickshot_latch
+      AND keys_held
+      STA quickshot_latch
+
+      ; Fire only when A/S is held AND not yet consumed for this press.
+      ; new = keys_held & ~quickshot_latch
+      LDA quickshot_latch
+      EOR #&FF
+      AND keys_held
+      AND #&C0
+      BNE hqs_have_newpress
+      JMP hqs_done
+   .hqs_have_newpress
+
+      ; Prefer A if both are newly held.
+      LDA keys_held
+      AND #&40
+      BEQ hqs_try_b
+      LDA quickshot_latch
+      AND #&40
+      BNE hqs_try_b
+      ; take A
+      LDA quickshot_latch
+      ORA #&40
+      STA quickshot_latch
+      LDA #0
+      JMP hqs_have_kind
+
+   .hqs_try_b
+      LDA keys_held
+      AND #&80
+      BEQ hqs_done_jmp
+      LDA quickshot_latch
+      AND #&80
+      BNE hqs_done_jmp
+      ; take B
+      LDA quickshot_latch
+      ORA #&80
+      STA quickshot_latch
+      LDA #1
+      JMP hqs_have_kind
+
+   .hqs_done_jmp
+      JMP hqs_done
+
+   .hqs_have_kind
+      ; Keep raycast scratch stable (B2/MOS IRQs can clobber ZP).
+      ; Preserve caller IRQ state (nested callers may already be SEI).
+      PHP
+      SEI
+
+      ; Stash requested portal kind.
+      STA portal_kind
+
+      ; Debug: flash based on which portal key we saw.
+      ; A -> red, S -> yellow.
+      LDA #8
+      STA palette_flash_timer
+      LDA portal_kind
+      BEQ hqs_flash_red
+      LDA #3
+      BNE hqs_flash_store
+   .hqs_flash_red
+      LDA #1
+   .hqs_flash_store
+      STA palette_flash_phys2
+
+     ; Ray start (gun point), matching reticle LOS.
+     JSR calc_char_x
+     STA temp
+      LDA anim_dir
+      BNE hqs_gun_right
+      ; facing left
+      LDA temp
+      CLC
+      ADC #3
+      STA los_x0
+      JMP hqs_gun_x_nudge
+    .hqs_gun_right
+      LDA temp
+      CLC
+      ADC #10
+      STA los_x0
+
+   .hqs_gun_x_nudge
+      ; If the gun point lands exactly on an 8px boundary, nudge it 1px
+      ; toward the shot direction to reduce boundary-bias asymmetry.
+      LDA los_x0
+      AND #7
+      BNE hqs_gun_y
+      LDA anim_dir
+      BNE hqs_nudge_right
+      ; nudge left
+      LDA los_x0
+      BEQ hqs_gun_y
+      DEC los_x0
+      JMP hqs_gun_y
+   .hqs_nudge_right
+      LDA los_x0
+      CMP #127
+      BEQ hqs_gun_y
+      INC los_x0
+
+    .hqs_gun_y
+      JSR calc_char_y
+     CLC
+     ADC #12
+     STA los_y0
+
+      ; Ray target X: edge of screen.
+
+      ; Ray target from aim_held.
+      ; For angled shots, target the top/bottom edge and solve X from slope.
+      ; This avoids left/right asymmetry when Chell is near a side.
+      LDA aim_held
+      BEQ hqs_straight
+
+      CMP #1
+      BEQ hqs_aim_up
+
+      ; down: y1 = 255
+      LDA #255
+      STA los_y1
+      ; dx = (y1 - y0) / 2  (slope dy:dx = 2:1)
+      LDA #255
+      SEC
+      SBC los_y0
+      LSR A
+      STA col_counter
+      JMP hqs_angle_have_dx
+
+   .hqs_aim_up
+      ; up: y1 = 0
+      LDA #0
+      STA los_y1
+      ; dx = (y0 - y1) / 2 = y0/2
+      LDA los_y0
+      LSR A
+      STA col_counter
+
+   .hqs_angle_have_dx
+      ; x1 = x0 +/- dx (clamp to 0..127)
+      LDA anim_dir
+      BNE hqs_angle_right
+      ; left
+      LDA los_x0
+      SEC
+      SBC col_counter
+      BCS hqs_angle_x_ok
+      LDA #0
+      BNE hqs_angle_x_store
+   .hqs_angle_right
+      LDA los_x0
+      CLC
+      ADC col_counter
+      CMP #128
+      BCC hqs_angle_x_ok
+      LDA #127
+   .hqs_angle_x_ok
+   .hqs_angle_x_store
+      STA los_x1
+      JMP hqs_have_y1
+
+   .hqs_straight
+      ; straight: y unchanged, target the left/right edge.
+      LDA los_y0
+      STA los_y1
+      LDA anim_dir
+      BNE hqs_x_right
+      LDA #0
+      STA los_x1
+      JMP hqs_have_y1
+   .hqs_x_right
+      LDA #127
+      STA los_x1
+
+   .hqs_have_y1
+       ; Raycast to first solid tile.
+       JSR shot_find_first_solid
+       BCS hqs_hit_ok
+       JMP hqs_fail
+   .hqs_hit_ok
+
+     ; Try plausible placements at this hit location.
+     ; Don't rely on hit-axis inference (diagonal shots can step X+Y together).
+     LDA aim_held
+     BEQ hqs_try_wall_first
+     JMP hqs_try_fc_first
+
+   .hqs_try_wall_first
+     JSR hqs_try_wall_from_hit
+     BCS hqs_success
+     JSR hqs_try_fc_from_hit
+     BCS hqs_success
+     JMP hqs_fail
+
+   .hqs_try_fc_first
+     JSR hqs_try_fc_from_hit
+     BCS hqs_success
+     JSR hqs_try_wall_from_hit
+     BCS hqs_success
+     JMP hqs_fail
+
+   .hqs_success
+      PLP
+      RTS
+
+   ; Debug feedback: shot registered but no valid placement.
+   .hqs_fail
+      ; Debug feedback: no valid placement.
+      LDA #8
+      STA palette_flash_timer
+      LDA #1
+      STA palette_flash_phys2
+      PLP
+      RTS
+
+   .hqs_done
+      RTS
+
+  ; Try wall candidates derived from shot_hit_tilepos.
+  ; Returns: C=1 if placed
+  .hqs_try_wall_from_hit
+     ; Decode hit tilepos into (hit_x, hit_y).
+     LDA shot_hit_tilepos
+     AND #15
+     STA col_counter          ; hit_x
+     LDA shot_hit_tilepos
+     LSR A
+     LSR A
+     LSR A
+     LSR A
+     STA row_counter          ; hit_y
+
+     ; base cell_x = min(hit_x, 14)
+     LDA col_counter
+     CMP #15
+     BCC hqs_wall_x_ok
+     LDA #14
+   .hqs_wall_x_ok
+     STA reticle_cell_x
+
+     ; base y = min(hit_y, 14) (wall portals are 2 tiles tall)
+     LDA row_counter
+     CMP #15
+     BCC hqs_wall_base_y_ok
+     LDA #14
+   .hqs_wall_base_y_ok
+     STA temp                ; base_y
+
+     ; Try y: base, base-1, base+1
+     LDA temp
+     JSR hqs_try_wall_y
+     BCS hqs_wall_placed
+     LDA temp
+     BEQ hqs_wall_skip_m1
+     SEC
+     SBC #1
+     JSR hqs_try_wall_y
+     BCS hqs_wall_placed
+   .hqs_wall_skip_m1
+     LDA temp
+     CMP #14
+     BEQ hqs_wall_fail
+     CLC
+     ADC #1
+     JSR hqs_try_wall_y
+     BCS hqs_wall_placed
+
+   .hqs_wall_fail
+     CLC
+     RTS
+
+   .hqs_wall_placed
+     SEC
+     RTS
+
+  ; Try floor/ceiling candidates derived from shot_hit_tilepos.
+  ; Returns: C=1 if placed
+  .hqs_try_fc_from_hit
+     ; Decode hit tilepos into (hit_x, hit_y).
+     LDA shot_hit_tilepos
+     AND #15
+     STA col_counter          ; hit_x
+     LDA shot_hit_tilepos
+     LSR A
+     LSR A
+     LSR A
+     LSR A
+     STA row_counter          ; hit_y
+
+     ; base cell_y is the surface row.
+     LDA row_counter
+     STA reticle_cell_y
+
+     ; base cell_x = min(hit_x, 14)
+     LDA col_counter
+     CMP #15
+     BCC hqs_fc_base_x_ok
+     LDA #14
+   .hqs_fc_base_x_ok
+     STA temp                ; base_x
+
+     ; Try x: base, base-1, base+1
+     LDA temp
+     JSR hqs_try_fc_x
+     BCS hqs_fc_placed
+     LDA temp
+     BEQ hqs_fc_skip_m1
+     SEC
+     SBC #1
+     JSR hqs_try_fc_x
+     BCS hqs_fc_placed
+   .hqs_fc_skip_m1
+     LDA temp
+     CMP #14
+     BEQ hqs_fc_fail
+     CLC
+     ADC #1
+     JSR hqs_try_fc_x
+     BCS hqs_fc_placed
+
+   .hqs_fc_fail
+     CLC
+     RTS
+
+   .hqs_fc_placed
+     SEC
+     RTS
+
+
+
+
+ ; Try placing a wall portal with candidate top tile_y in A.
+ ; Returns C=1 if placed.
+ .hqs_try_wall_y
+     STA reticle_cell_y
+     JSR compute_reticle_state
+     BCC hqs_try_wall_fail
+
+     ; Disallow back-wall and floor/ceiling.
+     LDA reticle_wall_orient
+     CMP #PORTAL_ORIENT_FLOOR
+     BCS hqs_try_wall_fail
+
+     LDA portal_kind
+     JSR place_portal_from_reticle
+     SEC
+     RTS
+ .hqs_try_wall_fail
+     CLC
+     RTS
+
+
+ ; Try placing a floor/ceiling portal with candidate cell_x in A.
+ ; Returns C=1 if placed.
+ .hqs_try_fc_x
+     STA reticle_cell_x
+     JSR compute_reticle_state
+     BCC hqs_try_fc_fail
+
+     ; Only floor/ceiling; disallow back-wall.
+     LDA reticle_wall_orient
+     CMP #PORTAL_ORIENT_FLOOR
+     BCC hqs_try_fc_fail
+     CMP #PORTAL_ORIENT_BACK
+     BEQ hqs_try_fc_fail
+
+     LDA portal_kind
+     JSR place_portal_from_reticle
+     SEC
+     RTS
+ .hqs_try_fc_fail
+     CLC
+     RTS

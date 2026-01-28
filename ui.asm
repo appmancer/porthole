@@ -40,6 +40,64 @@
     EQUB 19,3,3,0,0,0
 
 
+; --- Palette flash debug ---
+;
+; If palette_flash_timer is nonzero, remap logical colour 2 (normally cyan) to
+; palette_flash_phys2 for this render, then auto-restore when the timer reaches 0.
+;
+; Uses: VDU 19,2,<phys>,0,0,0.
+; Clobbers: A
+.palette_flash_update
+    LDA palette_flash_timer
+    BEQ pfu_maybe_restore
+
+    ; Desired physical colour for logical 2.
+    LDA palette_flash_phys2
+
+    ; If already active with this mapping, just tick.
+    CMP palette_flash_active
+    BEQ pfu_tick
+
+    ; Apply mapping.
+    JSR pfu_map_log2
+    LDA palette_flash_phys2
+    STA palette_flash_active
+
+ .pfu_tick
+    DEC palette_flash_timer
+    RTS
+
+ .pfu_maybe_restore
+    LDA palette_flash_active
+    BEQ pfu_done
+
+    ; Restore logical 2 -> physical 6 (cyan)
+    LDA #6
+    JSR pfu_map_log2
+    LDA #0
+    STA palette_flash_active
+
+ .pfu_done
+    RTS
+
+
+; Map logical colour 2 to physical colour A.
+; Clobbers: A
+.pfu_map_log2
+    PHA
+    LDA #19
+    JSR OSWRCH
+    LDA #2
+    JSR OSWRCH
+    PLA
+    JSR OSWRCH
+    LDA #0
+    JSR OSWRCH
+    JSR OSWRCH
+    JSR OSWRCH
+    RTS
+
+
 ; Wait for a single keypress (B2-friendly, debounced).
 ; Uses OSBYTE 129 (INKEY-256): Y=ASCII, N set if no key.
 ; Returns: A = ASCII of key pressed.
