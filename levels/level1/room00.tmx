@@ -10,7 +10,7 @@
 4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
 4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
 4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-11,3,3,3,3,3,3,7,1,1,8,3,3,3,3,3,
+11,3,2,2,3,3,3,7,1,1,8,3,3,3,3,3,
 14,5,5,5,5,5,5,10,1,1,9,5,5,5,5,13,
 4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,6,
 4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,6,
@@ -18,7 +18,7 @@
 4,1,1,1,1,1,15,16,18,19,17,1,1,1,1,6,
 4,1,1,1,1,1,1,1,6,4,1,1,1,1,1,6,
 4,1,1,1,1,1,1,1,6,4,1,1,1,1,1,6,
-11,3,3,3,3,3,3,3,12,11,3,3,3,3,3,12
+11,3,3,2,2,3,3,3,12,11,3,3,3,3,3,12
 </data>
  </layer>
  <objectgroup id="2" name="meta">
@@ -31,15 +31,15 @@
  <objectgroup id="3" name="objects">
   <object id="9" name="exit" type="exit" x="32" y="80">
    <properties>
+    <property name="channel" value="0"/>
     <property name="id" value="exit_0"/>
-     <property name="channel" value="0"/>
    </properties>
    <point/>
   </object>
   <object id="10" name="pad" type="pad" x="48" y="224">
    <properties>
+    <property name="channel" value="0"/>
     <property name="id" value="pad_0"/>
-     <property name="channel" value="0"/>
    </properties>
    <point/>
   </object>
