@@ -1205,6 +1205,94 @@ SOLID_TILE_PLANE          = &7A00
     BNE build_solid_tile_plane_loop
     RTS
 
+
+; Rebuild the physics solidity plane (tiles + standable objects).
+;
+; Copies the world tile solidity (`SOLID_TILE_PLANE`) into `solid_phys_plane`,
+; then stamps standable objects (cubes) into it.
+;
+; Must be called during update before any collision queries for the frame.
+; Clobbers: A,X,Y
+.rebuild_solid_phys_plane
+    ; Copy 256 bytes: SOLID_TILE_PLANE -> solid_phys_plane
+    LDY #0
+  .rsp_copy
+    LDA SOLID_TILE_PLANE,Y
+    STA solid_phys_plane,Y
+    INY
+    BNE rsp_copy
+
+    ; Stamp standable objects into the physics plane.
+    ; Note: pads are triggers on the floor and should not raise Chell, so only
+    ; cubes contribute to physics solidity.
+    LDY #0
+  .rsp_obj_loop
+    LDA obj_room,Y
+    CMP current_room
+    BNE rsp_obj_next
+
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BNE rsp_obj_next
+
+  .rsp_obj_stamp
+    ; idx = obj_y*16 + obj_x
+    LDA obj_y,Y
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX
+    LDA #1
+    STA solid_phys_plane,X
+
+    ; second tile (x+1) unless at right edge
+    LDA obj_x,Y
+    CMP #15
+    BEQ rsp_obj_next
+    INX
+    LDA #1
+    STA solid_phys_plane,X
+
+  .rsp_obj_next
+    INY
+    CPY #OBJ_COUNT
+    BNE rsp_obj_loop
+    RTS
+
+
+; Return C=1 if solid at pixel (X,Y) for physics.
+; Uses `solid_phys_plane` (tiles + standable objects).
+.is_solid_physics
+    ; tile_x = X >> 3
+    TXA
+    LSR A
+    LSR A
+    LSR A
+    STA col_counter
+
+    ; tile_y = Y >> 4
+    TYA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAY
+
+    ; tilepos = tile_y*16 + tile_x
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+
+    LDA solid_phys_plane,Y
+    BEQ solid_phys_clear
+    SEC
+    RTS
+  .solid_phys_clear
+    CLC
+    RTS
+
 ; Return C=1 if solid at pixel (X,Y).
 ; Uses the prebuilt solid-tile plane (8x16 tiles).
 .is_solid

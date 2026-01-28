@@ -326,7 +326,7 @@
 
     ; test at y+8 (top tile centerline)
     LDY temp_y
-    JSR is_solid
+    JSR is_solid_physics
     BCS collide_left
 
     ; test at y+24 (bottom tile centerline)
@@ -335,7 +335,7 @@
     CLC
     ADC #16
     TAY
-    JSR is_solid
+    JSR is_solid_physics
     BCS collide_left
 
     CLC
@@ -372,7 +372,7 @@
 
     ; test at y+8 (top tile centerline)
     LDY temp_y
-    JSR is_solid
+    JSR is_solid_physics
     BCS collide_right
 
     ; test at y+24 (bottom tile centerline)
@@ -381,7 +381,7 @@
     CLC
     ADC #16
     TAY
-    JSR is_solid
+    JSR is_solid_physics
     BCS collide_right
 
     CLC
@@ -548,7 +548,7 @@
 
     ; left foot center
     LDX temp
-    JSR is_solid
+    JSR is_solid_physics
     BCS grounded_true
 
     ; right foot center (x+7)
@@ -558,7 +558,7 @@
     CMP #128
     BCS grounded_true
     TAX
-    JSR is_solid
+    JSR is_solid_physics
     BCS grounded_true
 
     CLC
@@ -646,7 +646,7 @@
 
     ; left foot center
     LDX temp
-    JSR is_solid
+    JSR is_solid_physics
     BCS collide_down
 
     ; right foot center (x+7)
@@ -656,7 +656,7 @@
     CMP #128
     BCS collide_down
     TAX
-    JSR is_solid
+    JSR is_solid_physics
     BCS collide_down
 
     CLC
@@ -685,7 +685,7 @@
 
     ; left head center
     LDX temp
-    JSR is_solid
+    JSR is_solid_physics
     BCS collide_up
 
     ; right head center (x+7)
@@ -695,7 +695,7 @@
     CMP #128
     BCS collide_up
     TAX
-    JSR is_solid
+    JSR is_solid_physics
     BCS collide_up
 
     CLC

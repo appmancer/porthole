@@ -542,10 +542,9 @@
     CMP sprite_ptr          ; pad_room
     BNE pad_cube_next
 
-    ; Cube bottom tile_y must match pad_y.
+    ; Cube rests on pad if its tile_y matches pad_y.
+    ; (Both are 16px tall and sit on the same floor.)
     LDA obj_y,X
-    CLC
-    ADC #1
     CMP screen_ptr+1
     BNE pad_cube_next
 

@@ -30,6 +30,11 @@
 .sig_state
     SKIP 1
 
+; Solid-tile plane for physics (tiles + standable objects).
+; This is separate from `SOLID_TILE_PLANE` so LOS/portal logic can ignore objects.
+.solid_phys_plane
+    SKIP 256
+
 ; Bit masks for channels 0..7
 .bit_table
     EQUB 1,2,4,8,16,32,64,128

@@ -127,6 +127,10 @@
     LDA #0
     STA portal_req
 
+    ; Keep the physics solidity plane up to date (tiles + standable objects).
+    ; This lets Chell stand on cubes.
+    JSR rebuild_solid_phys_plane
+
     ; If we just released SHIFT, deactivate reticle and mark it dirty so render
     ; can restore its last rectangle.
     LDA reticle_active
