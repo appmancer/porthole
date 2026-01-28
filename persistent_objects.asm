@@ -279,6 +279,8 @@
     JSR stamp_portals_for_current_room
 
     ; Pass 2: restamp dirty objects with ROMSEL held on obj_bank.
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     LDA ROMSEL
     STA saved_romsel
@@ -304,7 +306,7 @@
 
     LDA saved_romsel
     STA ROMSEL
-    CLI
+    PLP
 
     LDA #0
     STA objects_pending
@@ -657,6 +659,8 @@
 ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr,sprite_ptr,mask_ptr
 .render_persistent_objects_current_room
     ; Page in object SWRAM for reads.
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     LDA ROMSEL
     STA saved_romsel
@@ -854,5 +858,5 @@
     ; Restore ROMSEL and re-enable IRQs.
     LDA saved_romsel
     STA ROMSEL
-    CLI
+    PLP
     RTS

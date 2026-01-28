@@ -6,9 +6,11 @@
 ; Draw current body + overlay at screen_ptr.
 .draw_character_current
     ; Keep ROMSEL stable during blit (B2/MOS IRQs may page ROMs).
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     LDA ROMSEL
-    STA saved_romsel
+    PHA
 
     ; Ensure Chell SWRAM bank is visible for reads.
     LDA chell_bank
@@ -22,18 +24,20 @@
     LDA chell_overlay_index
     JSR render_overlay_sprite
 
-    ; Restore previous ROM selection and re-enable IRQs.
-    LDA saved_romsel
+    ; Restore previous ROM selection and caller IRQ state.
+    PLA
     STA ROMSEL
-    CLI
+    PLP
     RTS
 
 ; Draw the current reticle at screen_ptr.
 ; Reticle sprites live in Chell SWRAM, so we must page the bank in.
 .draw_reticle_current
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     LDA ROMSEL
-    STA saved_romsel
+    PHA
 
     LDA chell_bank
     STA ROMSEL
@@ -41,9 +45,9 @@
     LDA reticle_state
     JSR render_reticle_sprite
 
-    LDA saved_romsel
+    PLA
     STA ROMSEL
-    CLI
+    PLP
     RTS
 
 

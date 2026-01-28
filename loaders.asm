@@ -104,6 +104,8 @@
     BCS objdat_read_fail
 
     ; Copy into SWRAM page with ROMSEL held stable.
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     LDA obj_bank
     STA ROMSEL
@@ -127,7 +129,7 @@
     ; Restore ROMSEL for filing system.
     LDA saved_romsel
     STA ROMSEL
-    CLI
+    PLP
 
     INC temp_mask_ptr+1
     DEC row_counter
@@ -153,7 +155,6 @@
     ; Restore ROMSEL before printing.
     LDA saved_romsel
     STA ROMSEL
-    CLI
     LDX #<msg_objdat_read_fail
     LDY #>msg_objdat_read_fail
     JSR print_string_xy
@@ -163,7 +164,7 @@
     ; Restore ROMSEL before printing.
     LDA saved_romsel
     STA ROMSEL
-    CLI
+    PLP
     LDX #<msg_swr_copy_fail
     LDY #>msg_swr_copy_fail
     JSR print_string_xy
@@ -285,6 +286,8 @@
     BCS chdata_read_fail
 
     ; Copy into SWRAM page with ROMSEL held stable.
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     LDA chell_bank
     STA ROMSEL
@@ -308,7 +311,7 @@
     ; Restore ROMSEL for filing system.
     LDA saved_romsel
     STA ROMSEL
-    CLI
+    PLP
 
     INC temp_mask_ptr+1
     DEC row_counter
@@ -335,7 +338,6 @@
     ; Restore ROMSEL before printing.
     LDA saved_romsel
     STA ROMSEL
-    CLI
     LDX #<msg_chdata_read_fail
     LDY #>msg_chdata_read_fail
     JSR print_string_xy
@@ -345,7 +347,7 @@
     ; Restore ROMSEL before printing.
     LDA saved_romsel
     STA ROMSEL
-    CLI
+    PLP
     LDX #<msg_swr_copy_fail
     LDY #>msg_swr_copy_fail
     JSR print_string_xy

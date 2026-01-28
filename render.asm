@@ -1001,6 +1001,8 @@ SOLID_TILE_PLANE          = &7A00
 
 ; Save 16x32 under screen_ptr into CHELL_SAVE_UNDER_BASE.
 .save_chell_under
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     ; temp_mask_ptr := source screen
     LDA screen_ptr
@@ -1040,11 +1042,13 @@ SOLID_TILE_PLANE          = &7A00
     CMP #4
     BNE save_chell_stripe
 
-    CLI
+    PLP
     RTS
 
 ; Restore 16x32 from CHELL_SAVE_UNDER_BASE to chell_prev_ptr.
 .restore_chell_under
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     ; temp_mask_ptr := dest screen
     LDA chell_prev_ptr
@@ -1084,11 +1088,13 @@ SOLID_TILE_PLANE          = &7A00
     CMP #4
     BNE restore_chell_stripe
 
-    CLI
+    PLP
     RTS
 
 ; Save 16x16 under screen_ptr into RETICLE_SAVE_UNDER_BASE.
 .save_reticle_under
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     ; temp_mask_ptr := source screen
     LDA screen_ptr
@@ -1128,11 +1134,13 @@ SOLID_TILE_PLANE          = &7A00
     CMP #2
     BNE save_reticle_stripe
 
-    CLI
+    PLP
     RTS
 
 ; Restore 16x16 from RETICLE_SAVE_UNDER_BASE to reticle_prev_ptr.
 .restore_reticle_under
+    ; Preserve caller IRQ state (nested callers may already be SEI).
+    PHP
     SEI
     ; temp_mask_ptr := dest screen
     LDA reticle_prev_ptr
@@ -1172,7 +1180,7 @@ SOLID_TILE_PLANE          = &7A00
     CMP #2
     BNE restore_reticle_stripe
 
-    CLI
+    PLP
     RTS
 
 ; Build a 16x16 solid-tile plane from the current room tilemap.

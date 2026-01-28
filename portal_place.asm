@@ -530,6 +530,8 @@
       ; Back wall: 16x32 (4 stripes, 32 bytes/stripe).
       ;
       ; Note: sprite+mask bytes live in object SWRAM; page it in for reads.
+      ; Preserve caller IRQ state (nested callers may already be SEI).
+      PHP
       SEI
       LDA ROMSEL
       STA saved_romsel
@@ -735,7 +737,7 @@
       ; Restore ROMSEL and re-enable IRQs.
       LDA saved_romsel
       STA ROMSEL
-      CLI
+      PLP
       RTS
 
 
