@@ -11,6 +11,23 @@
 
 OBJ_STATE_CARRIED = &80
 
+; --- Object redraw footprints (in tiles) ---
+; Indexed by obj_type (OBJ_TYPE_*). Entry 0 is unused.
+; These footprints are used when patching background tiles under a dirty object.
+.obj_redraw_w_tiles
+    EQUB 0                 ; type 0 (unused)
+    EQUB 2                 ; cube   (16x16)
+    EQUB 2                 ; button (16x16)
+    EQUB 2                 ; pad    (16x16)
+    EQUB 2                 ; exit   (16x32)
+
+.obj_redraw_h_tiles
+    EQUB 0                 ; type 0 (unused)
+    EQUB 1                 ; cube
+    EQUB 1                 ; button
+    EQUB 1                 ; pad
+    EQUB 2                 ; exit
+
 ; Initialize per-object runtime arrays from generated obj_defs.
 ; Clobbers: A,X,Y,temp,temp_y
 .init_persistent_objects
@@ -213,59 +230,78 @@ OBJ_STATE_CARRIED = &80
     RTS
 
   .apou_go
-    ; Pass 1: redraw underlying tiles for each dirty object's footprint.
-    LDY #0
+     ; Pass 1: redraw underlying tiles for each dirty object's footprint.
+     LDY #0
   .apou_redraw_loop
-    LDA obj_dirty,Y
-    BEQ apou_redraw_next
+     LDA obj_dirty,Y
+     BEQ apou_redraw_next
 
     ; Preserve obj_index across redraw_tile_xy (clobbers Y).
     TYA
     PHA
 
-    ; Cache footprint top-left.
+    ; Cache footprint top-left and lookup footprint size.
+    ; Keep these in sprite_ptr/mask_ptr so redraw_tile_xy clobbers don't lose them.
     LDA obj_x,Y
-    STA row_counter          ; x
+    STA sprite_ptr           ; base_x
     LDA obj_y,Y
-    STA temp_y               ; y
-    LDA obj_type,Y
-    STA col_counter          ; type
+    STA sprite_ptr+1         ; base_y
 
-    ; Row 0: (x,y) and (x+1,y)
-    LDX row_counter
-    LDA temp_y
-    JSR redraw_tile_xy
+    LDX obj_type,Y
+    LDA obj_redraw_w_tiles,X
+    STA mask_ptr             ; w
+    LDA obj_redraw_h_tiles,X
+    STA mask_ptr+1           ; h
 
-    LDX row_counter
-    CPX #15
-    BEQ apou_maybe_row1
-    INX
-    LDA temp_y
-    JSR redraw_tile_xy
+    ; Redraw tiles in the footprint, clamped to the 16x16 tile grid.
+    ; Outer: dy (Y), inner: dx (X). Preserve dx/dy across redraw_tile_xy.
+    LDY #0
+  .apou_dy_loop
+    CPY mask_ptr+1
+    BCS apou_redraw_restore
 
-  .apou_maybe_row1
-    ; Exit is 16x32, so also redraw the row below.
-    LDA col_counter
-    CMP #OBJ_TYPE_EXIT
-    BNE apou_redraw_restore
-
-    ; If already on bottom tile row, there's no valid second row to redraw.
-    LDA temp_y
-    CMP #15
-    BEQ apou_redraw_restore
-
-    ; Row 1: (x,y+1) and (x+1,y+1)
+    ; y_cur = base_y + dy; stop if off bottom.
+    TYA
     CLC
-    ADC #1
-    LDX row_counter
+    ADC sprite_ptr+1
+    CMP #16
+    BCS apou_redraw_restore
+    STA col_counter          ; y_cur
+
+    LDX #0
+  .apou_dx_loop
+    CPX mask_ptr
+    BCS apou_next_row
+
+    ; x_cur = base_x + dx; stop row if off right.
+    TXA
+    CLC
+    ADC sprite_ptr
+    CMP #16
+    BCS apou_next_row
+    STA temp                 ; x_cur
+
+    ; Save dx/dy across redraw (it clobbers X/Y).
+    TXA
+    PHA
+    TYA
+    PHA
+
+    LDX temp
+    LDA col_counter
     JSR redraw_tile_xy
 
-    LDX row_counter
-    CPX #15
-    BEQ apou_redraw_restore
+    PLA
+    TAY
+    PLA
+    TAX
+
     INX
-    LDA temp_y
-    JSR redraw_tile_xy
+    JMP apou_dx_loop
+
+  .apou_next_row
+    INY
+    JMP apou_dy_loop
 
   .apou_redraw_restore
     ; Restore obj_index.
