@@ -241,11 +241,12 @@ OBJ_STATE_CARRIED = &80
     PHA
 
     ; Cache footprint top-left and lookup footprint size.
-    ; Keep these in sprite_ptr/mask_ptr so redraw_tile_xy clobbers don't lose them.
+    ; Note: redraw_tile_xy -> render_cell8x16 clobbers sprite_ptr, so keep the
+    ; base coords in temp_sprite_ptr.
     LDA obj_x,Y
-    STA sprite_ptr           ; base_x
+    STA temp_sprite_ptr      ; base_x
     LDA obj_y,Y
-    STA sprite_ptr+1         ; base_y
+    STA temp_sprite_ptr+1    ; base_y
 
     LDX obj_type,Y
     LDA obj_redraw_w_tiles,X
@@ -263,7 +264,7 @@ OBJ_STATE_CARRIED = &80
     ; y_cur = base_y + dy; stop if off bottom.
     TYA
     CLC
-    ADC sprite_ptr+1
+    ADC temp_sprite_ptr+1
     CMP #16
     BCS apou_redraw_restore
     STA col_counter          ; y_cur
@@ -276,7 +277,7 @@ OBJ_STATE_CARRIED = &80
     ; x_cur = base_x + dx; stop row if off right.
     TXA
     CLC
-    ADC sprite_ptr
+    ADC temp_sprite_ptr
     CMP #16
     BCS apou_next_row
     STA temp                 ; x_cur
