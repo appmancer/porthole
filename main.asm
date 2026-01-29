@@ -54,116 +54,111 @@ ORG &70
  .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
   .obj_bank           SKIP 1    ; ROMSEL value for Object SWRAM bank
   .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
- .anim_frame              SKIP 1    ; Animation frame (0..3)
- .anim_dir                SKIP 1    ; Direction (0=left,1=right)
- .last_anim_dir           SKIP 1    ; Previous direction for redraw
- .move_held               SKIP 1    ; 0/1: left/right held this frame
- .last_move_held          SKIP 1    ; Previous move_held (for pose redraw)
- .move_cooldown           SKIP 1    ; Frames until next move
- .anim_cooldown           SKIP 1    ; Movement counter for anim
+  ; MOS uses some ZP workspace at &A0..&AF (e.g. OSBYTE/OSGBPB).
+  ; Leave that range unused to avoid corruption.
+  ORG &B0
 
-  .save_under_count         SKIP 1    ; Number of active save-under slots (0..4)
+  ; --- Gameplay state (upper ZP band) ---
+  ; Keep this block <= &FF.
 
+  ; Animation.
+  .anim_frame              SKIP 1    ; Animation frame (0..3)
+  .anim_dir                SKIP 1    ; Direction (0=left,1=right)
+  .last_anim_dir           SKIP 1    ; Previous direction for redraw
+  .move_held               SKIP 1    ; 0/1: left/right held this frame
+  .last_move_held          SKIP 1    ; Previous move_held (for pose redraw)
+  .move_cooldown           SKIP 1    ; Frames until next move
+  .anim_cooldown           SKIP 1    ; Movement counter for anim
 
-.save_under_screen_low    SKIP 4    ; Saved screen_ptr low per slot
-.save_under_screen_high   SKIP 4    ; Saved screen_ptr high per slot
+  ; Horizontal step loop scratch (used by movement.asm).
+  .hstep_rem               SKIP 1
+  .hstep_moved             SKIP 1
 
-.cube_tile_pos       SKIP 1    ; Cube cell position (cell_y*16 + cell_x)
-.cube_byte_offset    SKIP 1    ; Cube byte offset within cell (0/8)
-.carried_cube_idx    SKIP 1    ; $FF = none, else obj_index of carried cube
-.char_sprite_index   SKIP 1    ; Stable sprite index
+  ; Cube + carry.
+  .cube_tile_pos       SKIP 1
+  .cube_byte_offset    SKIP 1
+  .carried_cube_idx    SKIP 1
+  .char_sprite_index   SKIP 1
 
-; Precomputed render decisions for Chell (computed in update; used in render).
-.chell_new_ptr       SKIP 2    ; next screen_ptr for Chell
-.chell_body_index    SKIP 1    ; sprite index into character_sprite_table
-.chell_overlay_index SKIP 1    ; sprite index into overlay_sprite_table
-.last_aim_held       SKIP 1    ; previous aim_held (0/1/2)
+  ; Precomputed render decisions for Chell (computed in update; used in render).
+  .chell_new_ptr       SKIP 2
+  .chell_body_index    SKIP 1
+  .chell_overlay_index SKIP 1
+  .last_aim_held       SKIP 1
 
-.reticle_cell_x      SKIP 1    ; 0..14 (portal span X, top-left tile_x)
-.reticle_cell_y      SKIP 1    ; 0..15 (portal grid Y)
-.reticle_state       SKIP 1    ; 0=blocked, 1=portalable
- .reticle_active      SKIP 1    ; 0/1: draw reticle
- .reticle_prev_active SKIP 1    ; previous frame reticle_active
- .reticle_move_cd     SKIP 1    ; reticle move repeat cooldown
-  .reticle_wall_orient SKIP 1    ; 0..4 (wall_l, wall_r, floor, ceil, back)
+  ; Reticle state.
+  .reticle_cell_x      SKIP 1
+  .reticle_cell_y      SKIP 1
+  .reticle_state       SKIP 1
+  .reticle_active      SKIP 1
+  .reticle_prev_active SKIP 1
+  .reticle_move_cd     SKIP 1
+  .reticle_wall_orient SKIP 1
 
-.exit_dst            SKIP 1    ; scratch: exit destination room index
+  .exit_dst            SKIP 1
+  .chell_dirty         SKIP 1
+  .reticle_dirty       SKIP 1
 
-.chell_dirty         SKIP 1    ; 0/1: Chell moved/changed last update
-.reticle_dirty       SKIP 1    ; 0/1: reticle moved/changed last update
+  .chell_prev_ptr      SKIP 2
+  .reticle_prev_ptr    SKIP 2
+  .chell_has_under     SKIP 1
+  .reticle_has_under   SKIP 1
 
-.chell_prev_ptr      SKIP 2    ; previous Chell screen_ptr
-.reticle_prev_ptr    SKIP 2    ; previous reticle screen_ptr
-.chell_has_under     SKIP 1    ; 0/1: have valid Chell save-under
-.reticle_has_under   SKIP 1    ; 0/1: have valid reticle save-under
+  .reticle_debug_reason SKIP 1
 
-; Debug: why the reticle is currently green.
-; 0 = not green / unknown
-; 1 = floor/ceiling 2x1 match
-; 2 = wall 1x2 match (left column)
-; 3 = wall 1x2 match (right column)
-; 4 = back-wall 2x2 empty match at y
-; 5 = back-wall 2x2 empty match at y-1
- .reticle_debug_reason SKIP 1
-
- ; Portal stamping (partial redraw) state.
- .portal_pending      SKIP 1    ; 0/1: portal moved/placed; render must update background
- .portal_kind         SKIP 1    ; 0 = red (A), 1 = yellow (B)
+  ; Portal stamping (partial redraw) state.
+  .portal_pending      SKIP 1
+  .portal_kind         SKIP 1
   .portal_old_x        SKIP 1
   .portal_old_y        SKIP 1
   .portal_old_room     SKIP 1
-  .portal_old_enabled  SKIP 1    ; 0/1: whether old portal was enabled
+  .portal_old_enabled  SKIP 1
   .portal_old_orient   SKIP 1
 
-  ; Portal instances (global per level)
+  ; Portal instances.
   .portal_a_enabled    SKIP 1
   .portal_a_room       SKIP 1
   .portal_a_x          SKIP 1
   .portal_a_y          SKIP 1
-  .portal_a_orient     SKIP 1    ; 0..4 (wall_l, wall_r, floor, ceil, back)
+  .portal_a_orient     SKIP 1
   .portal_b_enabled    SKIP 1
   .portal_b_room       SKIP 1
   .portal_b_x          SKIP 1
   .portal_b_y          SKIP 1
-  .portal_b_orient     SKIP 1    ; 0..4 (wall_l, wall_r, floor, ceil, back)
+  .portal_b_orient     SKIP 1
 
-  ; Portal teleportation (MVP wiring)
-  .teleport_pending    SKIP 1    ; 0/1: overlap+intent detected; pending teleport
-  .teleport_entry_kind SKIP 1    ; 0=A (red), 1=B (yellow)
-  .teleport_cooldown   SKIP 1    ; frames remaining before portal can re-trigger
+  ; Portal teleportation.
+  .teleport_pending    SKIP 1
+  .teleport_entry_kind SKIP 1
+  .teleport_cooldown   SKIP 1
   .teleport_exit_room  SKIP 1
   .teleport_exit_x     SKIP 1
   .teleport_exit_y     SKIP 1
   .teleport_exit_orient SKIP 1
-  .teleport_vt         SKIP 1    ; scratch: v_t during teleport
-  .teleport_vn         SKIP 1    ; scratch: v_n during teleport
-  .teleport_last_exit_kind SKIP 1    ; 0/1, $FF=none (debug/anti-ping-pong)
+  .teleport_vt         SKIP 1
+  .teleport_vn         SKIP 1
+  .teleport_last_exit_kind SKIP 1
 
- ; --- Reticle LOS scratch ---
-; All values are in pixels unless noted.
-.los_x0        SKIP 1    ; ray start X
-.los_y0        SKIP 1    ; ray start Y
-.los_x1        SKIP 1    ; ray target X
-.los_y1        SKIP 1    ; ray target Y
-.los_dx        SKIP 1    ; abs(x1-x0)
-.los_dy        SKIP 1    ; abs(y1-y0)
-.los_err       SKIP 1    ; Bresenham error accumulator
-.los_steps     SKIP 1    ; loop counter (major axis delta)
- .los_sx        SKIP 1    ; step X (+1 or $FF)
- .los_sy        SKIP 1    ; step Y (+1 or $FF)
- .los_prev_tile SKIP 1    ; last visited tilepos (y*16+x), $FF = none
+  ; LOS scratch.
+  .los_x0        SKIP 1
+  .los_y0        SKIP 1
+  .los_x1        SKIP 1
+  .los_y1        SKIP 1
+  .los_dx        SKIP 1
+  .los_dy        SKIP 1
+  .los_err       SKIP 1
+  .los_steps     SKIP 1
+  .los_sx        SKIP 1
+  .los_sy        SKIP 1
+  .los_prev_tile SKIP 1
 
- ; --- Quick-shot portal raycast scratch ---
- .shot_hit_tilepos SKIP 1 ; y*16 + x for first solid hit
+  ; Quick-shot scratch.
+  .shot_hit_tilepos SKIP 1
 
- ; --- Palette flash debug ---
- .palette_flash_timer  SKIP 1   ; frames remaining to keep cyan->red mapping
- .palette_flash_active SKIP 1   ; 0=inactive, else current phys for logical 2
- .palette_flash_phys2  SKIP 1   ; desired physical colour for logical 2 while flashing
-  
-  ; --- Render list (PoP-style pipeline) ---
- ; Stored in screen scratch (not ZP) so MOS calls can't clobber it.
- ; Layout is a fixed 2-entry list.
+  ; Palette flash debug.
+  .palette_flash_timer  SKIP 1
+  .palette_flash_active SKIP 1
+  .palette_flash_phys2  SKIP 1
  
  ORG &1900
 
@@ -193,9 +188,12 @@ PORTAL_REQ_SNAP_ORIENT= &7FF1
 
 GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
 GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
-GRAVITY_DOWN_PERIOD         = 1      ; gravity tick period while falling
-TERMINAL_VELOCITY_DOWN      = 1      ; max falling speed (8px steps)
-JUMP_VELOCITY               = &FE    ; -2 (controls hang time)
+GRAVITY_DOWN_PERIOD         = 2      ; gravity tick period while falling
+TERMINAL_VELOCITY_DOWN      = 6      ; max falling speed (8px steps)
+TERMINAL_VELOCITY_UP        = &FA    ; -6: max rising speed (8px steps)
+TERMINAL_VELOCITY_X         = 12     ; max |vx| (px/frame), also per-frame step clamp
+WALK_VELOCITY               = 1      ; |vx| while walking / air-control
+JUMP_VELOCITY               = &FE    ; -2
 RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
 FALL_STEP_PERIOD            = 2      ; move down 1 stripe every N frames
 
@@ -328,9 +326,6 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA last_move_held
     STA move_cooldown
     STA anim_cooldown
-    ; save-under pool removed; leave count unused
-    STA save_under_count
-
     STA chell_body_index
     STA chell_overlay_index
     STA last_aim_held
@@ -449,9 +444,9 @@ CHELL_JUMP_LEFT_BASE        = 36
  ; --- Render (incremental frame) ---
  ; Uses chell_dirty/reticle_dirty computed in the previous update.
  ; Reticle redraw condition includes chell_dirty because Chell can move under it.
-  .render_frame_simple
-        ; Optional debug feedback: flash cyan->red for one frame.
-        JSR palette_flash_update
+ .render_frame_simple
+        ; Optional debug feedback: palette flash (currently disabled).
+        ; JSR palette_flash_update
 
         ; Room transition: redraw background first.
         LDA room_dirty

@@ -34,7 +34,6 @@
      BNE after_jump
 
      ; Capture jump direction from held movement key.
-     ; (This ensures "jump left" even if move cooldown delays a step.)
      LDA keys_held
      AND #1
      BNE jump_face_left
@@ -47,16 +46,12 @@
      LDA #0
      STA anim_dir
      STA last_anim_dir
-     LDA #0
-     STA move_cooldown
      JMP jump_dir_done
 
  .jump_face_right
      LDA #1
      STA anim_dir
      STA last_anim_dir
-     LDA #0
-     STA move_cooldown
 
  .jump_dir_done
      ; Start jump: upward velocity.
@@ -65,156 +60,143 @@
      LDA #0
      STA char_grounded
 
+     ; Preserve horizontal motion into the jump.
+     LDA last_anim_dir
+     BEQ jump_set_vx_left
+     LDA #WALK_VELOCITY
+     STA char_vx
+     JMP jump_vx_done
+ .jump_set_vx_left
+     LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
+     STA char_vx
+ .jump_vx_done
+
      ; Delay next gravity tick slightly so the jump starts cleanly.
      LDA #(GRAVITY_UP_PERIOD-1)
      STA gravity_cooldown
-
-     ; Allow an immediate upward step this frame.
-     LDA #0
-     STA rise_cooldown
-
-     ; Reset fall pacing when a jump starts.
-     STA fall_cooldown
 
      LDA #1
      STA temp
 
  .after_jump
- 
-    ; Prefer left if both held.
+
+    ; Determine intended facing from keys (prefer left if both held).
     LDA keys_held
     AND #1
-    BEQ check_right
-    JMP key_left
+    BEQ pmk_check_right
+    LDA #0
+    STA anim_dir
+    JMP pmk_have_dir
 
- .check_right
+ .pmk_check_right
     LDA keys_held
     AND #2
-    BEQ no_key_held
-    JMP key_right
- 
- .no_key_held
-      ; No key held: stop movement, but keep animation phase.
-      ; This lets quick 1px taps still advance the walk cycle.
-      LDA #0
-      STA move_held
-      STA move_cooldown
+    BEQ pmk_no_dir
+    LDA #1
+    STA anim_dir
 
-      ; If grounded, kill horizontal velocity.
-      ; If airborne and we have velocity, keep drifting.
-      LDA char_grounded
-      BEQ no_key_airborne
-      LDA #0
-      STA char_vx
-      JMP no_key_after_vx
-
-  .no_key_airborne
-      LDA char_vx
-      BEQ no_key_after_vx
-      BMI no_key_drift_left
-      ; drift right
-      JSR step_right_pixel
-      BCS no_key_drift_moved
-      ; hit wall => stop
-      LDA #0
-      STA char_vx
-      JMP no_key_after_vx
-  .no_key_drift_left
-      JSR step_left_pixel
-      BCS no_key_drift_moved
-      LDA #0
-      STA char_vx
-      JMP no_key_after_vx
-  .no_key_drift_moved
-      LDA #1
-      STA temp
-
-  .no_key_after_vx
-
-      ; If we just released movement keys while grounded, redraw to idle.
-      LDA last_move_held
-      BEQ no_key_no_redraw
-      LDA char_grounded
-      BEQ no_key_no_redraw
-      LDA #1
-      STA temp
- .no_key_no_redraw
-
-
-     ; Keep facing, but sync last_anim_dir.
-      LDA anim_dir
-      STA last_anim_dir
-
-     JMP return_redraw
-
-
- .key_left
-      LDA #0
-      STA anim_dir
-      LDA #&FF
-      STA char_vx
-      JMP key_held
- 
- .key_right
-      LDA #1
-      STA anim_dir
-      LDA #1
-      STA char_vx
- 
- .key_held
-      ; Mark that we are trying to move (used for idle pose selection).
+ .pmk_have_dir
+      ; Mark movement intent.
       LDA #1
       STA move_held
 
       ; If direction changed, force a redraw so we flip immediately.
       LDA anim_dir
-
-     CMP last_anim_dir
-     BEQ move_tick
-     STA last_anim_dir
-     LDA #1
-     STA temp
- 
- .move_tick
-     LDA move_cooldown
-     BEQ do_move
-     DEC move_cooldown
-     JMP return_redraw
-  .do_move
-      ; Walk speed (1px per frame).
-      LDA #0
-      STA move_cooldown
-
-      LDA anim_dir
-      BEQ do_move_left
-      JSR step_right_pixel
-      BCS did_move
-      BCC return_redraw
-  .do_move_left
-      JSR step_left_pixel
-      BCS did_move
-      BCC return_redraw
- .did_move
-      ; We moved: redraw, and advance animation every 4 pixels.
+      CMP last_anim_dir
+      BEQ pmk_dir_ok
+      STA last_anim_dir
       LDA #1
       STA temp
- 
-      INC anim_cooldown
-      LDA anim_cooldown
-      CMP #4
-      BNE return_redraw
+ .pmk_dir_ok
+
+      ; Input only sets vx while grounded, or if airborne and already slow.
+      LDA char_grounded
+      BNE pmk_set_walk_vx
+
+      ; Airborne: keep fling momentum. Allow light air control only if |vx| <= WALK_VELOCITY.
+      LDA char_vx
+      BEQ pmk_set_walk_vx
+      BMI pmk_air_abs_neg
+      CMP #(WALK_VELOCITY+1)
+      BCC pmk_set_walk_vx
+      JMP pmk_after_vx
+ .pmk_air_abs_neg
+      EOR #&FF
+      CLC
+      ADC #1
+      CMP #(WALK_VELOCITY+1)
+      BCC pmk_set_walk_vx
+      JMP pmk_after_vx
+
+ .pmk_set_walk_vx
+      LDA anim_dir
+      BEQ pmk_set_vx_left
+      LDA #WALK_VELOCITY
+      STA char_vx
+      JMP pmk_after_vx
+ .pmk_set_vx_left
+      LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
+      STA char_vx
+      JMP pmk_after_vx
+
+ .pmk_no_dir
+      ; No key held: stop movement intent, but keep animation phase.
       LDA #0
+      STA move_held
+
+      ; If grounded, kill horizontal velocity.
+      LDA char_grounded
+      BEQ pmk_no_key_air
+      LDA #0
+      STA char_vx
+ .pmk_no_key_air
+
+      ; If we just released movement keys while grounded, redraw to idle.
+      LDA last_move_held
+      BEQ pmk_after_vx
+      LDA char_grounded
+      BEQ pmk_after_vx
+      LDA #1
+      STA temp
+
+ .pmk_after_vx
+      ; Apply horizontal velocity (vx magnitude matters).
+      JSR apply_horizontal_velocity
+      STA temp_y               ; moved pixels this frame
+      BEQ pmk_after_move
+
+      LDA #1
+      STA temp
+
+      ; Advance animation every 4 pixels moved, but at most once per frame.
+      ; (High vx can move many pixels; don't spin the run cycle too fast.)
+      ; Keep anim_cooldown bounded (older code treated it as small).
+      LDA anim_cooldown
+      AND #3
+      STA anim_cooldown
+      LDA anim_cooldown
+      CLC
+      ADC temp_y
+      STA anim_cooldown
+      CMP #4
+      BCC pmk_after_move
+      SEC
+      SBC #4
       STA anim_cooldown
       JSR step_anim
 
- .return_redraw
-    LDA temp
-    BEQ no_redraw
-    SEC
-    RTS
- .no_redraw
-    CLC
-    RTS
+ .pmk_after_move
+      ; Keep facing, but sync last_anim_dir.
+      LDA anim_dir
+      STA last_anim_dir
+
+     LDA temp
+     BEQ no_redraw
+     SEC
+     RTS
+  .no_redraw
+     CLC
+     RTS
  
  .step_anim
     INC anim_frame
@@ -222,6 +204,72 @@
     AND #3
     STA anim_frame
     RTS
+
+
+; Apply horizontal velocity using `char_vx` magnitude.
+; - `char_vx` is signed pixels/frame.
+; - Clamps per-frame stepping to `TERMINAL_VELOCITY_X` to bound frame time.
+; - On collision, zeroes `char_vx`.
+; Output: A = moved pixels (0..TERMINAL_VELOCITY_X)
+.apply_horizontal_velocity
+    LDA char_vx
+    BEQ ahv_none
+    BMI ahv_left
+
+ .ahv_right
+     ; speed = min(vx, TERMINAL_VELOCITY_X)
+     CMP #TERMINAL_VELOCITY_X
+     BCC ahv_have_speed
+     LDA #TERMINAL_VELOCITY_X
+  .ahv_have_speed
+     STA hstep_rem            ; steps remaining
+     LDA #0
+     STA hstep_moved          ; moved
+ .ahv_r_loop
+     JSR step_right_pixel
+     BCS ahv_r_moved
+     ; blocked
+     LDA #0
+     STA char_vx
+     LDA hstep_moved
+     RTS
+ .ahv_r_moved
+     INC hstep_moved
+     DEC hstep_rem
+     BNE ahv_r_loop
+     LDA hstep_moved
+     RTS
+
+ .ahv_left
+     ; speed = min(|vx|, TERMINAL_VELOCITY_X)
+     EOR #&FF
+     CLC
+     ADC #1
+     CMP #TERMINAL_VELOCITY_X
+     BCC ahv_l_have_speed
+     LDA #TERMINAL_VELOCITY_X
+ .ahv_l_have_speed
+     STA hstep_rem            ; steps remaining
+     LDA #0
+     STA hstep_moved          ; moved
+ .ahv_l_loop
+     JSR step_left_pixel
+     BCS ahv_l_moved
+     ; blocked
+     LDA #0
+     STA char_vx
+     LDA hstep_moved
+     RTS
+ .ahv_l_moved
+     INC hstep_moved
+     DEC hstep_rem
+     BNE ahv_l_loop
+     LDA hstep_moved
+     RTS
+
+ .ahv_none
+     LDA #0
+     RTS
  
  ; Step left by 1 pixel.
  ; Output: C=1 if moved.
@@ -396,7 +444,7 @@
 ; - Clamps falling speed to `TERMINAL_VELOCITY`.
 ;
 ; Returns: C=1 if position changed (needs redraw).
-.apply_gravity
+ .apply_gravity
     ; Remember pre-step vy so portal entry can trigger on landing.
     LDA char_vy
     STA char_prev_vy
@@ -432,62 +480,116 @@
     CLC
     RTS
 
-.apply_airborne
-    LDA #0
-    STA char_grounded
+ .apply_airborne
+     LDA #0
+     STA char_grounded
 
-    LDA #0
-    STA temp          ; moved flag
+     LDA #0
+     STA temp          ; moved flag
 
-    ; Move by current vy.
-    LDA char_vy
-    BEQ apply_gravity_only
-    BMI apply_move_up
+     ; Move by current vy.
+     LDA char_vy
+     BNE ag_vy_nonzero
+     JMP apply_gravity_only
+ .ag_vy_nonzero
+     BMI apply_move_up
 
 .apply_move_down
-    ; Pace falling so it doesn't "teleport" by whole stripes every frame.
-    ; Cap to at most one 8px stripe step per frame.
-    LDA fall_cooldown
-    BEQ do_fall_step
-    DEC fall_cooldown
-    JMP apply_gravity_only
+     ; For low fall speeds, keep the old paced feel (one stripe step every
+     ; FALL_STEP_PERIOD frames). For high fall speeds (fling), allow multiple
+     ; stripes per frame.
+     LDA char_vy
+     CMP #2
+     BCS fall_fast
 
- .do_fall_step
-    LDA #(FALL_STEP_PERIOD-1)
-    STA fall_cooldown
+     ; vy = 1: paced fall.
+     LDA fall_cooldown
+     BEQ fall_paced_do
+     DEC fall_cooldown
+     JMP apply_gravity_only
+ .fall_paced_do
+     LDA #(FALL_STEP_PERIOD-1)
+     STA fall_cooldown
+     JSR step_down_8
+     BCC hit_ground
+     LDA #1
+     STA temp
+     JMP apply_gravity_only
 
-    JSR step_down_8
-    BCC hit_ground
-    LDA #1
-    STA temp
-    JMP apply_gravity_only
+ .fall_fast
+     ; vy >= 2: move by vy stripes this frame.
+     LDA char_vy
+     STA row_counter            ; steps remaining
+ .fall_step_loop
+     JSR step_down_8
+     BCC hit_ground
+     LDA #1
+     STA temp
+     DEC row_counter
+     BNE fall_step_loop
+     JMP apply_gravity_only
 
 .apply_move_up
-    ; Move upward stripe-by-stripe, but slower than falling.
-    ; This avoids "teleport" jumps and keeps vertical speed reasonable.
-    LDA rise_cooldown
-    BEQ do_rise_step
-    DEC rise_cooldown
-    JMP apply_gravity_only
+     ; Clamp rising speed to avoid pathological per-frame work.
+     LDA char_vy
+     CMP #TERMINAL_VELOCITY_UP
+     BCS rise_vy_ok
+     LDA #TERMINAL_VELOCITY_UP
+     STA char_vy
+ .rise_vy_ok
 
-.do_rise_step
-    LDA #(RISE_STEP_PERIOD-1)
-    STA rise_cooldown
+     ; For small jump speeds, keep the old paced rise feel (one stripe step
+     ; every RISE_STEP_PERIOD frames). For high upward speeds (fling), allow
+     ; multiple stripes per frame.
 
-    JSR step_up_8
-    BCC hit_ceiling
-    LDA #1
-    STA temp
-    JMP apply_gravity_only
+     ; abs(vy) in A
+     LDA char_vy
+     EOR #&FF
+     CLC
+     ADC #1
+     CMP #3
+     BCS rise_fast
+
+     ; abs(vy) = 1..2: paced rise.
+     LDA rise_cooldown
+     BEQ rise_paced_do
+     DEC rise_cooldown
+     JMP apply_gravity_only
+ .rise_paced_do
+     LDA #(RISE_STEP_PERIOD-1)
+     STA rise_cooldown
+     JSR step_up_8
+     BCC hit_ceiling
+     LDA #1
+     STA temp
+     JMP apply_gravity_only
+
+ .rise_fast
+     ; abs(vy) >= 3: move by -vy stripes this frame.
+     ; steps remaining = -vy
+     LDA char_vy
+     EOR #&FF
+     CLC
+     ADC #1
+     STA row_counter
+ .rise_step_loop
+     JSR step_up_8
+     BCC hit_ceiling
+     LDA #1
+     STA temp
+     DEC row_counter
+     BNE rise_step_loop
+     JMP apply_gravity_only
 
  .hit_ground
-    ; Collided: stop and mark grounded.
-    LDA #0
-    STA char_vy
-    STA gravity_cooldown
-    STA fall_cooldown
-    LDA #1
-    STA char_grounded
+     ; Collided: stop and mark grounded.
+     LDA #0
+     STA char_vy
+     STA gravity_cooldown
+     STA fall_cooldown
+     STA rise_cooldown
+     LDA #1
+     STA char_grounded
 
     ; Landing changes pose (jump -> idle), so force a redraw even if we didn't
     ; move this frame.
@@ -495,9 +597,9 @@
     JMP apply_return
 
 .hit_ceiling
-    ; Hit head: stop upward motion.
-    LDA #0
-    STA char_vy
+     ; Hit head: stop upward motion.
+     LDA #0
+     STA char_vy
 
 .apply_gravity_only
     ; If we landed during movement, don't re-accelerate.
@@ -524,16 +626,22 @@
     LDA #(GRAVITY_UP_PERIOD-1)
     STA gravity_cooldown
 
-.gravity_apply
-    LDA char_vy
-    CLC
-    ADC #GRAVITY_ACCEL
+ .gravity_apply
+     LDA char_vy
+     CLC
+     ADC #GRAVITY_ACCEL
+     STA temp_y
 
-    ; Clamp positive vy to the (higher) falling terminal velocity.
-    BMI store_vy
-    CMP #TERMINAL_VELOCITY_DOWN
-    BCC store_vy
-    LDA #TERMINAL_VELOCITY_DOWN
+     ; Fast-fall disabled for now.
+
+ .grav_clamp
+     LDA temp_y
+
+     ; Clamp positive vy to the (higher) falling terminal velocity.
+     BMI store_vy
+     CMP #TERMINAL_VELOCITY_DOWN
+     BCC store_vy
+     LDA #TERMINAL_VELOCITY_DOWN
 
 .store_vy
     STA char_vy

@@ -89,6 +89,9 @@ fi
 
 beebasm "${BEEBASM_ARGS[@]}"
 
+# Build-time safety checks against label layout regressions.
+./tools/check-build-invariants .tmp/beebasm.labels
+
 # Some emulators and real-hardware tools expect a full 200KB SSD.
 python3 tools/ssd-expand "${OUT_SSD}" "${OUT_SSD}"
 

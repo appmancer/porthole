@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+import ast
+import re
+import sys
+
+
+def parse_labels(path: str) -> dict:
+    # beebasm -labels emits a Python-ish structure like:
+    #   [{'.foo':112L, '.bar':113L, ...}]
+    # The "L" suffix is Python 2 long-int syntax; strip it for Python 3.
+    txt = open(path, "r", encoding="ascii", errors="strict").read().strip()
+    txt = re.sub(r"(\d+)L\b", r"\1", txt)
+    data = ast.literal_eval(txt)
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return {k: int(v) for k, v in data[0].items()}
+    if isinstance(data, dict):
+        return {k: int(v) for k, v in data.items()}
+    raise ValueError("unexpected labels format")
+
+
+def require_eq(labels: dict, name: str, expected: int) -> None:
+    got = labels.get(name)
+    if got is None and not name.startswith("."):
+        got = labels.get("." + name)
+    if got is None:
+        raise SystemExit(f"missing label: {name}")
+    if got != expected:
+        raise SystemExit(f"bad label address: {name} expected &{expected:04X}, got &{got:04X}")
+
+
+def require_not_in_range(labels: dict, name: str, lo: int, hi: int) -> None:
+    got = labels.get(name)
+    if got is None and not name.startswith("."):
+        got = labels.get("." + name)
+    if got is None:
+        raise SystemExit(f"missing label: {name}")
+    if lo <= got <= hi:
+        raise SystemExit(f"bad label address: {name} in MOS ZP range &{lo:04X}..&{hi:04X} (got &{got:04X})")
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print("usage: tools/check-build-invariants path/to/beebasm.labels", file=sys.stderr)
+        return 2
+    labels_path = argv[1]
+    labels = parse_labels(labels_path)
+
+    # Hard layout invariants relied on by (zp),Y code paths.
+    require_eq(labels, "tilemap_ptr", 0x0079)
+    require_eq(labels, "portalmap_ptr", 0x007B)
+    require_eq(labels, "screen_ptr", 0x0071)
+
+    # Avoid MOS workspace ZP range (OSBYTE/OSGBPB etc.).
+    mos_lo = 0x00A0
+    mos_hi = 0x00AF
+    for name in ("anim_frame", "anim_cooldown", "anim_dir", "last_anim_dir"):
+        require_not_in_range(labels, name, mos_lo, mos_hi)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

@@ -5,6 +5,11 @@ Detailed background/design context lives in `project plan.md`.
 
 ## P0: Rendering Correctness (Blockers)
 
+1) Keep render-time sprite data out of the shadow window (DONE)
+
+   - Object/portal stamp sprites+masks live in SWRAM as DFS file `OBJDAT`.
+   - Loaded at startup (before enabling shadow screen) into `OBJ_SWRAM_BANK_DEFAULT` at `&8000..&BFFF`.
+
 ## P1: Gameplay Interactions
 
 1) Fling ("fast in, fast out") via real momentum

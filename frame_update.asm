@@ -296,18 +296,7 @@
       ; Stash requested portal kind.
       STA portal_kind
 
-      ; Debug: flash based on which portal key we saw.
-      ; A -> red, S -> yellow.
-      LDA #8
-      STA palette_flash_timer
-      LDA portal_kind
-      BEQ hqs_flash_red
-      LDA #3
-      BNE hqs_flash_store
-   .hqs_flash_red
-      LDA #1
-   .hqs_flash_store
-      STA palette_flash_phys2
+      ; Debug palette flash disabled.
 
      ; Ray start (gun point), matching reticle LOS.
      JSR calc_char_x
@@ -449,15 +438,10 @@
       PLP
       RTS
 
-   ; Debug feedback: shot registered but no valid placement.
-   .hqs_fail
-      ; Debug feedback: no valid placement.
-      LDA #8
-      STA palette_flash_timer
-      LDA #1
-      STA palette_flash_phys2
-      PLP
-      RTS
+    ; Shot registered but no valid placement.
+    .hqs_fail
+       PLP
+       RTS
 
    .hqs_done
       RTS

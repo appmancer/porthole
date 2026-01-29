@@ -254,45 +254,49 @@
         JMP mt_vtn_ceil
 
  .mt_vtn_wall_l
-        ; t=(0,+1), n=(+1,0) => v_t=vy, v_n=-vx
+        ; t=(0,+1), n=(+1,0)
+        ; v_t = vy (vertical) in px/frame  => vy_stripes*8
+        ; v_n = -vx (horizontal) in px/frame
         LDA char_vy
+        JSR mul8_signed_a
         STA teleport_vt
         LDA char_vx
-        EOR #&FF
-        CLC
-        ADC #1
+        JSR neg_a
         STA teleport_vn
         JMP mt_vtn_done
- .mt_vtn_wall_r
-        ; t=(0,-1), n=(-1,0) => v_t=-vy, v_n=vx
+  .mt_vtn_wall_r
+        ; t=(0,-1), n=(-1,0)
+        ; v_t = -vy (vertical) in px/frame => -(vy_stripes*8)
+        ; v_n = vx (horizontal) in px/frame
         LDA char_vy
-        EOR #&FF
-        CLC
-        ADC #1
+        JSR mul8_signed_a
+        JSR neg_a
         STA teleport_vt
         LDA char_vx
         STA teleport_vn
         JMP mt_vtn_done
- .mt_vtn_floor
-        ; t=(+1,0), n=(0,-1) => v_t=vx, v_n=vy
+  .mt_vtn_floor
+        ; t=(+1,0), n=(0,-1)
+        ; v_t = vx (horizontal) in px/frame
+        ; v_n = vy (vertical) in px/frame => vy_stripes*8
         LDA char_vx
         STA teleport_vt
         LDA char_vy
+        JSR mul8_signed_a
         STA teleport_vn
         JMP mt_vtn_done
- .mt_vtn_ceil
-        ; t=(-1,0), n=(0,+1) => v_t=-vx, v_n=-vy
+  .mt_vtn_ceil
+        ; t=(-1,0), n=(0,+1)
+        ; v_t = -vx (horizontal) in px/frame
+        ; v_n = -vy (vertical) in px/frame => -(vy_stripes*8)
         LDA char_vx
-        EOR #&FF
-        CLC
-        ADC #1
+        JSR neg_a
         STA teleport_vt
         LDA char_vy
-        EOR #&FF
-        CLC
-        ADC #1
+        JSR mul8_signed_a
+        JSR neg_a
         STA teleport_vn
- .mt_vtn_done
+  .mt_vtn_done
 
         ; Recompose v' into screen axes for the exit portal orientation.
         ; wall_l: vx=v_n,   vy=v_t
@@ -311,42 +315,42 @@
         ; ceiling
         JMP mt_vout_ceil
 
- .mt_vout_wall_l
+  .mt_vout_wall_l
         LDA teleport_vn
         STA char_vx
         LDA teleport_vt
+        JSR div8_signed_a
         STA char_vy
         JMP mt_vout_done
- .mt_vout_wall_r
+  .mt_vout_wall_r
         LDA teleport_vn
-        EOR #&FF
-        CLC
-        ADC #1
+        JSR neg_a
         STA char_vx
         LDA teleport_vt
-        EOR #&FF
-        CLC
-        ADC #1
+        JSR neg_a
+        JSR div8_signed_a
         STA char_vy
         JMP mt_vout_done
- .mt_vout_floor
+  .mt_vout_floor
         LDA teleport_vt
         STA char_vx
         LDA teleport_vn
-        EOR #&FF
-        CLC
-        ADC #1
+        JSR neg_a
+        JSR div8_signed_a
         STA char_vy
         JMP mt_vout_done
- .mt_vout_ceil
+  .mt_vout_ceil
         LDA teleport_vt
-        EOR #&FF
-        CLC
-        ADC #1
+        JSR neg_a
         STA char_vx
         LDA teleport_vn
+        JSR div8_signed_a
         STA char_vy
- .mt_vout_done
+  .mt_vout_done
+
+        ; Clamp to terminal limits after mapping.
+        JSR clamp_char_vx
+        JSR clamp_char_vy
 
  .mt_place_from_orient
         ; Exit placement from orientation.
@@ -536,6 +540,82 @@
 .mt_clear
         LDA #0
         STA teleport_pending
+        RTS
+
+
+; --- Small signed helpers ---
+; Negate signed A.
+.neg_a
+        EOR #&FF
+        CLC
+        ADC #1
+        RTS
+
+
+; Multiply signed A by 8 (assumes range small enough to not overflow).
+.mul8_signed_a
+        ASL A
+        ASL A
+        ASL A
+        RTS
+
+
+; Divide signed A by 8, rounding toward 0.
+.div8_signed_a
+        BMI div8_neg
+        LSR A
+        LSR A
+        LSR A
+        RTS
+ .div8_neg
+        ; abs
+        JSR neg_a
+        LSR A
+        LSR A
+        LSR A
+        ; restore sign
+        JSR neg_a
+        RTS
+
+
+; Clamp `char_vx` to [-TERMINAL_VELOCITY_X, +TERMINAL_VELOCITY_X].
+.clamp_char_vx
+        LDA char_vx
+        BMI cvx_neg
+        CMP #(TERMINAL_VELOCITY_X+1)
+        BCC cvx_done
+        LDA #TERMINAL_VELOCITY_X
+        STA char_vx
+ .cvx_done
+        RTS
+ .cvx_neg
+        ; if |vx| > TERMINAL_VELOCITY_X => clamp
+        EOR #&FF
+        CLC
+        ADC #1
+        CMP #(TERMINAL_VELOCITY_X+1)
+        BCC cvx_done
+        LDA #TERMINAL_VELOCITY_X
+        JSR neg_a
+        STA char_vx
+        RTS
+
+
+; Clamp `char_vy` to [TERMINAL_VELOCITY_UP, TERMINAL_VELOCITY_DOWN].
+.clamp_char_vy
+        LDA char_vy
+        BMI cvy_neg
+        CMP #(TERMINAL_VELOCITY_DOWN+1)
+        BCC cvy_done
+        LDA #TERMINAL_VELOCITY_DOWN
+        STA char_vy
+ .cvy_done
+        RTS
+ .cvy_neg
+        CMP #TERMINAL_VELOCITY_UP
+        BCS cvy_done
+        LDA #TERMINAL_VELOCITY_UP
+        STA char_vy
         RTS
 
 

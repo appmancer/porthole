@@ -554,10 +554,16 @@
     CMP #3
     BEQ reticle_los_target_wall_right
     CMP #4
-    BEQ reticle_los_target_backwall_y
+    BEQ reticle_los_do_backwall_y
     CMP #5
-    BEQ reticle_los_target_backwall_yminus1
+    BEQ reticle_los_do_backwall_yminus1
     JMP reticle_los_fail
+
+  .reticle_los_do_backwall_y
+    JMP reticle_los_target_backwall_y
+
+  .reticle_los_do_backwall_yminus1
+    JMP reticle_los_target_backwall_yminus1
 
   ; --- Floor/ceiling (2x1) ---
   .reticle_los_target_floor

@@ -182,13 +182,13 @@ Important:
 We avoid placing large/static asset tables in `&3000..&7FFF` so that rendering
 can keep the shadow mapping stable.
 
-Proposed bank roles:
+Bank roles (current):
 
 - SWRAM bank `CHELL_SWRAM_BANK_DEFAULT = 4`:
   - DFS file `CHDATA` loaded at runtime to `&8000..&BFFF`
   - Chell sprites + masks + reticle sprites
 
-- SWRAM bank `OBJ_SWRAM_BANK_DEFAULT = 5` (proposed):
+- SWRAM bank `OBJ_SWRAM_BANK_DEFAULT = 5`:
   - DFS file `OBJDAT` loaded at runtime to `&8000..&BFFF`
   - Portal/object stamp sprites + masks (all the data currently generated into
     `sprites/generated_objects_{sprites,masks}.asm`)
@@ -200,16 +200,13 @@ Render policy:
   - Page `chell_bank` once, draw Chell/reticle.
   - Page `obj_bank` once, stamp portals/objects.
 
-## Immediate Fix Target
+## Immediate Fix Target (Done)
 
-Today, object stamp sprite/mask data is assembled into main RAM and some labels
-land inside `&3000..&7FFF` (e.g. `portal_b_yel_x0_mask` at `&58CE`). Once shadow
-is enabled, that makes the data unreadable/volatile while rendering.
+Object stamp sprite/mask data now lives in SWRAM (DFS file `OBJDAT`) and is
+loaded at runtime into `OBJ_SWRAM_BANK_DEFAULT` at `&8000..&BFFF`.
 
-Action:
-
-- Move object stamp sprite+mask bytes into SWRAM (either as a new bank/file, or
-  packed into unused space inside `CHDATA`).
+This keeps portal/object stamp sprite reads out of the banked shadow window
+(`&3000..&7FFF`) during the render phase.
 
 ## Level Data Storage (Draft)
 
@@ -246,5 +243,4 @@ Options:
 - The banked window starts at `&3000`. If we want to freely switch main/shadow
   each frame, it’s simplest if the *main binary code* stays below `&3000`.
   - That implies a practical ceiling of ~`&1900..&2FFF` for resident code/data.
-- Bulk assets belong in SWRAM banks and are paged in explicitly.
 - Bulk assets belong in SWRAM banks and are paged in explicitly.
