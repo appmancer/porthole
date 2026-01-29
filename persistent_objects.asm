@@ -658,7 +658,7 @@ OBJ_STATE_CARRIED = &80
 ;
 ; Rule: SPACE near cube toggles pickup/drop.
 ; - Pickup: cube must be in current_room, at Chell's feet tile_y, and overlap in X.
-; - Drop: attempts to place the cube on Chell's feet tile_y, in front of Chell if possible.
+; - Drop: attempts to place the cube on Chell's feet tile_y, in front of Chell.
 ;
 ; Side effects:
 ; - Marks objects_pending + obj_dirty so render patches/restamps object stamps.
@@ -763,7 +763,7 @@ OBJ_STATE_CARRIED = &80
     LDA carried_cube_idx
     TAY
 
-    ; Try drop candidates: in front, behind, then aligned.
+    ; Try drop candidate: in front of facing.
     ; temp already holds chell_x.
 
     ; candidate0: in front of facing (adjacent; Chell is 2 tiles wide)
@@ -780,23 +780,6 @@ OBJ_STATE_CARRIED = &80
     SEC
     SBC #2
   .hcpd_try_place
-    JSR try_place_carried_cube_at_x
-    BCS hcpd_drop_success
-
-    ; candidate1: behind
-    LDA anim_dir
-    BEQ hcpd_cand1_left
-    ; facing right => behind is chell_x - 2
-    LDA temp
-    SEC
-    SBC #2
-    JMP hcpd_try_place2
-  .hcpd_cand1_left
-    ; facing left => behind is chell_x + 2
-    LDA temp
-    CLC
-    ADC #2
-  .hcpd_try_place2
     JSR try_place_carried_cube_at_x
     BCS hcpd_drop_success
     RTS

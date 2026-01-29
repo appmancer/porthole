@@ -232,6 +232,7 @@ CHELL_H_PX                   = 32
 ; Approx visible bounds (used for portal exit placement).
 ; When facing right, Chell's visible "nose" is around x+10 (see will_collide_right).
 CHELL_NOSE_X_RIGHT          = 10
+CHELL_NOSE_X_LEFT           = 3
 
 CHELL_RUN_LEFT_BASE         = 12
 CHELL_IDLE_RIGHT_BASE       = 24

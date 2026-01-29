@@ -193,10 +193,24 @@
         STA screen_ptr           ; portal_left_x base
         LDA row_counter
         CMP #PORTAL_ORIENT_WALL_L
-        BNE mt_portal_x_ok
+        BNE mt_chk_wall_r_x
         LDA screen_ptr
         CLC
         ADC #8
+        STA screen_ptr
+        JMP mt_portal_x_ok
+
+ .mt_chk_wall_r_x
+        CMP #PORTAL_ORIENT_WALL_R
+        BNE mt_portal_x_ok
+        ; Wall-right portals occupy the empty space to the *left* of the wall tile.
+        ; Shift the pixel origin left by 8px (clamp at 0).
+        LDA screen_ptr
+        SEC
+        SBC #8
+        BCS mt_wall_r_x_ok
+        LDA #0
+ .mt_wall_r_x_ok
         STA screen_ptr
  .mt_portal_x_ok
 
@@ -349,10 +363,12 @@
         JMP mt_place_ceil
 
  .mt_place_wall_r
-        ; right wall => exit to left: x = portal_left_x - CHELL_W_PX - nudge
+        ; right wall => exit to left.
+        ; Place Chell so her left-facing "nose" sits just outside the portal.
+        ; (Mirror of the wall-left placement using CHELL_NOSE_X_RIGHT.)
         LDA screen_ptr
         SEC
-        SBC #(CHELL_W_PX+PORTAL_EXIT_NUDGE)
+        SBC #(PORTAL_EXIT_NUDGE+CHELL_NOSE_X_LEFT)
         BCS mt_x_store
         LDA #0
         JMP mt_x_store
@@ -706,13 +722,22 @@
         BCS cpei_overlap_fc
 
         ; Wall portals (8x32)
-        ; For wall-left, the portal pixels live in the right half of the 16px stamp,
-        ; so the collision rect starts at +8px.
+        ; Portal opening sits in the empty space adjacent to the wall tile:
+        ; - wall-left  => opening is to the right  (x+1)
+        ; - wall-right => opening is to the left   (x-1)
         CMP #PORTAL_ORIENT_WALL_L
-        BNE cpei_overlap_wall_x_ok
+        BNE cpei_overlap_wall_try_r
         CPX #15
         BEQ cpei_overlap_wall_x_ok
         INX
+        JMP cpei_overlap_wall_x_ok
+
+ .cpei_overlap_wall_try_r
+        CMP #PORTAL_ORIENT_WALL_R
+        BNE cpei_overlap_wall_x_ok
+        CPX #0
+        BEQ cpei_overlap_wall_x_ok
+        DEX
  .cpei_overlap_wall_x_ok
         JSR cpei_overlap_tile_xy_8x32
         RTS
