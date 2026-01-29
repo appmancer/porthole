@@ -12,34 +12,12 @@ Detailed background/design context lives in `project plan.md`.
 
 ## P1: Gameplay Interactions
 
-1) Fling ("fast in, fast out") via real momentum
+1) Fling ("fast in, fast out") via real momentum (DONE)
 
-   Why it doesn't conserve momentum today
-
-   - Vertical speed is effectively quantized/capped: `TERMINAL_VELOCITY_DOWN=1` and falling movement is paced to at most one 8px stripe step per frame.
-   - Horizontal speed magnitude is not applied: movement uses only the sign of `char_vx` (1px/frame stepping), so large velocities produced by portal mapping don't translate into distance.
-
-   Implementation plan (no code yet)
-
-   - Horizontal velocity (required for shaft crossing)
-     - Change horizontal movement so `char_vx` magnitude matters.
-     - Per frame, apply up to `abs(char_vx)` 1px steps (with collision per step), with a clamp to avoid pathological frame time.
-
-   - Vertical velocity (variety of fall speeds)
-     - Raise `TERMINAL_VELOCITY_DOWN` to a meaningful range (in 8px stripes/frame).
-     - Change falling so it can move multiple 8px stripes per frame based on `char_vy` magnitude (remove the one-stripe cap).
-     - Tune gravity so terminal velocity is reached after ~12-ish tiles of fall (tunable via accel + tick periods).
-
-   - Portal momentum mapping (unit scaling)
-     - Keep the current entry/exit normal/tangent approach, but introduce an explicit scale between axes:
-       - vertical units are "stripes/frame" (8px chunks)
-       - horizontal units are "pixels/frame"
-     - When converting vertical speed into horizontal on exit, multiply by 8 (and the inverse when converting horizontal into vertical).
-     - Apply clamping after mapping to the new terminal limits.
-
-   - Controls and readability
-     - Add "fast fall" while airborne when Down is held (accelerate toward terminal faster).
-     - Add a falling sprite state that triggers only when descent is committed (e.g. vy beyond a threshold), so small drops still read as a controlled jump.
+   - Horizontal velocity magnitude now matters (multi-1px stepping with clamp).
+   - Vertical fall can move multiple 8px stripes/frame at higher `char_vy`.
+   - Portal momentum mapping includes an explicit 8x scale between `vy` (stripes/frame) and `vx` (px/frame), with clamping.
+   - Still to do (polish): move to a dedicated falling sprite pose once descent is committed (vy threshold), so small drops still read as controlled jumps.
 
 2) Portal exit orientation + body rotation (post-fling)
 
@@ -76,7 +54,3 @@ Detailed background/design context lives in `project plan.md`.
 
 
 ## P2: Follow-ups
-
-1) Add a short in-game debug toggle (optional)
-
-   - Visualize dirty rects / object indices / signal bits to speed iteration.

@@ -159,6 +159,10 @@ ORG &70
   .palette_flash_timer  SKIP 1
   .palette_flash_active SKIP 1
   .palette_flash_phys2  SKIP 1
+
+  ; Debug flags.
+  ; bit0: show debug boxes for sprite footprints.
+  .debug_flags          SKIP 1
  
  ORG &1900
 
@@ -380,10 +384,12 @@ CHELL_JUMP_LEFT_BASE        = 36
       STA teleport_last_exit_kind
       STA carried_cube_idx
 
+     ; Clear debug/temporary state.
+     LDA #0
      STA palette_flash_timer
      STA palette_flash_active
      STA palette_flash_phys2
-
+     STA debug_flags
      STA quickshot_latch
 
     ; Default: face right.
@@ -408,8 +414,9 @@ CHELL_JUMP_LEFT_BASE        = 36
     LDA chell_new_ptr+1
     STA screen_ptr+1
 
-    JSR save_chell_under
-    JSR draw_character_current
+       JSR save_chell_under
+        JSR draw_character_current
+        JSR debug_draw_chell_box
 
     LDA screen_ptr
     STA chell_prev_ptr
@@ -542,11 +549,12 @@ CHELL_JUMP_LEFT_BASE        = 36
        STA screen_ptr
        LDA chell_new_ptr+1
        STA screen_ptr+1
-       JSR save_chell_under
-       JSR draw_character_current
+        JSR save_chell_under
+        JSR draw_character_current
+        JSR debug_draw_chell_box
 
-       ; Record new previous pointer.
-       LDA screen_ptr
+        ; Record new previous pointer.
+        LDA screen_ptr
        STA chell_prev_ptr
        LDA screen_ptr+1
        STA chell_prev_ptr+1
@@ -565,8 +573,9 @@ CHELL_JUMP_LEFT_BASE        = 36
 
         ; Reticle is drawn tile-aligned to the 16px portal grid.
  .render_reticle_pos_ok
-        JSR save_reticle_under
-        JSR draw_reticle_current
+         JSR save_reticle_under
+         JSR draw_reticle_current
+         JSR debug_draw_reticle_box
 
        ; Record reticle screen_ptr for next restore.
        LDA screen_ptr
@@ -675,8 +684,10 @@ INCLUDE "frame_update.asm"
 
 
 INCLUDE "persistent_objects.asm"
- 
+  
 INCLUDE "ui.asm"
+
+INCLUDE "debug.asm"
 
 INCLUDE "loaders.asm"
 

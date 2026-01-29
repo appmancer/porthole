@@ -1,6 +1,13 @@
 ; portal_teleport.asm
 ; Portal entry detection + teleportation (including momentum mapping).
 
+; Our vertical velocity `char_vy` is in 8px "stripes" per frame.
+; Our horizontal velocity `char_vx` is in pixels per frame.
+;
+; To keep small hops from turning into massive horizontal flings, we use a
+; reduced scale factor when converting vy<->pixels for portal momentum.
+PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
+
 ; Detect Chell walking into a portal.
 ;
 ; Rule: trigger when Chell overlaps the portal rect and is moving into the face
@@ -253,49 +260,50 @@
         ; ceiling
         JMP mt_vtn_ceil
 
- .mt_vtn_wall_l
-        ; t=(0,+1), n=(+1,0)
-        ; v_t = vy (vertical) in px/frame  => vy_stripes*8
-        ; v_n = -vx (horizontal) in px/frame
-        LDA char_vy
-        JSR mul8_signed_a
-        STA teleport_vt
-        LDA char_vx
-        JSR neg_a
-        STA teleport_vn
-        JMP mt_vtn_done
+  .mt_vtn_wall_l
+         ; t=(0,+1), n=(+1,0)
+         ; v_t = vy (vertical) in px/frame  => vy_stripes*(1<<PORTAL_VY_TO_PX_SHIFT)
+         ; v_n = -vx (horizontal) in px/frame
+         ; Use prev_vy when we entered on the landing frame (char_vy already zeroed).
+         JSR get_entry_vy
+         JSR portal_mul_vy_to_px
+         STA teleport_vt
+         LDA char_vx
+         JSR neg_a
+         STA teleport_vn
+         JMP mt_vtn_done
   .mt_vtn_wall_r
-        ; t=(0,-1), n=(-1,0)
-        ; v_t = -vy (vertical) in px/frame => -(vy_stripes*8)
-        ; v_n = vx (horizontal) in px/frame
-        LDA char_vy
-        JSR mul8_signed_a
-        JSR neg_a
-        STA teleport_vt
-        LDA char_vx
-        STA teleport_vn
-        JMP mt_vtn_done
+         ; t=(0,-1), n=(-1,0)
+         ; v_t = -vy (vertical) in px/frame => -(vy_stripes*(1<<PORTAL_VY_TO_PX_SHIFT))
+         ; v_n = vx (horizontal) in px/frame
+         JSR get_entry_vy
+         JSR portal_mul_vy_to_px
+         JSR neg_a
+         STA teleport_vt
+         LDA char_vx
+         STA teleport_vn
+         JMP mt_vtn_done
   .mt_vtn_floor
-        ; t=(+1,0), n=(0,-1)
-        ; v_t = vx (horizontal) in px/frame
-        ; v_n = vy (vertical) in px/frame => vy_stripes*8
-        LDA char_vx
-        STA teleport_vt
-        LDA char_vy
-        JSR mul8_signed_a
-        STA teleport_vn
-        JMP mt_vtn_done
+         ; t=(+1,0), n=(0,-1)
+         ; v_t = vx (horizontal) in px/frame
+         ; v_n = vy (vertical) in px/frame => vy_stripes*(1<<PORTAL_VY_TO_PX_SHIFT)
+         LDA char_vx
+         STA teleport_vt
+         JSR get_entry_vy
+         JSR portal_mul_vy_to_px
+         STA teleport_vn
+         JMP mt_vtn_done
   .mt_vtn_ceil
-        ; t=(-1,0), n=(0,+1)
-        ; v_t = -vx (horizontal) in px/frame
-        ; v_n = -vy (vertical) in px/frame => -(vy_stripes*8)
-        LDA char_vx
-        JSR neg_a
-        STA teleport_vt
-        LDA char_vy
-        JSR mul8_signed_a
-        JSR neg_a
-        STA teleport_vn
+         ; t=(-1,0), n=(0,+1)
+         ; v_t = -vx (horizontal) in px/frame
+         ; v_n = -vy (vertical) in px/frame => -(vy_stripes*(1<<PORTAL_VY_TO_PX_SHIFT))
+         LDA char_vx
+         JSR neg_a
+         STA teleport_vt
+         JSR get_entry_vy
+         JSR portal_mul_vy_to_px
+         JSR neg_a
+         STA teleport_vn
   .mt_vtn_done
 
         ; Recompose v' into screen axes for the exit portal orientation.
@@ -316,36 +324,36 @@
         JMP mt_vout_ceil
 
   .mt_vout_wall_l
-        LDA teleport_vn
-        STA char_vx
-        LDA teleport_vt
-        JSR div8_signed_a
-        STA char_vy
-        JMP mt_vout_done
+         LDA teleport_vn
+         STA char_vx
+         LDA teleport_vt
+         JSR portal_div_px_to_vy
+         STA char_vy
+         JMP mt_vout_done
   .mt_vout_wall_r
-        LDA teleport_vn
-        JSR neg_a
-        STA char_vx
-        LDA teleport_vt
-        JSR neg_a
-        JSR div8_signed_a
-        STA char_vy
-        JMP mt_vout_done
+         LDA teleport_vn
+         JSR neg_a
+         STA char_vx
+         LDA teleport_vt
+         JSR neg_a
+         JSR portal_div_px_to_vy
+         STA char_vy
+         JMP mt_vout_done
   .mt_vout_floor
-        LDA teleport_vt
-        STA char_vx
-        LDA teleport_vn
-        JSR neg_a
-        JSR div8_signed_a
-        STA char_vy
-        JMP mt_vout_done
+         LDA teleport_vt
+         STA char_vx
+         LDA teleport_vn
+         JSR neg_a
+         JSR portal_div_px_to_vy
+         STA char_vy
+         JMP mt_vout_done
   .mt_vout_ceil
-        LDA teleport_vt
-        JSR neg_a
-        STA char_vx
-        LDA teleport_vn
-        JSR div8_signed_a
-        STA char_vy
+         LDA teleport_vt
+         JSR neg_a
+         STA char_vx
+         LDA teleport_vn
+         JSR portal_div_px_to_vy
+         STA char_vy
   .mt_vout_done
 
         ; Clamp to terminal limits after mapping.
@@ -367,24 +375,29 @@
         JMP mt_place_ceil
 
  .mt_place_wall_r
-        ; right wall => exit to left.
-        ; Place Chell so her left-facing "nose" sits just outside the portal.
-        ; (Mirror of the wall-left placement using CHELL_NOSE_X_RIGHT.)
+         ; right wall => exit to left.
+        ; Place Chell so her right edge is nudged inside the opening.
+        ; This avoids embedding any part of her body into the wall tile.
+        ; right_edge = portal_left + (PORTAL_WALL_W_PX-1) - nudge
         LDA screen_ptr
+        CLC
+        ADC #(PORTAL_WALL_W_PX-1)
         SEC
-        SBC #(PORTAL_EXIT_NUDGE+CHELL_NOSE_X_LEFT)
+        SBC #PORTAL_EXIT_NUDGE
+        ; left = right_edge - (CHELL_W_PX-1)
+        SEC
+        SBC #(CHELL_W_PX-1)
         BCS mt_x_store
         LDA #0
         JMP mt_x_store
 
  .mt_place_wall_l
-        ; left wall => exit to right.
-        ; Place Chell so her visible "nose" sits just outside the portal.
+         ; left wall => exit to right.
+        ; Place Chell so her left edge is nudged inside the opening.
+        ; This avoids embedding any part of her body into the wall tile.
         LDA screen_ptr
         CLC
-        ADC #((PORTAL_WALL_W_PX-1)+PORTAL_EXIT_NUDGE)
-        SEC
-        SBC #CHELL_NOSE_X_RIGHT
+        ADC #PORTAL_EXIT_NUDGE
         CMP #128
         BCC mt_x_store
         LDA #127
@@ -543,7 +556,55 @@
         RTS
 
 
-; --- Small signed helpers ---
+ ; --- Small signed helpers ---
+; Get the vertical entry velocity in stripes/frame.
+; If the entry was detected on the landing/head-bonk frame, movement may have
+; already zeroed char_vy; in that case use char_prev_vy.
+; Returns: A = signed vy (stripes/frame)
+.get_entry_vy
+        LDA char_vy
+        BNE gev_done
+        LDA char_prev_vy
+ .gev_done
+        RTS
+
+
+; Multiply signed A (vy stripes/frame) by (1<<PORTAL_VY_TO_PX_SHIFT) to produce a
+; pixels/frame-ish value for portal momentum.
+.portal_mul_vy_to_px
+        LDX #PORTAL_VY_TO_PX_SHIFT
+ .pmv_loop
+        BEQ pmv_done
+        ASL A
+        DEX
+        JMP pmv_loop
+ .pmv_done
+        RTS
+
+
+; Divide signed A (pixels/frame-ish) by (1<<PORTAL_VY_TO_PX_SHIFT) to produce a
+; vy stripes/frame value. Rounds toward 0.
+.portal_div_px_to_vy
+        LDX #PORTAL_VY_TO_PX_SHIFT
+        BEQ pdv_done
+        BMI pdv_neg
+ .pdv_pos_loop
+        LSR A
+        DEX
+        BNE pdv_pos_loop
+ .pdv_done
+        RTS
+ .pdv_neg
+        ; abs
+        JSR neg_a
+ .pdv_neg_loop
+        LSR A
+        DEX
+        BNE pdv_neg_loop
+        ; restore sign
+        JSR neg_a
+        RTS
+
 ; Negate signed A.
 .neg_a
         EOR #&FF

@@ -11,22 +11,43 @@
     ; - If Chell is moving vertically (jump/fall), reticle cannot become active.
     LDA keys_held
     AND #8
-    BEQ murm_not_active
+    BNE murm_shift_ok
+    CLC
+    RTS
+  .murm_shift_ok
 
     LDA char_grounded
-    BEQ murm_not_active
+    BNE murm_ground_ok
+    CLC
+    RTS
+  .murm_ground_ok
     LDA char_vy
-    BNE murm_not_active
+    BEQ murm_stable_ok
+    CLC
+    RTS
+  .murm_stable_ok
 
     ; Reticle active while SHIFT held and Chell is stable.
     LDA #1
     STA reticle_active
 
+    ; Debug toggle: SPACE edge while in reticle mode.
+    ; (Avoids interfering with SPACE actions in normal gameplay.)
+    LDA action_pressed
+    BEQ murm_debug_done
+    LDA debug_flags
+    EOR #1
+    STA debug_flags
+    LDA #1
+    STA chell_dirty
+    STA reticle_dirty
+  .murm_debug_done
+
     JSR poll_reticle_keys
     BCC murm_reticle_no_dirty
     LDA #1
     STA reticle_dirty
- .murm_reticle_no_dirty
+  .murm_reticle_no_dirty
 
     ; Portal placement request handling.
     ; We latch A/S key-down into portal_req and allow placement on a later
