@@ -6,8 +6,8 @@ B2_PORT="${B2_PORT:-48075}"
 B2_ID="${B2_ID:-b2}"
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "Usage: $0 <addr> <len> [suffix]" >&2
-  echo "  addr: hex (e.g. 0x2000 or 2000)" >&2
+  echo "Usage: $0 <addr|label> <len> [suffix]" >&2
+  echo "  addr : hex (e.g. 0x2000, &2000, 2000) or a beebasm label" >&2
   echo "  len : bytes (e.g. 16, 0x100)" >&2
   echo "  suffix: optional B2 view suffix (e.g. m, o, i)" >&2
   exit 2
@@ -18,7 +18,20 @@ len="$2"
 suffix="${3:-}"
 
 addr="${addr#0x}"
+addr="${addr#&}"
 len="${len#0x}"
+
+# Allow passing a label name as the address.
+if ! [[ "${addr}" =~ ^[0-9A-Fa-f]+$ ]]; then
+  out="$(./tools/asm-nav addr "${addr}")"
+  if [[ "${out}" =~ \&([0-9A-Fa-f]+) ]]; then
+    addr="${BASH_REMATCH[1]}"
+  else
+    echo "ERROR: could not resolve label '${addr}'" >&2
+    echo "  ${out}" >&2
+    exit 2
+  fi
+fi
 
 url="http://${B2_HOST}:${B2_PORT}/peek/${B2_ID}/${addr}/+${len}"
 if [[ -n "${suffix}" ]]; then

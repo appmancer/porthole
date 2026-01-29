@@ -5,7 +5,7 @@
 ;
 ; Uses the generated exit tables in `levels/generated_level1.asm`.
 ;
-; For now we support left/right edge exits only.
+; Supports left/right and up/down edge exits.
 ;
 ; Exit matching uses Chell's feet cell:
 ;   feet_cell_y = (top_y + 31) >> 4
@@ -27,6 +27,69 @@
     RTS
 
 .exits_check_edges
+    ; --- Down edge ---
+    ; Trigger exits only when Chell is moving into the edge.
+    JSR calc_char_y
+    CMP #224
+    BCC check_up_edge
+
+    ; Require downward intent (vy > 0), allowing a 1-frame grace via char_prev_vy.
+    LDA char_vy
+    BNE exits_vy_down_have
+    LDA char_prev_vy
+ .exits_vy_down_have
+    BEQ check_up_edge
+    BMI check_up_edge
+
+    ; X range match uses Chell's center X cell.
+    ; temp := ((x + 8) >> 3)
+    JSR calc_char_x
+    CLC
+    ADC #8
+    LSR A
+    LSR A
+    LSR A
+    STA temp
+
+    JSR find_exit_down
+    BCC check_up_edge
+
+    ; Enter destination from above. A already holds dst room.
+    JSR transition_enter_from_up
+    SEC
+    RTS
+
+ .check_up_edge
+    ; --- Up edge ---
+    JSR calc_char_y
+    BNE exits_check_right
+
+    ; Require upward intent (vy < 0), allowing a 1-frame grace via char_prev_vy.
+    LDA char_vy
+    BNE exits_vy_up_have
+    LDA char_prev_vy
+ .exits_vy_up_have
+    BEQ exits_check_right
+    BPL exits_check_right
+
+    ; temp := ((x + 8) >> 3)
+    JSR calc_char_x
+    CLC
+    ADC #8
+    LSR A
+    LSR A
+    LSR A
+    STA temp
+
+    JSR find_exit_up
+    BCC exits_check_right
+
+    ; Enter destination from below. A already holds dst room.
+    JSR transition_enter_from_down
+    SEC
+    RTS
+
+ .exits_check_right
     ; --- Right edge ---
 
     ; Trigger exits only when Chell is facing/moving into the edge.
@@ -63,7 +126,7 @@
     SEC
     RTS
 
-.check_left_edge
+ .check_left_edge
     JSR calc_char_x
     BNE exits_none
 
@@ -185,6 +248,44 @@
     RTS
 
 
+; Find matching down-edge exit for current_room.
+; Input: temp = center_x_cell
+; Output: C=1 and A=dst_room on match, else C=0.
+.find_exit_down
+    LDX current_room
+    LDA exit_down_counts,X
+    BEQ find_exit_none
+    STA col_counter
+
+    TXA
+    ASL A
+    TAX
+    LDA exit_down_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_down_ptrs+1,X
+    STA temp_sprite_ptr+1
+    JMP find_exit_scan
+
+
+; Find matching up-edge exit for current_room.
+; Input: temp = center_x_cell
+; Output: C=1 and A=dst_room on match, else C=0.
+.find_exit_up
+    LDX current_room
+    LDA exit_up_counts,X
+    BEQ find_exit_none
+    STA col_counter
+
+    TXA
+    ASL A
+    TAX
+    LDA exit_up_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_up_ptrs+1,X
+    STA temp_sprite_ptr+1
+    JMP find_exit_scan
+
+
 ; Room transition helpers.
 ; Inputs:
 ; - A = destination room index
@@ -247,6 +348,130 @@
     STA char_pixel_offset
 
     ; Mark for redraw
+    LDA #1
+    STA room_dirty
+    STA chell_dirty
+    ; Clear movement intent so we don't immediately re-trigger exits.
+    LDA #0
+    STA move_held
+    STA last_move_held
+    LDA #8
+    STA exit_cooldown
+
+    ; Cancel reticle.
+    LDA #0
+    STA reticle_active
+    STA reticle_prev_active
+    STA reticle_has_under
+    STA chell_has_under
+    RTS
+
+
+; Vertical transition helpers.
+; Inputs:
+; - A = destination room index
+; Preserves X (clamped) and horizontal subpixel offsets; snaps Y to the new edge.
+.transition_enter_from_up
+    STA current_room
+    JSR set_room_tilemap
+    JSR set_room_portalmap
+    JSR build_material_planes_from_tilemap
+
+    ; Keep X, but clamp left tile_x to 0..14 (Chell is 2 tiles wide).
+    LDA char_tile_pos
+    AND #15
+    CMP #15
+    BNE tefu_x_ok
+    ; x==15 => clamp to 14 and clear sub offsets.
+    LDA char_tile_pos
+    AND #&F0
+    ORA #14
+    STA char_tile_pos
+    LDA #0
+    STA char_byte_offset
+    STA char_pixel_offset
+    JMP tefu_y_set
+  .tefu_x_ok
+    ; keep existing x nibble
+    LDA char_tile_pos
+    AND #15
+    STA temp
+    LDA char_tile_pos
+    AND #&F0
+    ORA temp
+    STA char_tile_pos
+
+  .tefu_y_set
+    ; Spawn at the top edge.
+    LDA char_tile_pos
+    AND #15
+    STA temp
+    LDA #&00
+    ORA temp
+    STA char_tile_pos
+    LDA #0
+    STA char_y_offset
+
+    ; Mark for redraw.
+    LDA #1
+    STA room_dirty
+    STA chell_dirty
+    ; Clear movement intent so we don't immediately re-trigger exits.
+    LDA #0
+    STA move_held
+    STA last_move_held
+    LDA #8
+    STA exit_cooldown
+
+    ; Cancel reticle.
+    LDA #0
+    STA reticle_active
+    STA reticle_prev_active
+    STA reticle_has_under
+    STA chell_has_under
+    RTS
+
+
+.transition_enter_from_down
+    STA current_room
+    JSR set_room_tilemap
+    JSR set_room_portalmap
+    JSR build_material_planes_from_tilemap
+
+    ; Keep X, but clamp left tile_x to 0..14 (Chell is 2 tiles wide).
+    LDA char_tile_pos
+    AND #15
+    CMP #15
+    BNE tefd_x_ok
+    LDA char_tile_pos
+    AND #&F0
+    ORA #14
+    STA char_tile_pos
+    LDA #0
+    STA char_byte_offset
+    STA char_pixel_offset
+    JMP tefd_y_set
+  .tefd_x_ok
+    LDA char_tile_pos
+    AND #15
+    STA temp
+    LDA char_tile_pos
+    AND #&F0
+    ORA temp
+    STA char_tile_pos
+
+  .tefd_y_set
+    ; Spawn at the bottom edge (top y = 224 => tile_y = 14).
+    LDA char_tile_pos
+    AND #15
+    STA temp
+    LDA #&E0
+    ORA temp
+    STA char_tile_pos
+    LDA #0
+    STA char_y_offset
+
+    ; Mark for redraw.
     LDA #1
     STA room_dirty
     STA chell_dirty

@@ -180,9 +180,16 @@ def _parse_exits_and_objects_from_tmx(
     map_h: int,
     tile_w: int,
     tile_h: int,
-) -> tuple[dict[str, list[tuple[int, int, str]]], list[tuple[str, int, int, str, int]], bool, bool]:
+) -> tuple[
+    dict[str, list[tuple[int, int, str]]],
+    list[tuple[str, int, int, str, int]],
+    tuple[int, int] | None,
+    bool,
+    bool,
+]:
     exits = {"left": [], "right": [], "up": [], "down": []}
     objects: list[tuple[str, int, int, str, int]] = []
+    start: tuple[int, int] | None = None
 
     has_exit_group = False
     has_objects_group = False
@@ -209,6 +216,29 @@ def _parse_exits_and_objects_from_tmx(
             obj_type = (obj.get("type") or "").strip()
             obj_name = (obj.get("name") or "").strip()
             props = _tiled_properties(obj)
+
+            # --- Player start ---
+            # Authored as a point object in the meta/exits group.
+            if is_exit_group(og_name) and obj_type.lower() in (
+                "start",
+                "spawn",
+                "player_start",
+                "chell_start",
+            ):
+                x = _parse_float_int(obj.get("x"), path=path, what="object x")
+                y = _parse_float_int(obj.get("y"), path=path, what="object y")
+                if x % tile_w != 0 or y % tile_h != 0:
+                    raise ValueError(f"{path}: start must be placed on tile grid")
+                cx = x // tile_w
+                cy = y // tile_h
+                if not (0 <= cx <= 14 and 0 <= cy <= 14):
+                    raise ValueError(
+                        f"{path}: start out of bounds for 2x2 Chell footprint at {cx},{cy} (x/y must be <= 14)"
+                    )
+                if start is not None:
+                    raise ValueError(f"{path}: multiple start/spawn objects in meta")
+                start = (cx, cy)
+                continue
 
             # --- Edge exits ---
             if is_exit_group(og_name) and (obj_type.lower() in ("edge_exit", "exit", "edgeexit")):
@@ -306,12 +336,19 @@ def _parse_exits_and_objects_from_tmx(
 
                 objects.append((t, cx, cy, obj_id, channel))
 
-    return exits, objects, has_exit_group, has_objects_group
+    return exits, objects, start, has_exit_group, has_objects_group
 
 
 def parse_room_tmx(
     path: Path,
-) -> tuple[list[int], dict[str, list[tuple[int, int, str]]], list[tuple[str, int, int, str, int]], bool, bool]:
+) -> tuple[
+    list[int],
+    dict[str, list[tuple[int, int, str]]],
+    list[tuple[str, int, int, str, int]],
+    tuple[int, int] | None,
+    bool,
+    bool,
+]:
     root = ET.fromstring(path.read_text(encoding="utf-8"))
     if root.tag != "map":
         raise ValueError(f"{path}: expected <map> root")
@@ -375,7 +412,7 @@ def parse_room_tmx(
     if len(gids) != 256:
         raise ValueError(f"{path}: expected 256 gids in layer data, got {len(gids)}")
     tiles = [gid_to_tile_id(g) for g in gids]
-    exits, objects, has_exit_group, has_objects_group = _parse_exits_and_objects_from_tmx(
+    exits, objects, start, has_exit_group, has_objects_group = _parse_exits_and_objects_from_tmx(
         root,
         path=path,
         map_w=width,
@@ -383,7 +420,7 @@ def parse_room_tmx(
         tile_w=tilewidth,
         tile_h=tileheight,
     )
-    return tiles, exits, objects, has_exit_group, has_objects_group
+    return tiles, exits, objects, start, has_exit_group, has_objects_group
 
 
 @dataclass(frozen=True)
@@ -396,13 +433,17 @@ class Room:
     exits_up: list[tuple[int, int, str]]
     exits_down: list[tuple[int, int, str]]
     objects: list[tuple[str, int, int, str, int]]
+    start: tuple[int, int] | None
 
 
-def parse_meta(meta_path: Path) -> tuple[dict[str, list[tuple[int, int, str]]], list[tuple[str, int, int]]]:
+def parse_meta(
+    meta_path: Path,
+) -> tuple[dict[str, list[tuple[int, int, str]]], list[tuple[str, int, int]], tuple[int, int] | None]:
     exits = {"left": [], "right": [], "up": [], "down": []}
     objects: list[tuple[str, int, int]] = []
+    start: tuple[int, int] | None = None
     if not meta_path.exists():
-        return exits, objects
+        return exits, objects, start
 
     for line_index, raw in enumerate(meta_path.read_text(encoding="utf-8").splitlines()):
         line = raw.split("#", 1)[0].strip()
@@ -410,6 +451,21 @@ def parse_meta(meta_path: Path) -> tuple[dict[str, list[tuple[int, int, str]]], 
             continue
 
         toks = line.split()
+
+        if toks[0] == "start":
+            if len(toks) < 3:
+                raise ValueError(f"{meta_path}: line {line_index + 1}: malformed start")
+            try:
+                x = int(toks[1])
+                y = int(toks[2])
+            except ValueError:
+                raise ValueError(f"{meta_path}: line {line_index + 1}: bad start coordinates")
+            if not (0 <= x <= 14 and 0 <= y <= 14):
+                raise ValueError(f"{meta_path}: line {line_index + 1}: start out of range (0..14)")
+            if start is not None:
+                raise ValueError(f"{meta_path}: line {line_index + 1}: multiple start directives")
+            start = (x, y)
+            continue
 
         if toks[0] == "obj":
             if len(toks) < 4:
@@ -461,7 +517,7 @@ def parse_meta(meta_path: Path) -> tuple[dict[str, list[tuple[int, int, str]]], 
 
         exits[edge].append((a0, a1, dst))
 
-    return exits, objects
+    return exits, objects, start
 
 
 def parse_room(path: Path) -> Room:
@@ -470,17 +526,18 @@ def parse_room(path: Path) -> Room:
 
     tmx_exits: dict[str, list[tuple[int, int, str]]] | None = None
     tmx_objects: list[tuple[str, int, int, str, int]] | None = None
+    tmx_start: tuple[int, int] | None = None
     tmx_has_exit_group = False
     tmx_has_objects_group = False
     if path.suffix.lower() == ".tmx":
-        tiles, tmx_exits, tmx_objects, tmx_has_exit_group, tmx_has_objects_group = parse_room_tmx(path)
+        tiles, tmx_exits, tmx_objects, tmx_start, tmx_has_exit_group, tmx_has_objects_group = parse_room_tmx(path)
     elif path.suffix.lower() == ".txt":
         tiles = parse_room_txt(path)
     else:
         raise ValueError(f"{path}: unsupported room format {path.suffix!r}")
 
     meta_path = path.with_suffix(".meta")
-    meta_exits, meta_objects = parse_meta(meta_path)
+    meta_exits, meta_objects, meta_start = parse_meta(meta_path)
 
     # Source of truth:
     # - If TMX has an exit/object objectgroup, prefer it.
@@ -495,6 +552,10 @@ def parse_room(path: Path) -> Room:
         exits = tmx_exits
     if tmx_objects is not None and tmx_has_objects_group:
         objects = tmx_objects
+
+    start = meta_start
+    if tmx_start is not None and tmx_has_exit_group:
+        start = tmx_start
     return Room(
         name=name,
         index=idx,
@@ -504,6 +565,7 @@ def parse_room(path: Path) -> Room:
         exits_up=exits["up"],
         exits_down=exits["down"],
         objects=objects,
+        start=start,
     )
 
 
@@ -561,9 +623,27 @@ def main() -> None:
     exits_up = [resolve(r.exits_up, src=r.name) for r in rooms]
     exits_down = [resolve(r.exits_down, src=r.name) for r in rooms]
 
+    # Resolve start (exactly one per level; defaults to room00 at (4,4)).
+    start_candidates: list[tuple[int, int, int]] = []
+    for r in rooms:
+        if r.start is None:
+            continue
+        sx, sy = r.start
+        start_candidates.append((r.index, sx, sy))
+    if len(start_candidates) > 1:
+        raise SystemExit(f"{level_dir}: multiple start/spawn points found: {start_candidates}")
+    if start_candidates:
+        start_room, start_x, start_y = start_candidates[0]
+    else:
+        start_room, start_x, start_y = (0, 4, 4)
+
     lines: list[str] = []
     lines.append("; Auto-generated by tools/gen-level. DO NOT EDIT.")
     lines.append(f"; Source: {level_dir}")
+    lines.append("")
+
+    lines.append(f"LEVEL_START_ROOM = {start_room}")
+    lines.append(f"LEVEL_START_TILE_POS = &{((start_y << 4) | start_x):02X}")
     lines.append("")
 
     lines.append(".room_pointers")

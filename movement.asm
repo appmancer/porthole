@@ -350,14 +350,13 @@
 .will_collide_right
     JSR calc_char_x
 
-    ; Centerline walls, nose-based:
-    ; Allow a little more overlap on the right so collision matches Chell's
-    ; visible "nose" rather than the full 16px bounding box.
+    ; Centerline walls:
+    ; Allow a small overlap into solid tiles (4px) so collision feels less
+    ; "boxy" without letting the feet samples enter the wall column.
     ;
-    ; Instead of testing just outside the right edge (x+16), test further
-    ; inside the sprite.
+    ; Instead of testing just outside the right edge (x+16), test 4px inside it.
     CLC
-    ADC #10              ; test point 6px inside right edge
+    ADC #12              ; test point 4px inside right edge
     BCS collide_right    ; overflow => beyond 255 (treat as solid)
     CMP #128
     BCS collide_right

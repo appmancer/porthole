@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="3">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+4,0,0,0,0,0,0,0,6,2,2,2,2,2,2,2,
+11,3,3,3,3,3,3,3,12,2,2,2,2,2,2,2
+</data>
+ </layer>
+ <objectgroup id="2" name="objects"/>
+ <objectgroup id="3" name="meta">
+  <object id="2" name="edge_exit_top_room00" type="edge_exit" x="16" y="0" width="112" height="16">
+   <properties>
+    <property name="to" value="room00"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

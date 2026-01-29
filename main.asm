@@ -270,8 +270,8 @@ CHELL_JUMP_LEFT_BASE        = 36
 
     ; Minimal demo harness.
 
-    ; Select room 0 so tilemap_ptr is valid (not used yet).
-    LDA #0
+    ; Select the level-defined start room.
+    LDA #LEVEL_START_ROOM
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
@@ -295,8 +295,8 @@ CHELL_JUMP_LEFT_BASE        = 36
     ; Initialize level-global object state from generated tables.
     JSR init_persistent_objects
 
-    ; Place Chell at cell (4,4): cell_y*16 + cell_x = 4*16 + 4 = 68
-    LDA #68
+    ; Place Chell at the level-defined start tile.
+    LDA #LEVEL_START_TILE_POS
     STA char_tile_pos
 
     ; Init state.

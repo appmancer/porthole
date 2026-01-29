@@ -73,7 +73,7 @@ rm -f "${OUT_SSD}"
   --out "sprites/generated_tiles.asm"
 
 ./tools/gen-level \
-  --level "levels/level1" \
+  --level "levels/level2" \
   --out "levels/generated_level1.asm"
 
 BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTHOLE" -boot PROGRAM)
