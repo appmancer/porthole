@@ -165,7 +165,7 @@
 
 
 ; Check back-wall portalability (2x2 empty) at current reticle_cell_y.
-; Returns C=1 if tile(y,x0..x1) and tile(y+1,x0..x1) are all 0.
+; Returns C=1 if tile(y,x0..x1) and tile(y+1,x0..x1) are all TILE_BACKWALL_PORTAL.
 .reticle_backwall_at_y
     ; Need 2 tiles height.
     LDA reticle_cell_y
@@ -179,9 +179,11 @@
     ADC col_counter
     TAY
     LDA (tilemap_ptr),Y
+    CMP #TILE_BACKWALL_PORTAL
     BNE backwall_fail
     INY
     LDA (tilemap_ptr),Y
+    CMP #TILE_BACKWALL_PORTAL
     BNE backwall_fail
 
     ; row y+1
@@ -192,9 +194,11 @@
     ADC col_counter
     TAY
     LDA (tilemap_ptr),Y
+    CMP #TILE_BACKWALL_PORTAL
     BNE backwall_fail
     INY
     LDA (tilemap_ptr),Y
+    CMP #TILE_BACKWALL_PORTAL
     BNE backwall_fail
 
     SEC

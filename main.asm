@@ -224,6 +224,10 @@ PORTAL_ORIENT_FLOOR          = 2
 PORTAL_ORIENT_CEIL           = 3
 PORTAL_ORIENT_BACK           = 4
 
+; Tile id for the special "backwall portal surface".
+; Back-wall portals may only be placed onto 2x2 regions of this tile.
+TILE_BACKWALL_PORTAL         = 6
+
 ; Overlay sprite indices (overlay_sprite_table).
 CHELL_OVERLAY_CARRY_RIGHT_BASE = 24
 CHELL_OVERLAY_CARRY_LEFT_BASE  = 28

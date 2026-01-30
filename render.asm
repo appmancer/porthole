@@ -1363,14 +1363,33 @@ SOLID_TILE_PLANE          = &7A00
     RTS
 
 
- .tile_material_flags
+  .tile_material_flags
     ; Tile ids:
     ; 0  = empty (background)
-    ; 1+ = all current room tiles (bedrock/platform variants)
-    ; For now, treat all non-zero tiles as solid.
-    EQUB 0
-    EQUB 2,2,2,2,2,2,2,2,2
-    EQUB 2,2,2,2,2,2,2,2,2
+    ; 1+ = room tiles.
+    ; For now, treat most non-zero tiles as solid.
+    ; TILE_BACKWALL_PORTAL is a decorative backwall surface and is non-solid.
+    ; (Only used to gate back-wall portal placement.)
+    ; bit1 (2) = solid
+    EQUB 0                    ; 0: empty
+    EQUB 2                    ; 1
+    EQUB 2                    ; 2
+    EQUB 2                    ; 3
+    EQUB 2                    ; 4
+    EQUB 2                    ; 5
+    EQUB 0                    ; 6: backwall portal surface (non-solid)
+    EQUB 2                    ; 7
+    EQUB 2                    ; 8
+    EQUB 2                    ; 9
+    EQUB 2                    ; 10
+    EQUB 2                    ; 11
+    EQUB 2                    ; 12
+    EQUB 2                    ; 13
+    EQUB 2                    ; 14
+    EQUB 2                    ; 15
+    EQUB 2                    ; 16
+    EQUB 2                    ; 17
+    EQUB 2                    ; 18
     ; Fill remaining entries with 0.
     SKIP 256-19
 
