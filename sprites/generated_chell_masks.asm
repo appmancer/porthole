@@ -521,6 +521,24 @@
     EQUB &11,&11,&11,&11,&11,&11,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
     EQUB &EE,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&00,&00,&00,&88,&88,&00,&00,&00
     EQUB &00,&00,&00,&00,&00,&00,&88,&CC,&FF,&77,&77,&77,&FF,&77,&77,&FF
+.chell_fall_r_x0_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&EE,&CC,&CC,&CC,&88,&88,&FF,&FF,&77,&33,&11,&11,&33,&77
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&BB,&11,&88,&88,&00,&00
+    EQUB &00,&00,&00,&00,&88,&CC,&FF,&FF,&88,&00,&00,&00,&00,&00,&88,&FF
+    EQUB &00,&00,&00,&00,&00,&00,&33,&BB,&00,&00,&00,&00,&00,&00,&00,&BB
+.chell_fall_l_x0_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&DD,&88,&11,&11,&00,&00,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&EE,&CC,&88,&88,&CC,&EE,&FF,&FF,&77,&33,&33,&33,&11,&11
+    EQUB &00,&00,&00,&00,&00,&00,&00,&DD,&00,&00,&00,&00,&00,&00,&CC,&DD
+    EQUB &11,&00,&00,&00,&00,&00,&11,&FF,&00,&00,&00,&00,&11,&33,&FF,&FF
 .reticle_x0_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&88,&88,&11,&11,&33,&33
     EQUB &FF,&33,&11,&11,&88,&88,&CC,&CC,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF

@@ -47,6 +47,8 @@ rm -f "${OUT_SSD}"
   --spec "chell_carry_l^:sprites/Chell Overlays - Carrying.csv" \
   --spec "chell_jump_r:sprites/Chell Jump - Reference.csv" \
   --spec "chell_jump_l^:sprites/Chell Jump - Reference.csv" \
+  --spec "chell_fall_r@1:sprites/Chell Falling - Reference.csv" \
+  --spec "chell_fall_l^@1:sprites/Chell Falling - Reference.csv" \
   --spec "reticle:sprites/Reticles - Reference.csv"
 
 # Static object sprites embedded in main RAM (tile-aligned stamps).

@@ -43,6 +43,15 @@
     EQUW chell_jump_l_x2_mask
     EQUW chell_jump_l_x3_mask
 
+    EQUW chell_fall_r_x0_mask
+    EQUW chell_fall_r_x0_mask
+    EQUW chell_fall_r_x0_mask
+    EQUW chell_fall_r_x0_mask
+    EQUW chell_fall_l_x0_mask
+    EQUW chell_fall_l_x0_mask
+    EQUW chell_fall_l_x0_mask
+    EQUW chell_fall_l_x0_mask
+
     EQUW test_sprite16x32_mask
 
 .overlay_mask_table

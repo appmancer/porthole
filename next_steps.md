@@ -5,19 +5,12 @@ Detailed background/design context lives in `project plan.md`.
 
 ## P0: Rendering Correctness (Blockers)
 
-1) Keep render-time sprite data out of the shadow window (DONE)
-
-   - Object/portal stamp sprites+masks live in SWRAM as DFS file `OBJDAT`.
-   - Loaded at startup (before enabling shadow screen) into `OBJ_SWRAM_BANK_DEFAULT` at `&8000..&BFFF`.
 
 ## P1: Gameplay Interactions
 
-1) Fling ("fast in, fast out") via real momentum (DONE)
+1) Falling pose readability (DONE)
 
-   - Horizontal velocity magnitude now matters (multi-1px stepping with clamp).
-   - Vertical fall can move multiple 8px stripes/frame at higher `char_vy`.
-   - Portal momentum mapping includes an explicit 8x scale between `vy` (stripes/frame) and `vx` (px/frame), with clamping.
-   - Still to do (polish): move to a dedicated falling sprite pose once descent is committed (vy threshold), so small drops still read as controlled jumps.
+   - Added a dedicated falling body pose triggered once descent is committed (vy threshold).
 
 2) Portal exit orientation + body rotation (post-fling)
 

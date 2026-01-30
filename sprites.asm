@@ -55,6 +55,18 @@ EQUW chell_jump_l_x1
 EQUW chell_jump_l_x2
 EQUW chell_jump_l_x3
 
+; Fall pose (single frame), used once descent is committed.
+; We intentionally use only x0 for fall (no subpixel variants).
+; Keep 4 entries per direction so sprite base indices remain consistent.
+EQUW chell_fall_r_x0
+EQUW chell_fall_r_x0
+EQUW chell_fall_r_x0
+EQUW chell_fall_r_x0
+EQUW chell_fall_l_x0
+EQUW chell_fall_l_x0
+EQUW chell_fall_l_x0
+EQUW chell_fall_l_x0
+
 EQUW test_sprite16x32       ; Debug 16x32 sprite (screen byte order)
 
 ; Overlay sprite table (16x16, two stripes). Drawn at Chell Y+16.

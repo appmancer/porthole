@@ -47,6 +47,10 @@ class InputSpec:
     path: Path
     prefix: str
     flip_x: bool = False
+    # If set, limits how many blocks/variants to emit for this spec.
+    # Useful to suppress auto-synthesized x1..x3 variants for sprites that don't
+    # need subpixel shifts.
+    variants: int | None = None
 
 
 def derive_prefix(path: Path) -> str:
@@ -187,18 +191,34 @@ def read_blocks(path: Path) -> list[list[list[str]]]:
     ):
         blocks = blocks[1:]
 
+    return blocks
+
+
+def limit_or_synthesize_blocks(blocks: list[list[list[str]]], *, variants: int | None) -> list[list[list[str]]]:
     # Convenience: if a 16x32 sprite only provides a single reference block,
     # synthesize x0..x3 variants by shifting right by 0..3 pixels.
     # This keeps the movement pipeline (subpixel_offset 0..3) working without
     # requiring artists to export four separate blocks.
     if len(blocks) == 1 and len(blocks[0]) == 32:
-        blocks = [shift_block(blocks[0], shift) for shift in range(4)]
+        n = 4 if variants is None else variants
+        if n < 1:
+            raise ValueError(f"variants must be >= 1, got {n}")
+        if n == 1:
+            return blocks
+        return [shift_block(blocks[0], shift) for shift in range(n)]
+
+    if variants is None:
+        return blocks
+    if variants < 1:
+        raise ValueError(f"variants must be >= 1, got {variants}")
+    return blocks[:variants]
 
     return blocks
 
 
 def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], list[tuple[str, list[int]]]]:
     blocks = read_blocks(spec.path)
+    blocks = limit_or_synthesize_blocks(blocks, variants=spec.variants)
 
     sprites_out: list[tuple[str, list[int]]] = []
     masks_out: list[tuple[str, list[int]]] = []
@@ -281,6 +301,29 @@ def main() -> int:
 
     specs: list[InputSpec] = []
 
+    def parse_prefix_modifiers(prefix_text: str) -> tuple[str, bool, int | None]:
+        # Supported modifiers (order-independent):
+        # - '^' : flip horizontally
+        # - '@N': limit variants/blocks emitted
+        flip_x = "^" in prefix_text
+        prefix_text = prefix_text.replace("^", "")
+
+        variants: int | None = None
+        if "@" in prefix_text:
+            base, n_text = prefix_text.rsplit("@", 1)
+            if not n_text:
+                raise SystemExit(f"invalid prefix '{prefix_text}' (expected @N)")
+            try:
+                variants = int(n_text)
+            except ValueError:
+                raise SystemExit(f"invalid prefix '{prefix_text}' (expected @N with integer N)")
+            prefix_text = base
+
+        prefix_text = prefix_text.strip()
+        if not prefix_text:
+            raise SystemExit("empty prefix")
+        return prefix_text, flip_x, variants
+
     if args.spec:
         if args.inputs:
             raise SystemExit("use either --spec or positional inputs, not both")
@@ -292,12 +335,8 @@ def main() -> int:
                 raise SystemExit(f"invalid --spec '{spec_text}' (expected PREFIX:PATH)")
             prefix, path_text = spec_text.split(":", 1)
 
-            flip_x = False
-            if prefix.endswith("^"):
-                flip_x = True
-                prefix = prefix[:-1]
-
-            specs.append(InputSpec(path=Path(path_text), prefix=prefix, flip_x=flip_x))
+            prefix, flip_x, variants = parse_prefix_modifiers(prefix)
+            specs.append(InputSpec(path=Path(path_text), prefix=prefix, flip_x=flip_x, variants=variants))
     else:
         if not args.inputs:
             raise SystemExit("no inputs provided")
@@ -309,12 +348,8 @@ def main() -> int:
         for i, path in enumerate(input_paths):
             prefix = args.prefix[i] if args.prefix else derive_prefix(path)
 
-            flip_x = False
-            if prefix.endswith("^"):
-                flip_x = True
-                prefix = prefix[:-1]
-
-            specs.append(InputSpec(path=path, prefix=prefix, flip_x=flip_x))
+            prefix, flip_x, variants = parse_prefix_modifiers(prefix)
+            specs.append(InputSpec(path=path, prefix=prefix, flip_x=flip_x, variants=variants))
 
     all_sprite_blocks: list[tuple[str, list[int]]] = []
     all_mask_blocks: list[tuple[str, list[int]]] = []

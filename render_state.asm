@@ -56,7 +56,7 @@
 ; - chell_new_ptr = next screen address
 ; - chell_body_index = character sprite index (0-based)
 ; - chell_overlay_index = overlay sprite index (0-based)
-.compute_chell_render_state
+ .compute_chell_render_state
     ; Compute new screen pointer.
     JSR update_screen_ptr_from_char
     LDA screen_ptr
@@ -69,7 +69,24 @@
     LDA char_grounded
     BNE cs_grounded
 
-    ; Jump pose (airborne)
+    ; Airborne: jump pose unless we've committed to a fall (vy threshold).
+    ; Rising (vy negative) always uses jump.
+    LDA char_vy
+    BMI cs_air_jump
+    CMP #FALL_POSE_VY_THRESHOLD
+    BCC cs_air_jump
+
+    ; Fall pose.
+    LDA anim_dir
+    BNE cs_fall_right
+    LDA #CHELL_FALL_LEFT_BASE
+    BNE cs_body_base_no_subpixel
+ .cs_fall_right
+    LDA #CHELL_FALL_RIGHT_BASE
+    BNE cs_body_base_no_subpixel
+
+ .cs_air_jump
+    ; Jump pose.
     LDA anim_dir
     BNE cs_jump_right
     LDA #CHELL_JUMP_LEFT_BASE
@@ -92,7 +109,7 @@
     LDA #CHELL_IDLE_RIGHT_BASE
     BNE cs_body_base_ok
 
- .cs_running
+  .cs_running
     ; Run frame base: run_frame_seq[anim_frame] * 4
     LDX anim_frame
     LDA run_frame_seq,X
@@ -105,12 +122,19 @@
     CLC
     ADC #CHELL_RUN_LEFT_BASE
 
- .cs_body_base_ok
+  .cs_body_base_ok
     CLC
     ADC char_pixel_offset
     STA chell_body_index
+    JMP cs_overlay_start
+
+  .cs_body_base_no_subpixel
+    ; Falling pose: ignore char_pixel_offset (fall is visually straight down).
+    STA chell_body_index
+    JMP cs_overlay_start
 
     ; --- Overlay sprite index ---
+  .cs_overlay_start
     ; Carrying overrides gun overlays.
     LDA carried_cube_idx
     CMP #&FF

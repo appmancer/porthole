@@ -142,7 +142,7 @@
 
 
 ; Normal mode: handle reticle deactivation, movement, and gravity.
-.update_normal_mode
+ .update_normal_mode
     ; Portal placement requests are only meaningful in reticle mode.
     ; Clear them when not in reticle mode so taps can't leak into gameplay.
     LDA #0
@@ -183,8 +183,35 @@
     BCC unm_done
     LDA #1
     STA chell_dirty
+
  .unm_done
-    RTS
+     ; Falling pose readability: once descent is committed (vy threshold), switch
+     ; to a dedicated fall pose even on frames where we don't move (paced fall).
+     ; Track a tiny pose state so we can force a redraw only on transitions.
+     LDA chell_air_pose
+     STA temp
+ 
+     LDA #0
+     STA chell_air_pose
+ 
+     LDA char_grounded
+     BNE unm_pose_check
+ 
+     LDA char_vy
+     BMI unm_pose_check
+     CMP #FALL_POSE_VY_THRESHOLD
+     BCC unm_pose_check
+     LDA #1
+     STA chell_air_pose
+ 
+ .unm_pose_check
+     LDA chell_air_pose
+     CMP temp
+     BEQ unm_pose_done
+     LDA #1
+     STA chell_dirty
+ .unm_pose_done
+     RTS
 
 
 ; Sets dirty_flag if redraw is needed.

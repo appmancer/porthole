@@ -84,6 +84,7 @@ ORG &70
   .chell_new_ptr       SKIP 2
   .chell_body_index    SKIP 1
   .chell_overlay_index SKIP 1
+  .chell_air_pose      SKIP 1    ; 0=jump/neutral airborne, 1=fall (committed descent)
   .last_aim_held       SKIP 1
 
   ; Reticle state.
@@ -160,6 +161,10 @@ ORG &70
   .palette_flash_active SKIP 1
   .palette_flash_phys2  SKIP 1
 
+  ; Global sim pacing.
+  ; 0/1 toggled each frame; when 0 we run gameplay update.
+  .sim_phase            SKIP 1
+
   ; Debug flags.
   ; bit0: show debug boxes for sprite footprints.
   .debug_flags          SKIP 1
@@ -193,6 +198,7 @@ PORTAL_REQ_SNAP_ORIENT= &7FF1
 GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
 GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
 GRAVITY_DOWN_PERIOD         = 2      ; gravity tick period while falling
+FALL_POSE_VY_THRESHOLD       = 2      ; switch to falling pose when vy >= this (8px steps)
 TERMINAL_VELOCITY_DOWN      = 6      ; max falling speed (8px steps)
 TERMINAL_VELOCITY_UP        = &FA    ; -6: max rising speed (8px steps)
 TERMINAL_VELOCITY_X         = 12     ; max |vx| (px/frame), also per-frame step clamp
@@ -241,6 +247,8 @@ CHELL_IDLE_RIGHT_BASE       = 24
 CHELL_IDLE_LEFT_BASE        = 28
 CHELL_JUMP_RIGHT_BASE       = 32
 CHELL_JUMP_LEFT_BASE        = 36
+CHELL_FALL_RIGHT_BASE       = 40
+CHELL_FALL_LEFT_BASE        = 44
 
 .start
     ; PROGRAM sets MODE 5, but reassert it here for safety.
@@ -332,6 +340,7 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA anim_cooldown
     STA chell_body_index
     STA chell_overlay_index
+    STA chell_air_pose
     STA last_aim_held
 
     ; Reticle starts inactive.
@@ -390,6 +399,7 @@ CHELL_JUMP_LEFT_BASE        = 36
      STA palette_flash_active
      STA palette_flash_phys2
      STA debug_flags
+     STA sim_phase
      STA quickshot_latch
 
     ; Default: face right.
@@ -430,22 +440,31 @@ CHELL_JUMP_LEFT_BASE        = 36
     STA reticle_has_under
  
   .main_loop
-       ; Pace the loop (reduces tearing/flicker).
-       JSR wait_vsync
+        ; Pace the loop (reduces tearing/flicker).
+        JSR wait_vsync
 
        ; Render previous frame immediately after VSYNC.
        ; Incremental: redraw only what changed (Chell + reticle).
-       LDA dirty_flag
-       BEQ main_skip_render
-       JSR render_frame_simple
- .main_skip_render
+        LDA dirty_flag
+        BEQ main_skip_render
+        JSR render_frame_simple
+        ; Consume the pending redraw request so we don't re-render on skipped sim frames.
+        LDA #0
+        STA dirty_flag
+  .main_skip_render
 
-       ; Sample input once per frame; gameplay consumes only key bits.
-       JSR sample_keys
+        ; Sample input once per frame; gameplay consumes only key bits.
+        JSR sample_keys
 
-        ; Update state for next frame.
-        JSR update_chell
-        JMP main_loop
+         ; Slow-motion pacing: update gameplay every other frame (50% speed).
+         LDA sim_phase
+         BNE main_skip_update
+         JSR update_chell
+  .main_skip_update
+         LDA sim_phase
+         EOR #1
+         STA sim_phase
+         JMP main_loop
 
 
  ; --- Render (incremental frame) ---
