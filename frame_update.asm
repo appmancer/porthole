@@ -33,7 +33,7 @@
 
     ; Debug toggle: SPACE edge while in reticle mode.
     ; (Avoids interfering with SPACE actions in normal gameplay.)
-    LDA action_pressed
+    LDA action_pressed_latch
     BEQ murm_debug_done
     LDA debug_flags
     EOR #1
@@ -251,16 +251,8 @@
      STA dirty_flag
   .df_skip_objects
 
-     ; Palette flash (debug feedback) needs a render to apply and to restore.
-     LDA palette_flash_timer
-     ORA palette_flash_active
-     BEQ df_skip_pal
-     LDA #1
-     STA dirty_flag
-  .df_skip_pal
-
-    LDA reticle_active
-    BEQ df_reticle_off
+     LDA reticle_active
+     BEQ df_reticle_off
     LDA reticle_dirty
     ORA chell_dirty
     BEQ df_done
@@ -288,51 +280,28 @@
  ;
  ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
   .handle_quick_shot
-      ; Allow hold-to-fire (one shot per press).
-      ; Clear consumed bits when keys are released.
-      LDA quickshot_latch
-      AND keys_held
-      STA quickshot_latch
-
-      ; Fire only when A/S is held AND not yet consumed for this press.
-      ; new = keys_held & ~quickshot_latch
-      LDA quickshot_latch
-      EOR #&FF
-      AND keys_held
+      ; Use latched key-down edges so taps aren't dropped on skipped sim frames.
+      LDA keys_pressed_latch
       AND #&C0
       BNE hqs_have_newpress
       JMP hqs_done
    .hqs_have_newpress
 
-      ; Prefer A if both are newly held.
-      LDA keys_held
+      ; Prefer A if both were pressed.
+      LDA keys_pressed_latch
       AND #&40
       BEQ hqs_try_b
-      LDA quickshot_latch
-      AND #&40
-      BNE hqs_try_b
-      ; take A
-      LDA quickshot_latch
-      ORA #&40
-      STA quickshot_latch
       LDA #0
       JMP hqs_have_kind
 
    .hqs_try_b
-      LDA keys_held
+      LDA keys_pressed_latch
       AND #&80
-      BEQ hqs_done_jmp
-      LDA quickshot_latch
-      AND #&80
-      BNE hqs_done_jmp
-      ; take B
-      LDA quickshot_latch
-      ORA #&80
-      STA quickshot_latch
+      BEQ hqs_done_far
       LDA #1
       JMP hqs_have_kind
 
-   .hqs_done_jmp
+   .hqs_done_far
       JMP hqs_done
 
    .hqs_have_kind

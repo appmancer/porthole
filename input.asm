@@ -120,10 +120,16 @@
   
       ; keys_pressed = keys_held & ~keys_prev
 
-    LDA keys_prev
-    EOR #&FF
-    AND keys_held
-    STA keys_pressed
+     LDA keys_prev
+     EOR #&FF
+     AND keys_held
+     STA keys_pressed
+
+     ; Latch edge events so one-frame taps aren't dropped when gameplay update
+     ; runs every other frame.
+     LDA keys_pressed_latch
+     ORA keys_pressed
+     STA keys_pressed_latch
 
      ; Update previous snapshot for next frame.
      LDA keys_held
@@ -145,10 +151,15 @@
  .sample_no_action
 
        ; action_pressed = action_held & ~action_prev
-       LDA action_prev
-       EOR #&FF
-       AND action_held
-       STA action_pressed
+        LDA action_prev
+        EOR #&FF
+        AND action_held
+        STA action_pressed
+
+       ; Latch SPACE edge for the same reason as keys_pressed_latch.
+       LDA action_pressed_latch
+       ORA action_pressed
+       STA action_pressed_latch
 
       ; --- Portal placement requests (A/S) ---
       ; We latch the A/S key-down edges into portal_req so if the reticle is

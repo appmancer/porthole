@@ -1,10 +1,19 @@
 INCLUDE "oscalls.asm"
 
-; Zero page variables for speed
-; Keep tilemap_ptr at &79/&7A (see render.asm)
+; Zero page variables.
+;
+; We call MOS routines (OSBYTE/OSWRCH/OSGBPB) during gameplay, so we must avoid
+; MOS/VDU/Econet-owned ZP (&90..&FF). We keep our ZP allocations in the
+; language-owned range (&00..&8F).
+;
+; Hard layout invariants relied on by hot paths:
+; - screen_ptr  must be at &71
+; - tilemap_ptr must be at &79
+; - portalmap_ptr must be at &7B
+;
 ORG &70
-.temp               SKIP 1    ; Temporary storage
-.screen_ptr         SKIP 2    ; Current screen memory location
+.temp               SKIP 1    ; Temporary storage (must stay at &70)
+.screen_ptr         SKIP 2    ; Current screen memory location (must stay at &71)
 .sprite_ptr         SKIP 2    ; Pointer to current sprite data
 .temp_y             SKIP 1    ; Temporary Y storage
 .row_counter        SKIP 1    ; Row counter for loops
@@ -13,6 +22,11 @@ ORG &70
 .tilemap_ptr        SKIP 2    ; Pointer to current room's tilemap data
 .portalmap_ptr      SKIP 2    ; Pointer to current room's portalable tile layer
 .mask_ptr           SKIP 2    ; Pointer to current mask data
+.temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
+.temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
+
+; Remaining game state ZP (kept below &70).
+ORG &00
 .char_tile_pos      SKIP 1    ; Character cell position (cell_y*16 + cell_x)
 .char_pixel_offset  SKIP 1    ; Subpixel offset (0..3)
 .char_byte_offset   SKIP 1    ; Byte offset within cell (0 or 8)
@@ -24,13 +38,14 @@ ORG &70
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
 .rise_cooldown      SKIP 1    ; Frames until next upward step
 .fall_cooldown      SKIP 1    ; Frames until next downward step
-  .room_dirty         SKIP 1    ; 0/1: room background needs redraw
-  .objects_pending    SKIP 1    ; 0/1: persistent objects need restamp
-  .exit_cooldown      SKIP 1    ; frames to ignore exits after transition
+.room_dirty         SKIP 1    ; 0/1: room background needs redraw
+.objects_pending    SKIP 1    ; 0/1: persistent objects need restamp
+.exit_cooldown      SKIP 1    ; frames to ignore exits after transition
 .exit_probe0        SKIP 1    ; exit Y probe cell (y+8)>>4
 .exit_probe1        SKIP 1    ; exit Y probe cell (y+24)>>4
 .keys_held          SKIP 1    ; Bitfield: held keys this frame
 .keys_pressed       SKIP 1    ; Bitfield: edge-trigger keys (held & ~prev)
+.keys_pressed_latch SKIP 1    ; Latched edge keys (OR of keys_pressed until consumed)
 .keys_prev          SKIP 1    ; Previous frame's keys_held
 .aim_held           SKIP 1    ; 0=none, 1=up, 2=down
 
@@ -38,28 +53,18 @@ ORG &70
 .action_held        SKIP 1
 .action_prev        SKIP 1
 .action_pressed     SKIP 1
+.action_pressed_latch SKIP 1  ; Latched SPACE edge (OR of action_pressed until consumed)
 
-  ; Portal placement requests.
-  ; - Set on A/S key-down (edge).
-  ; - If reticle is not green that frame, it stays set until either:
-  ;   - placement succeeds, or
-  ;   - reticle is moved (or reticle mode is exited).
-  ; bit0 = A, bit1 = B
-  .portal_req        SKIP 1
-  .quickshot_latch    SKIP 1    ; bits6/7: A/S press consumed in normal mode
+; Portal placement requests.
+; bit0 = A, bit1 = B
+.portal_req         SKIP 1
+.quickshot_latch    SKIP 1    ; bits6/7: A/S press consumed in normal mode
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
-.temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 
- .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
- .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
-  .obj_bank           SKIP 1    ; ROMSEL value for Object SWRAM bank
-  .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
-  ; MOS uses some ZP workspace at &A0..&AF (e.g. OSBYTE/OSGBPB).
-  ; Leave that range unused to avoid corruption.
-  ORG &B0
-
-  ; --- Gameplay state (upper ZP band) ---
-  ; Keep this block <= &FF.
+; ROMSEL/SWRAM bank state.
+.chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
+.obj_bank           SKIP 1    ; ROMSEL value for Object SWRAM bank
+.saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
 
   ; Animation.
   .anim_frame              SKIP 1    ; Animation frame (0..3)
@@ -155,11 +160,6 @@ ORG &70
 
   ; Quick-shot scratch.
   .shot_hit_tilepos SKIP 1
-
-  ; Palette flash debug.
-  .palette_flash_timer  SKIP 1
-  .palette_flash_active SKIP 1
-  .palette_flash_phys2  SKIP 1
 
   ; Global sim pacing.
   ; 0/1 toggled each frame; when 0 we run gameplay update.
@@ -328,10 +328,12 @@ CHELL_FALL_LEFT_BASE        = 44
     STA exit_probe1
     STA keys_held
     STA keys_pressed
+    STA keys_pressed_latch
     STA keys_prev
     STA action_held
     STA action_prev
      STA action_pressed
+     STA action_pressed_latch
      STA portal_req
     STA anim_frame
     STA move_held
@@ -394,13 +396,10 @@ CHELL_FALL_LEFT_BASE        = 44
       STA carried_cube_idx
 
      ; Clear debug/temporary state.
-     LDA #0
-     STA palette_flash_timer
-     STA palette_flash_active
-     STA palette_flash_phys2
-     STA debug_flags
-     STA sim_phase
-     STA quickshot_latch
+      LDA #0
+      STA debug_flags
+      STA sim_phase
+      STA quickshot_latch
 
     ; Default: face right.
     LDA #1
@@ -460,7 +459,12 @@ CHELL_FALL_LEFT_BASE        = 44
          LDA sim_phase
          BNE main_skip_update
          JSR update_chell
-  .main_skip_update
+
+         ; Consume latched edge inputs only when update runs.
+         LDA #0
+         STA keys_pressed_latch
+         STA action_pressed_latch
+   .main_skip_update
          LDA sim_phase
          EOR #1
          STA sim_phase

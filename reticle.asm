@@ -22,7 +22,7 @@
 .reticle_already_active
 
     ; Entering reticle mode: snap reticle to Chell gun position.
-    LDA keys_pressed
+    LDA keys_pressed_latch
     AND #8
     BEQ reticle_skip_snap
 
@@ -70,7 +70,7 @@
     ; - Otherwise, repeat while held using a cooldown.
 
     ; If any direction is newly pressed, bypass cooldown.
-    LDA keys_pressed
+    LDA keys_pressed_latch
     AND #(1+2+16+32)
     BEQ reticle_cd_tick
     LDA #0

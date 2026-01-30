@@ -57,7 +57,15 @@ renderer can’t reliably read them while it is mapped to shadow for drawing.
 ## Main RAM (CPU)
 
 - `&0000..&00FF`: ZP
-  - Engine ZP allocations start at `&70` (see `main.asm`).
+  - This project calls MOS routines during gameplay (e.g. `OSBYTE` for VSYNC/input),
+    so we must not trample MOS/VDU/Econet-owned ZP.
+  - **Policy:** keep all game ZP allocations in `&00..&8F`.
+    - Avoid `&90..&FF` (MOS/VDU/Econet workspace).
+    - Reserve `&70..&8F` for a small fixed pointer set relied on by hot paths.
+      - Invariants (see `main.asm` + `tools/check-build-invariants`):
+        - `screen_ptr = &0071`
+        - `tilemap_ptr = &0079`
+        - `portalmap_ptr = &007B`
 - `&0100..&01FF`: stack
 - `&1900..`: main code + stable game state
 

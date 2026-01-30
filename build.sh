@@ -94,6 +94,40 @@ beebasm "${BEEBASM_ARGS[@]}"
 # Build-time safety checks against label layout regressions.
 ./tools/check-build-invariants .tmp/beebasm.labels
 
+# Protect MOS/VDU/Econet ZP workspaces.
+# - All our ZP allocations must stay in &00..&8F.
+# - Only a small fixed set of pointers is allowed in &70..&8F (layout invariants).
+python3 - <<'PY'
+import ast
+import sys
+
+p = '.tmp/beebasm.labels'
+txt = open(p, 'r', encoding='utf-8').read().strip().replace('L', '')
+labels = ast.literal_eval(txt)[0]
+
+zp = [(k, int(v)) for k, v in labels.items() if k.startswith('.') and 0x0000 <= int(v) <= 0x00FF]
+
+bad_90 = sorted([(k, v) for k, v in zp if 0x90 <= v <= 0xFF], key=lambda kv: kv[1])
+if bad_90:
+    sys.stderr.write('ERROR: game ZP labels overlap MOS/VDU/Econet workspace &90..&FF:\n')
+    for k, v in bad_90:
+        sys.stderr.write(f'  {k} = &{v:02X}\n')
+    sys.stderr.write('Fix: keep game ZP variables <= &8F (see main.asm ZP layout).\n')
+    sys.exit(1)
+
+allowed_70 = {
+    '.temp', '.screen_ptr', '.sprite_ptr', '.temp_y', '.row_counter', '.col_counter', '.current_room',
+    '.tilemap_ptr', '.portalmap_ptr', '.mask_ptr', '.temp_sprite_ptr', '.temp_mask_ptr',
+}
+bad_70 = sorted([(k, v) for k, v in zp if 0x70 <= v <= 0x8F and k not in allowed_70], key=lambda kv: kv[1])
+if bad_70:
+    sys.stderr.write('ERROR: unexpected game ZP labels in &70..&8F (reserved for fixed pointers):\n')
+    for k, v in bad_70:
+        sys.stderr.write(f'  {k} = &{v:02X}\n')
+    sys.stderr.write('Fix: move these ZP vars below &70 (see main.asm ZP layout).\n')
+    sys.exit(1)
+PY
+
 # Some emulators and real-hardware tools expect a full 200KB SSD.
 python3 tools/ssd-expand "${OUT_SSD}" "${OUT_SSD}"
 

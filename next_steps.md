@@ -17,28 +17,14 @@ Detailed background/design context lives in `project plan.md`.
      - Gate on actual downward movement occurring (not just vy sign/value).
    - Code refs: `main.asm` (`FALL_POSE_VY_THRESHOLD`, `JUMP_VELOCITY`), `movement.asm` (`.apply_gravity`), `render_state.asm` (`.compute_chell_render_state`).
 
-2) Keyboard responsiveness is really bad
-   
-   - Symptom: RETURN sometimes needs many presses before jump triggers.
-   - Primary hypothesis (strong): we currently sample keys every frame (`sample_keys`), but **gameplay update runs every other frame** (`sim_phase`), so one-frame edges in `keys_pressed` can be dropped.
-     - A press that begins and ends during a skipped-update frame never reaches `poll_move_keys` (which reads `keys_pressed`).
-   - Confirm in code:
-     - `main.asm` main loop: update only when `sim_phase==0`.
-     - `input.asm`: `keys_pressed = keys_held & ~keys_prev` is a one-frame pulse.
-     - `movement.asm`: jump uses `keys_pressed & #4` (edge-triggered).
-   - Galaforce-style next step (investigation output, not implementation): decide whether we want:
-     - update every frame, OR
-     - latch/queue important edge events (jump/portal fire/action) until the next update consumes them.
-   - Code refs: `main.asm` (sim pacing), `input.asm` (`.sample_keys`), `movement.asm` (`.poll_move_keys`), `reference/galaforce_notes.md`.
-
-3) Idle jump applies forward momentum
+2) Idle jump applies forward momentum
    
    - Repro is deterministic in code: if no left/right is held on the jump press, we still set `char_vx` from `last_anim_dir`.
    - Confirm:
      - `movement.asm` `.poll_move_keys` jump path: if neither left nor right is held, it falls through to `.jump_dir_done` and then uses `last_anim_dir` to set `char_vx` to +/-`WALK_VELOCITY`.
    - Next step: decide expected behaviour (straight up if no direction held vs preserve last direction).
 
-4) Walking on portals should trigger them
+3) Walking on portals should trigger them
    
    - Current rules (per code): must overlap portal rect and satisfy intent `dot(v,n_enter) < 0`.
      - Walls: requires `char_vx` sign matching portal orientation.

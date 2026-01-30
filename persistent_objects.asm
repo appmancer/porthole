@@ -630,7 +630,7 @@ OBJ_STATE_CARRIED = &80
     LDA #0
     STA col_counter
 
-    LDA action_pressed
+    LDA action_pressed_latch
     BEQ button_done
 
     LDA obj_room,Y
@@ -666,7 +666,7 @@ OBJ_STATE_CARRIED = &80
 ;
 ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
 .handle_cube_pickup_drop
-    LDA action_pressed
+    LDA action_pressed_latch
     BNE hcpd_go
     RTS
   .hcpd_go

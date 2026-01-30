@@ -23,7 +23,7 @@
 
 
      ; Jump on RETURN (edge-triggered) when grounded.
-     LDA keys_pressed
+     LDA keys_pressed_latch
      AND #4
      BEQ after_jump
 

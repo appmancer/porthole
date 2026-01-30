@@ -42,7 +42,7 @@
     TAY
     
     ; Get cell value directly (8-bit format - no nibble extraction!)
-    LDA (tilemap_ptr), Y            ; tilemap_ptr is in &79/&7A
+    LDA (tilemap_ptr), Y
     BEQ tilemap_skip_cell
     JSR render_cell8x16
   .tilemap_skip_cell
