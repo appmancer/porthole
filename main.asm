@@ -198,7 +198,7 @@ PORTAL_REQ_SNAP_ORIENT= &7FF1
 GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
 GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
 GRAVITY_DOWN_PERIOD         = 2      ; gravity tick period while falling
-FALL_POSE_VY_THRESHOLD       = 2      ; switch to falling pose when vy >= this (8px steps)
+FALL_POSE_VY_THRESHOLD       = 3      ; switch to falling pose when vy >= this (8px steps)
 TERMINAL_VELOCITY_DOWN      = 6      ; max falling speed (8px steps)
 TERMINAL_VELOCITY_UP        = &FA    ; -6: max rising speed (8px steps)
 TERMINAL_VELOCITY_X         = 12     ; max |vx| (px/frame), also per-frame step clamp

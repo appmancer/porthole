@@ -5,19 +5,7 @@ Detailed background/design context lives in `project plan.md`.
 
 ## P0: Bugs
 
-1) Jumping normally triggers falling
-   
-   - Hypothesis: our `FALL_POSE_VY_THRESHOLD` is low enough that a normal jump's descent reaches it quickly, so the fall pose appears during what the player still perceives as a jump arc.
-   - Verify by logging/observing `char_vy` over a normal jump:
-     - Jump starts with `JUMP_VELOCITY=&FE` (-2 stripes/frame), gravity ticks every `GRAVITY_UP_PERIOD=3` while rising, then every `GRAVITY_DOWN_PERIOD=2` while falling.
-     - Note the first frame where `char_vy` becomes `>= FALL_POSE_VY_THRESHOLD`.
-   - Candidate adjustments (pick one later):
-     - Raise threshold (e.g. 3+), or
-     - Add a short post-jump grace window before fall pose is allowed, or
-     - Gate on actual downward movement occurring (not just vy sign/value).
-   - Code refs: `main.asm` (`FALL_POSE_VY_THRESHOLD`, `JUMP_VELOCITY`), `movement.asm` (`.apply_gravity`), `render_state.asm` (`.compute_chell_render_state`).
-
-2) Walking on portals should trigger them
+1) Walking on portals should trigger them
    
    - Current rules (per code): must overlap portal rect and satisfy intent `dot(v,n_enter) < 0`.
      - Walls: requires `char_vx` sign matching portal orientation.
