@@ -71,9 +71,490 @@ OBJ_STATE_CARRIED = &80
     STA obj_y,X
     INY
 
+    ; Initialize previous position to the starting position.
+    LDA obj_x,X
+    STA obj_prev_x,X
+    LDA obj_y,X
+    STA obj_prev_y,X
+    LDA obj_room,X
+    STA obj_prev_room,X
+
     INX
     CPX #OBJ_COUNT
     BNE ipo_next
+    RTS
+
+
+; Apply 16px-step gravity to cube objects.
+;
+; For each cube in the current room that isn't carried:
+; - if both tiles below its 2-wide footprint are clear (tiles + other cubes),
+;   move it down by 1 tile and mark it dirty.
+;
+; Must be called during update before rebuilding `solid_phys_plane`.
+; Clobbers: A,X,Y,temp,temp_y,col_counter,row_counter
+.update_cubes_gravity
+    LDY #0
+  .ucg_loop
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BEQ ucg_type_ok
+    JMP ucg_next
+  .ucg_type_ok
+
+    LDA obj_room,Y
+    CMP current_room
+    BEQ ucg_room_ok
+    JMP ucg_next
+  .ucg_room_ok
+
+    ; Skip carried cubes.
+    LDA obj_state,Y
+    AND #OBJ_STATE_CARRIED
+    BEQ ucg_not_carried
+    JMP ucg_next
+  .ucg_not_carried
+
+    ; Bottom edge: attempt to fall through a down-edge exit.
+    LDA obj_y,Y
+    CMP #15
+    BNE ucg_not_bottom
+
+    ; temp = cube center_x_cell (2-wide => left+1)
+    LDA obj_x,Y
+    CLC
+    ADC #1
+    STA temp
+
+    ; If a down exit matches, move cube into the destination room and resolve
+    ; its final resting position immediately (including chaining through further
+    ; down exits). This is off-screen simulation; the visible room does not change.
+    ; find_exit_down_for_room clobbers Y.
+    TYA
+    PHA
+    LDA obj_room,Y
+    JSR find_exit_down_for_room
+    PLA
+    TAY
+    BCS ucg_do_exit_down
+    JMP ucg_next
+
+  .ucg_do_exit_down
+    ; A = dst_room
+    STA col_counter
+
+    ; Record previous on-screen position for patch/erase.
+    LDA obj_room,Y
+    STA obj_prev_room,Y
+    LDA obj_x,Y
+    STA obj_prev_x,Y
+    LDA obj_y,Y
+    STA obj_prev_y,Y
+
+    ; Move to destination room, entering from the top.
+    LDA col_counter
+    STA obj_room,Y
+    LDA #0
+    STA obj_y,Y
+
+    ; Resolve landing position in the destination room immediately.
+    ; This is off-screen simulation; the visible room does not change.
+    LDA col_counter
+    JSR compute_cube_landing_y_in_room
+
+    ; Mark pending patch + restamp (current room will erase old footprint).
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+    JMP ucg_next
+
+  .ucg_not_bottom
+
+    ; below_y = obj_y + 1
+    CLC
+    ADC #1
+    STA temp_y
+
+    ; idx0 = (below_y*16) + obj_x
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX
+
+    ; Blocked by solid world tile?
+    LDA SOLID_TILE_PLANE,X
+    BEQ ucg_tile0_ok
+    JMP ucg_next
+  .ucg_tile0_ok
+    INX
+    LDA SOLID_TILE_PLANE,X
+    BEQ ucg_tile1_ok
+    JMP ucg_next
+  .ucg_tile1_ok
+
+    ; Blocked by another cube at below_y overlapping in X?
+    ; Cache this cube's x in row_counter.
+    LDA obj_x,Y
+    STA row_counter
+
+    ; Cache this cube's obj_index for self-skip.
+    TYA
+    STA temp
+
+    LDX #0
+  .ucg_scan
+    CPX #OBJ_COUNT
+    BEQ ucg_can_fall
+    ; Skip self.
+    CPX temp
+    BEQ ucg_scan_next
+
+    LDA obj_type,X
+    CMP #OBJ_TYPE_CUBE
+    BNE ucg_scan_next
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE ucg_scan_next
+    LDA obj_room,X
+    CMP current_room
+    BNE ucg_scan_next
+    LDA obj_y,X
+    CMP temp_y
+    BNE ucg_scan_next
+
+    ; 2-wide overlap between obj_x[X] and row_counter (this cube's x)
+    ; If other_left >= this_left+2 => no overlap
+    LDA row_counter
+    CLC
+    ADC #2
+    STA col_counter
+    LDA obj_x,X
+    CMP col_counter
+    BCS ucg_scan_next
+    ; If this_left >= other_left+2 => no overlap
+    LDA obj_x,X
+    CLC
+    ADC #2
+    STA col_counter
+    LDA row_counter
+    CMP col_counter
+    BCS ucg_scan_next
+
+    ; Overlap => can't fall.
+    JMP ucg_next
+
+  .ucg_scan_next
+    INX
+    JMP ucg_scan
+
+  .ucg_can_fall
+    ; Record previous on-screen position for patch/erase.
+    LDA obj_room,Y
+    STA obj_prev_room,Y
+    LDA obj_x,Y
+    STA obj_prev_x,Y
+    LDA obj_y,Y
+    STA obj_prev_y,Y
+
+    ; Move down 1 tile.
+    LDA obj_y,Y
+    CLC
+    ADC #1
+    STA obj_y,Y
+
+    ; Mark pending patch + restamp.
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+
+  .ucg_next
+    INY
+    CPY #OBJ_COUNT
+    BEQ ucg_done
+    JMP ucg_loop
+  .ucg_done
+    RTS
+
+
+
+; Resolve cube falling immediately, including chaining through down exits.
+;
+; Input: Y=obj_index (cube). Uses obj_room/obj_x/obj_y.
+; Output: obj_room/obj_y updated to final resting place.
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter,temp_sprite_ptr
+.resolve_cube_fall
+    ; Clamp x to 0..14 (2-wide object).
+    LDA obj_x,Y
+    CMP #15
+    BCC rcf_x_ok
+    LDA #14
+    STA obj_x,Y
+  .rcf_x_ok
+
+  .rcf_loop
+    ; If at bottom row, try to fall through a down exit; else we are done.
+    LDA obj_y,Y
+    CMP #15
+    BNE rcf_try_step
+
+    ; temp = cube center_x_cell (2-wide => left+1)
+    LDA obj_x,Y
+    CLC
+    ADC #1
+    STA temp
+
+    ; find_exit_down_for_room clobbers Y.
+    TYA
+    PHA
+    LDA obj_room,Y
+    JSR find_exit_down_for_room
+    PLA
+    TAY
+    BCS rcf_do_down_exit
+    RTS
+
+  .rcf_do_down_exit
+    ; Enter destination room from the top.
+    STA obj_room,Y
+    LDA #0
+    STA obj_y,Y
+    JMP rcf_loop
+
+  .rcf_try_step
+    ; Can we fall one row within this room?
+    JSR cube_can_fall_one_row
+    BCS rcf_fall_one
+    RTS
+
+  .rcf_fall_one
+    LDA obj_y,Y
+    CLC
+    ADC #1
+    STA obj_y,Y
+    JMP rcf_loop
+
+
+; C=1 if cube Y can fall one tile within its current room.
+; Tests world tiles and other non-carried cubes.
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter,temp_sprite_ptr
+.cube_can_fall_one_row
+    ; If already at bottom, can't fall within the room.
+    LDA obj_y,Y
+    CMP #15
+    BNE ccfor_not_bottom
+    CLC
+    RTS
+  .ccfor_not_bottom
+
+    ; temp_y = below_y
+    CLC
+    ADC #1
+    STA temp_y
+
+    ; --- World tile check in obj_room ---
+    ; temp_sprite_ptr := tilemap pointer for obj_room
+    LDA obj_room,Y
+    ASL A
+    TAX
+    LDA room_pointers,X
+    STA temp_sprite_ptr
+    LDA room_pointers+1,X
+    STA temp_sprite_ptr+1
+
+    ; idx = below_y*16 + obj_x
+    LDX temp_y
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    STA row_counter          ; idx0
+
+    ; Tile 0
+    TYA
+    PHA
+    LDY row_counter
+    LDA (temp_sprite_ptr),Y
+    PLA
+    TAY
+    BEQ ccfor_tile0_ok
+    CMP #TILE_BACKWALL_PORTAL
+    BEQ ccfor_tile0_ok
+    CLC
+    RTS
+  .ccfor_tile0_ok
+
+    ; Tile 1 (x+1)
+    LDA row_counter
+    CLC
+    ADC #1
+    STA row_counter
+    TYA
+    PHA
+    LDY row_counter
+    LDA (temp_sprite_ptr),Y
+    PLA
+    TAY
+    BEQ ccfor_tile1_ok
+    CMP #TILE_BACKWALL_PORTAL
+    BEQ ccfor_tile1_ok
+    CLC
+    RTS
+  .ccfor_tile1_ok
+
+    ; --- Other cube check (in same room at below_y) ---
+    ; Cache this cube's x in row_counter.
+    LDA obj_x,Y
+    STA row_counter
+
+    ; Cache this cube's obj_index for self-skip.
+    TYA
+    STA col_counter
+
+    LDX #0
+  .ccfor_scan
+    CPX #OBJ_COUNT
+    BEQ ccfor_clear
+    CPX col_counter
+    BEQ ccfor_next
+
+    LDA obj_type,X
+    CMP #OBJ_TYPE_CUBE
+    BNE ccfor_next
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE ccfor_next
+    LDA obj_room,X
+    CMP obj_room,Y
+    BNE ccfor_next
+    LDA obj_y,X
+    CMP temp_y
+    BNE ccfor_next
+
+    ; 2-wide overlap between obj_x[X] and row_counter.
+    ; If other_left >= this_left+2 => no overlap
+    LDA row_counter
+    CLC
+    ADC #2
+    STA temp
+    LDA obj_x,X
+    CMP temp
+    BCS ccfor_next
+    ; If this_left >= other_left+2 => no overlap
+    LDA obj_x,X
+    CLC
+    ADC #2
+    STA temp
+    LDA row_counter
+    CMP temp
+    BCS ccfor_next
+
+    ; Overlap => blocked.
+    CLC
+    RTS
+
+  .ccfor_next
+    INX
+    JMP ccfor_scan
+
+  .ccfor_clear
+    SEC
+    RTS
+
+
+; Find matching down-edge exit for the given room.
+; Input: A=room index, temp=center_x_cell
+; Output: C=1 and A=dst_room on match, else C=0.
+; Clobbers: A,X,Y,col_counter,temp_sprite_ptr,temp_mask_ptr,exit_dst
+.find_exit_down_for_room
+    TAX
+    LDA exit_down_counts,X
+    BNE fedfr_have
+    JMP find_exit_none
+  .fedfr_have
+    STA col_counter
+
+    TXA
+    ASL A
+    TAX
+    LDA exit_down_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_down_ptrs+1,X
+    STA temp_sprite_ptr+1
+    JMP find_exit_scan
+
+
+; Compute cube landing tile Y in the given room, assuming it enters from the top.
+;
+; Input: A=room index, Y=obj_index (cube). Uses obj_x[Y].
+; Output: obj_y[Y] updated to landing row (0..15).
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,temp_sprite_ptr
+.compute_cube_landing_y_in_room
+    ; Preserve cube obj_index.
+    STY temp
+
+    ; temp_sprite_ptr := tilemap pointer for room A.
+    ASL A
+    TAX
+    LDA room_pointers,X
+    STA temp_sprite_ptr
+    LDA room_pointers+1,X
+    STA temp_sprite_ptr+1
+
+    ; Restore cube obj_index.
+    LDY temp
+
+    ; Clamp x to 0..14 (2-wide object).
+    LDA obj_x,Y
+    CMP #15
+    BCC ccl_x_ok
+    LDA #14
+    STA obj_x,Y
+  .ccl_x_ok
+
+    LDA #0
+    STA row_counter          ; candidate_y
+
+  .ccl_loop
+    LDA row_counter
+    CMP #15
+    BEQ ccl_place
+
+    ; below_y = candidate_y + 1
+    CLC
+    ADC #1
+    TAX
+    ; idx0 = below_y*16 + obj_x
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    STA col_counter          ; idx0
+
+    ; Tile 0 solidity
+    LDY col_counter
+    LDA (temp_sprite_ptr),Y
+    TAX
+    LDA tile_material_flags,X
+    AND #2
+    BNE ccl_place
+
+    ; Tile 1 (x+1) solidity
+    LDY col_counter
+    INY
+    LDA (temp_sprite_ptr),Y
+    TAX
+    LDA tile_material_flags,X
+    AND #2
+    BNE ccl_place
+
+    ; Next row.
+    LDY temp
+    INC row_counter
+    JMP ccl_loop
+
+  .ccl_place
+    LDY temp
+    LDA row_counter
+    STA obj_y,Y
     RTS
 
 
@@ -230,79 +711,60 @@ OBJ_STATE_CARRIED = &80
     RTS
 
   .apou_go
-     ; Pass 1: redraw underlying tiles for each dirty object's footprint.
-     LDY #0
+      ; Pass 1: redraw underlying tiles for each dirty object's footprint.
+      LDY #0
   .apou_redraw_loop
-     LDA obj_dirty,Y
-     BEQ apou_redraw_next
+      LDA obj_dirty,Y
+      BEQ apou_redraw_next
 
     ; Preserve obj_index across redraw_tile_xy (clobbers Y).
     TYA
     PHA
 
+     ; Also keep a copy in temp_y so we can re-index arrays after Y is reused.
+     STA temp_y
+
     ; Cache footprint top-left and lookup footprint size.
     ; Note: redraw_tile_xy -> render_cell8x16 clobbers sprite_ptr, so keep the
     ; base coords in temp_sprite_ptr.
-    LDA obj_x,Y
-    STA temp_sprite_ptr      ; base_x
-    LDA obj_y,Y
-    STA temp_sprite_ptr+1    ; base_y
-
     LDX obj_type,Y
     LDA obj_redraw_w_tiles,X
     STA mask_ptr             ; w
     LDA obj_redraw_h_tiles,X
     STA mask_ptr+1           ; h
 
-    ; Redraw tiles in the footprint, clamped to the 16x16 tile grid.
-    ; Outer: dy (Y), inner: dx (X). Preserve dx/dy across redraw_tile_xy.
-    LDY #0
-  .apou_dy_loop
-    CPY mask_ptr+1
-    BCS apou_redraw_restore
+    ; Redraw old footprint (prev coords) to erase the moved object,
+    ; but only if that old footprint was in the currently-visible room.
+    LDY temp_y
+    LDA obj_prev_room,Y
+    CMP current_room
+    BNE apou_skip_redraw_old
+    LDA obj_prev_x,Y
+    STA temp_sprite_ptr      ; base_x
+    LDA obj_prev_y,Y
+    STA temp_sprite_ptr+1    ; base_y
+    JSR apou_redraw_footprint
+  .apou_skip_redraw_old
 
-    ; y_cur = base_y + dy; stop if off bottom.
-    TYA
-    CLC
-    ADC temp_sprite_ptr+1
-    CMP #16
-    BCS apou_redraw_restore
-    STA col_counter          ; y_cur
+    ; Redraw new footprint only if the object is in the current room.
+    LDY temp_y
+    LDA obj_room,Y
+    CMP current_room
+    BNE apou_redraw_restore
 
-    LDX #0
-  .apou_dx_loop
-    CPX mask_ptr
-    BCS apou_next_row
-
-    ; x_cur = base_x + dx; stop row if off right.
-    TXA
-    CLC
-    ADC temp_sprite_ptr
-    CMP #16
-    BCS apou_next_row
-    STA temp                 ; x_cur
-
-    ; Save dx/dy across redraw (it clobbers X/Y).
-    TXA
-    PHA
-    TYA
-    PHA
-
-    LDX temp
-    LDA col_counter
-    JSR redraw_tile_xy
-
-    PLA
-    TAY
-    PLA
-    TAX
-
-    INX
-    JMP apou_dx_loop
-
-  .apou_next_row
-    INY
-    JMP apou_dy_loop
+    ; If the object moved within the room, redraw the new footprint as well.
+    LDA obj_prev_x,Y
+    CMP obj_x,Y
+    BNE apou_do_redraw_new
+    LDA obj_prev_y,Y
+    CMP obj_y,Y
+    BEQ apou_redraw_restore
+  .apou_do_redraw_new
+    LDA obj_x,Y
+    STA temp_sprite_ptr
+    LDA obj_y,Y
+    STA temp_sprite_ptr+1
+    JSR apou_redraw_footprint
 
   .apou_redraw_restore
     ; Restore obj_index.
@@ -331,8 +793,23 @@ OBJ_STATE_CARRIED = &80
     LDA obj_dirty,Y
     BEQ apou_stamp_next
 
+    ; Only stamp objects in the current room.
+    LDA obj_room,Y
+    CMP current_room
+    BNE apou_commit_prev_only
+
     ; Stamp just this object.
     JSR stamp_persistent_object
+
+  .apou_commit_prev_only
+
+    ; Commit its previous position to the current position (patch is now applied).
+    LDA obj_x,Y
+    STA obj_prev_x,Y
+    LDA obj_y,Y
+    STA obj_prev_y,Y
+    LDA obj_room,Y
+    STA obj_prev_room,Y
 
     ; Clear dirty bit.
     LDA #0
@@ -350,6 +827,63 @@ OBJ_STATE_CARRIED = &80
     LDA #0
     STA objects_pending
     RTS
+
+
+; Redraw tiles for the footprint at temp_sprite_ptr (base_x/base_y).
+; Uses mask_ptr (w) and mask_ptr+1 (h).
+; Clobbers: A,X,Y,temp,col_counter
+.apou_redraw_footprint
+     ; Outer: dy (Y), inner: dx (X). Preserve dx/dy across redraw_tile_xy.
+     LDY #0
+   .apou_rf_dy_loop
+     CPY mask_ptr+1
+     BCS apou_rf_done
+
+     ; y_cur = base_y + dy; stop if off bottom.
+     TYA
+     CLC
+     ADC temp_sprite_ptr+1
+     CMP #16
+     BCS apou_rf_done
+     STA col_counter          ; y_cur
+
+     LDX #0
+   .apou_rf_dx_loop
+     CPX mask_ptr
+     BCS apou_rf_next_row
+
+     ; x_cur = base_x + dx; stop row if off right.
+     TXA
+     CLC
+     ADC temp_sprite_ptr
+     CMP #16
+     BCS apou_rf_next_row
+     STA temp                 ; x_cur
+
+     ; Save dx/dy across redraw (it clobbers X/Y).
+     TXA
+     PHA
+     TYA
+     PHA
+
+     LDX temp
+     LDA col_counter
+     JSR redraw_tile_xy
+
+     PLA
+     TAY
+     PLA
+     TAX
+
+     INX
+     JMP apou_rf_dx_loop
+
+   .apou_rf_next_row
+     INY
+     JMP apou_rf_dy_loop
+
+  .apou_rf_done
+     RTS
 
 
 ; Stamp a single persistent object (tile-aligned).
@@ -904,6 +1438,16 @@ OBJ_STATE_CARRIED = &80
     STA obj_x,Y
     LDA row_counter
     STA obj_y,Y
+
+    ; Carried cubes are not stamped while held; on drop, treat the new position
+    ; as both prev and current so we don't erase an unrelated old footprint.
+    LDA temp_y
+    STA obj_prev_x,Y
+    LDA row_counter
+    STA obj_prev_y,Y
+    LDA current_room
+    STA obj_prev_room,Y
+
     LDA obj_state,Y
     AND #&7F
     STA obj_state,Y

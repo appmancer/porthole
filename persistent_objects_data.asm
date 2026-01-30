@@ -19,6 +19,16 @@
 .obj_y
     SKIP OBJ_COUNT
 
+; Previous on-screen position (tile coords) for patch/erase.
+; Used by render to redraw both the old and new footprints when an object moves.
+.obj_prev_x
+    SKIP OBJ_COUNT
+.obj_prev_y
+    SKIP OBJ_COUNT
+
+.obj_prev_room
+    SKIP OBJ_COUNT
+
 
 ; --- Persistent object redraw bookkeeping ---
 ;

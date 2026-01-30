@@ -51,8 +51,6 @@ None.
 
 1) Cubes: gravity + portals
    
-   - Cubes should be subject to gravity like Chell.
-     - If dropped off a ledge, a cube should fall.
    - Cubes should interact with portals.
      - If a portal opens beneath a cube, the cube should fall through.
      - Cubes should be flung by portals (preserve momentum mapping like Chell).
