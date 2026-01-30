@@ -5,17 +5,7 @@ Detailed background/design context lives in `project plan.md`.
 
 ## P0: Bugs
 
-1) Walking on portals should trigger them
-   
-   - Current rules (per code): must overlap portal rect and satisfy intent `dot(v,n_enter) < 0`.
-     - Walls: requires `char_vx` sign matching portal orientation.
-     - Floor/ceiling: requires `char_vy` sign (uses `char_prev_vy` when vy got zeroed on landing).
-     - Back wall: requires SPACE (`action_held`).
-   - Investigation checklist:
-     - Ensure the portal overlap test is actually reachable while grounded (collision vs portal opening).
-     - Validate that portal orientation sign expectations match movement direction the player uses to walk “into” a portal.
-     - Confirm we aren’t missing the overlap due to the narrowed chell rect used when moving right/left (nose bias).
-   - Code refs: `portal_teleport.asm` (`.check_portal_entry_intent`, `.cpei_overlap_portal_xy`), `movement.asm` (wall collision constraints).
+None.
 
 ## P1: Gameplay Interactions
 

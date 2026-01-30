@@ -39,8 +39,13 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         ORA char_prev_vy
         BNE cpei_intent_ok
         LDA action_held
+        BNE cpei_intent_ok
+        ; Allow wall-portal entry when pushing into the face but blocked by collision
+        ; (char_vx may have been zeroed after a blocked step).
+        LDA keys_held
+        AND #3
         BEQ cpei_done
- .cpei_intent_ok
+  .cpei_intent_ok
 
         ; Cache Chell rect (approx).
         ; We bias the leading edge to better match what you see on screen:
@@ -683,12 +688,18 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
 ; Try portal A. SEC => pending set.
 .cpei_try_portal_a
         LDA portal_a_enabled
-        BEQ cpei_a_no
+        BNE cpei_a_enabled
+        JMP cpei_a_no
+ .cpei_a_enabled
         LDA portal_b_enabled
-        BEQ cpei_a_no
+        BNE cpei_a_b_enabled
+        JMP cpei_a_no
+ .cpei_a_b_enabled
         LDA portal_a_room
         CMP current_room
-        BNE cpei_a_no
+        BEQ cpei_a_room_ok
+        JMP cpei_a_no
+ .cpei_a_room_ok
 
         ; Entry intent: dot(v, n_enter) < 0.
         ; (Axis-aligned portal normals.)
@@ -704,23 +715,37 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         ; ceiling
         JMP cpei_a_need_vy_neg
 
- .cpei_a_need_vx_pos
+  .cpei_a_need_vx_pos
         LDA char_vx
+        BNE cpei_a_vxpos_have
+        LDA keys_held
+        AND #2
         BEQ cpei_a_no
+        BNE cpei_a_intent_ok
+  .cpei_a_vxpos_have
         BMI cpei_a_no
         JMP cpei_a_intent_ok
- .cpei_a_need_vx_neg
+  .cpei_a_need_vx_neg
         LDA char_vx
         BMI cpei_a_intent_ok
+        BNE cpei_a_no
+        LDA keys_held
+        AND #1
+        BNE cpei_a_intent_ok
         JMP cpei_a_no
-  .cpei_a_need_vy_pos
+   .cpei_a_need_vy_pos
         LDA char_vy
         BNE cpei_a_vypos_have
         LDA char_prev_vy
-   .cpei_a_vypos_have
-        BEQ cpei_a_no
+    .cpei_a_vypos_have
+        BEQ cpei_a_vypos_ground
         BMI cpei_a_no
         JMP cpei_a_intent_ok
+ .cpei_a_vypos_ground
+        ; Walking onto a floor portal should trigger it even when vy is 0.
+        LDA char_grounded
+        BNE cpei_a_intent_ok
+        JMP cpei_a_no
  .cpei_a_need_vy_neg
         LDA char_vy
         BNE cpei_a_vyneg_have
@@ -768,12 +793,18 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
 ; Try portal B. SEC => pending set.
 .cpei_try_portal_b
         LDA portal_b_enabled
-        BEQ cpei_b_no
+        BNE cpei_b_enabled
+        JMP cpei_b_no
+ .cpei_b_enabled
         LDA portal_a_enabled
-        BEQ cpei_b_no
+        BNE cpei_b_a_enabled
+        JMP cpei_b_no
+ .cpei_b_a_enabled
         LDA portal_b_room
         CMP current_room
-        BNE cpei_b_no
+        BEQ cpei_b_room_ok
+        JMP cpei_b_no
+ .cpei_b_room_ok
 
         ; Entry intent: dot(v, n_enter) < 0. (See portal A version.)
         LDA portal_b_orient
@@ -788,23 +819,37 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         ; ceiling
         JMP cpei_b_need_vy_neg
 
- .cpei_b_need_vx_pos
+  .cpei_b_need_vx_pos
         LDA char_vx
+        BNE cpei_b_vxpos_have
+        LDA keys_held
+        AND #2
         BEQ cpei_b_no
+        BNE cpei_b_intent_ok
+  .cpei_b_vxpos_have
         BMI cpei_b_no
         JMP cpei_b_intent_ok
- .cpei_b_need_vx_neg
+  .cpei_b_need_vx_neg
         LDA char_vx
         BMI cpei_b_intent_ok
+        BNE cpei_b_no
+        LDA keys_held
+        AND #1
+        BNE cpei_b_intent_ok
         JMP cpei_b_no
-  .cpei_b_need_vy_pos
+   .cpei_b_need_vy_pos
         LDA char_vy
         BNE cpei_b_vypos_have
         LDA char_prev_vy
-   .cpei_b_vypos_have
-        BEQ cpei_b_no
+    .cpei_b_vypos_have
+        BEQ cpei_b_vypos_ground
         BMI cpei_b_no
         JMP cpei_b_intent_ok
+ .cpei_b_vypos_ground
+        ; Walking onto a floor portal should trigger it even when vy is 0.
+        LDA char_grounded
+        BNE cpei_b_intent_ok
+        JMP cpei_b_no
  .cpei_b_need_vy_neg
         LDA char_vy
         BNE cpei_b_vyneg_have
