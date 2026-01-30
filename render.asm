@@ -1377,7 +1377,7 @@ SOLID_TILE_PLANE          = &7A00
     EQUB 2                    ; 3
     EQUB 2                    ; 4
     EQUB 2                    ; 5
-    EQUB 0                    ; 6: backwall portal surface (non-solid)
+    EQUB 2                    ; 6
     EQUB 2                    ; 7
     EQUB 2                    ; 8
     EQUB 2                    ; 9
@@ -1390,8 +1390,9 @@ SOLID_TILE_PLANE          = &7A00
     EQUB 2                    ; 16
     EQUB 2                    ; 17
     EQUB 2                    ; 18
+    EQUB 0                    ; 19: backwall portal surface (non-solid)
     ; Fill remaining entries with 0.
-    SKIP 256-19
+    SKIP 256-20
 
 ; Legacy: redraw tiles behind the character (tilemap-based restore)
 .redraw_background_area
