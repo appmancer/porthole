@@ -388,6 +388,47 @@
      ADC #12
      STA los_y0
 
+      ; While falling, always quick-shot a portal directly below Chell.
+      ; This ignores aim_held and prefers the first floor surface under the column.
+      LDA char_grounded
+      BNE hqs_not_falling
+      LDA char_vy
+      BMI hqs_not_falling
+      BEQ hqs_not_falling
+
+      ; Ray target: straight down to bottom of playfield.
+      ; Use Chell center X (ignore facing/gun offset).
+      JSR calc_char_x
+      CLC
+      ADC #8
+      STA los_x0
+      ; Avoid 8px boundary bias by nudging right.
+      AND #7
+      BNE hqs_fall_x_ok
+      LDA los_x0
+      CMP #127
+      BEQ hqs_fall_x_ok
+      INC los_x0
+   .hqs_fall_x_ok
+
+      LDA los_x0
+      STA los_x1
+      LDA #255
+      STA los_y1
+
+      ; Raycast to first solid tile.
+      JSR shot_find_first_solid
+      BCS hqs_fall_hit_ok
+      JMP hqs_fail
+   .hqs_fall_hit_ok
+
+      ; Place a floor portal at/near the hit location.
+      JSR hqs_try_floor_from_hit
+      BCS hqs_success
+      JMP hqs_fail
+
+   .hqs_not_falling
+
       ; Ray target X: edge of screen.
 
       ; Ray target from aim_held.
@@ -601,8 +642,83 @@
      RTS
 
    .hqs_fc_placed
-     SEC
-     RTS
+      SEC
+      RTS
+
+
+  ; Try placing a floor portal (only) derived from shot_hit_tilepos.
+  ; Returns: C=1 if placed
+  .hqs_try_floor_from_hit
+      ; Decode hit tilepos into (hit_x, hit_y).
+      LDA shot_hit_tilepos
+      AND #15
+      STA col_counter          ; hit_x
+      LDA shot_hit_tilepos
+      LSR A
+      LSR A
+      LSR A
+      LSR A
+      STA row_counter          ; hit_y
+
+      ; base cell_y is the surface row.
+      LDA row_counter
+      STA reticle_cell_y
+
+      ; base cell_x = min(hit_x, 14)
+      LDA col_counter
+      CMP #15
+      BCC hqs_floor_base_x_ok
+      LDA #14
+   .hqs_floor_base_x_ok
+      STA temp                ; base_x
+
+      ; Try x: base, base-1, base+1
+      LDA temp
+      JSR hqs_try_floor_x
+      BCS hqs_floor_placed
+      LDA temp
+      BEQ hqs_floor_skip_m1
+      SEC
+      SBC #1
+      JSR hqs_try_floor_x
+      BCS hqs_floor_placed
+   .hqs_floor_skip_m1
+      LDA temp
+      CMP #14
+      BEQ hqs_floor_fail
+      CLC
+      ADC #1
+      JSR hqs_try_floor_x
+      BCS hqs_floor_placed
+
+   .hqs_floor_fail
+      CLC
+      RTS
+
+   .hqs_floor_placed
+      SEC
+      RTS
+
+
+  ; Try placing a floor portal with candidate cell_x in A.
+  ; Returns C=1 if placed.
+  .hqs_try_floor_x
+      STA reticle_cell_x
+      JSR compute_reticle_state
+      BCC hqs_try_floor_fail
+
+      ; Only floor; disallow ceiling/back-wall.
+      LDA reticle_wall_orient
+      CMP #PORTAL_ORIENT_FLOOR
+      BNE hqs_try_floor_fail
+
+      LDA portal_kind
+      JSR place_portal_from_reticle
+      SEC
+      RTS
+  .hqs_try_floor_fail
+      CLC
+      RTS
 
 
 
