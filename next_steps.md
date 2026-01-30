@@ -48,3 +48,11 @@ None.
       - Define how/when Chell returns to upright (e.g. on landing, or after a short airborne timer, or when `char_grounded` becomes 1).
 
 ## P2: Follow-ups
+
+1) Cubes: gravity + portals
+   
+   - Cubes should be subject to gravity like Chell.
+     - If dropped off a ledge, a cube should fall.
+   - Cubes should interact with portals.
+     - If a portal opens beneath a cube, the cube should fall through.
+     - Cubes should be flung by portals (preserve momentum mapping like Chell).
