@@ -17,14 +17,7 @@ Detailed background/design context lives in `project plan.md`.
      - Gate on actual downward movement occurring (not just vy sign/value).
    - Code refs: `main.asm` (`FALL_POSE_VY_THRESHOLD`, `JUMP_VELOCITY`), `movement.asm` (`.apply_gravity`), `render_state.asm` (`.compute_chell_render_state`).
 
-2) Idle jump applies forward momentum
-   
-   - Repro is deterministic in code: if no left/right is held on the jump press, we still set `char_vx` from `last_anim_dir`.
-   - Confirm:
-     - `movement.asm` `.poll_move_keys` jump path: if neither left nor right is held, it falls through to `.jump_dir_done` and then uses `last_anim_dir` to set `char_vx` to +/-`WALK_VELOCITY`.
-   - Next step: decide expected behaviour (straight up if no direction held vs preserve last direction).
-
-3) Walking on portals should trigger them
+2) Walking on portals should trigger them
    
    - Current rules (per code): must overlap portal rect and satisfy intent `dot(v,n_enter) < 0`.
      - Walls: requires `char_vx` sign matching portal orientation.

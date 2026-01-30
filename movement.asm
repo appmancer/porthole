@@ -53,23 +53,32 @@
      STA anim_dir
      STA last_anim_dir
 
- .jump_dir_done
-     ; Start jump: upward velocity.
-     LDA #JUMP_VELOCITY
-     STA char_vy
-     LDA #0
-     STA char_grounded
+  .jump_dir_done
+      ; Start jump: upward velocity.
+      LDA #JUMP_VELOCITY
+      STA char_vy
+      LDA #0
+      STA char_grounded
 
-     ; Preserve horizontal motion into the jump.
-     LDA last_anim_dir
-     BEQ jump_set_vx_left
-     LDA #WALK_VELOCITY
-     STA char_vx
-     JMP jump_vx_done
- .jump_set_vx_left
-     LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
-     STA char_vx
- .jump_vx_done
+      ; Set horizontal jump velocity only if a move key is held.
+      ; (If no direction is held, jump straight up.)
+      LDA keys_held
+      AND #1
+      BNE jump_set_vx_left
+      LDA keys_held
+      AND #2
+      BNE jump_set_vx_right
+      LDA #0
+      STA char_vx
+      JMP jump_vx_done
+  .jump_set_vx_right
+      LDA #WALK_VELOCITY
+      STA char_vx
+      JMP jump_vx_done
+  .jump_set_vx_left
+      LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
+      STA char_vx
+  .jump_vx_done
 
      ; Delay next gravity tick slightly so the jump starts cleanly.
      LDA #(GRAVITY_UP_PERIOD-1)
