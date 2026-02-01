@@ -26,6 +26,8 @@ fi
 mkdir -p "$(dirname "${OUT_SSD}")"
 rm -f "${OUT_SSD}"
 
+mkdir -p .tmp
+
 ./tools/gen-sprites \
   --out-sprites sprites/generated_chell_sprites.asm \
   --out-masks sprites/generated_chell_masks.asm \
@@ -78,10 +80,25 @@ rm -f "${OUT_SSD}"
   --level "levels/level2" \
   --out "levels/generated_level1.asm"
 
+LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)
+if [[ "${LOADSCR_WH}" == "160 256" ]]; then
+  python3 tools/mode2-pack.py --in loading.png --out .tmp/loadscr_mode2.bin
+else
+  python3 tools/mode2-sample.py \
+    --in loading.png \
+    --out .tmp/loadscr_mode2.bin \
+    --fit crop \
+    --filter box
+fi
+
+# Optional sanity check: reconstruct a PNG from the packed MODE 2 screen.
+if [[ "${GEN_LOADSCR_PREVIEW:-}" == "1" ]]; then
+  python3 tools/mode2-unpack.py --in .tmp/loadscr_mode2.bin --out .tmp/loadscr_preview.png
+fi
+
 BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTHOLE" -boot PROGRAM)
 
 # Always emit a symbols file for tooling.
-mkdir -p .tmp
 BEEBASM_ARGS+=( -dd -labels .tmp/beebasm.labels )
 
 # Verbose beebasm listings are huge and can blow token budgets.

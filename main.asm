@@ -290,17 +290,8 @@ CHELL_FALL_LEFT_BASE        = 44
     JSR set_room_tilemap
     JSR set_room_portalmap
 
-     ; Load Chell sprite+mask data into sideways RAM.
-     ; (Do this before enabling shadow screen so OS file I/O stays simple.)
-     JSR load_chell_sprites
-
-      ; Load portal stamp sprites+masks into sideways RAM.
-      ; Must happen before shadow screen is enabled (OS file I/O stays simpler).
-      JSR load_obj_sprites
-
-    ; Filing-system calls may clobber ZP, so restore our room pointers.
-    JSR set_room_tilemap
-    JSR set_room_portalmap
+      ; Sideways RAM sprite banks are loaded by PROGRAM at boot.
+      ; PROGRAM also writes `chell_bank`/`obj_bank` (ROMSEL values) into ZP.
 
     ; Enable shadow screen (Master).
     ; We still use MODE 5 layout at &5800, but in shadow RAM.
@@ -771,7 +762,16 @@ INCLUDE "persistent_objects_data.asm"
 .end
 
 SAVE "PORTHLE", start, end
-PUTBASIC "program.bas", "PROGRAM"
+
+; Boot loader (PROGRAM) is a small machine-code binary.
+; !Boot runs: *BASIC then *RUN PROGRAM.
+
+CLEAR &0E00, &1900
+ORG &0E00
+.program_start
+INCLUDE "boot_loader.asm"
+.program_end
+SAVE "PROGRAM", program_start, program_end
 
 ; Object stamp sprite+mask data file for sideways RAM.
 ; This is loaded at runtime into a sideways RAM bank mapped at &8000..&BFFF.
@@ -799,3 +799,16 @@ INCLUDE "sprites/generated_chell_masks.asm"
 ORG &C000
 .chelldata_end
 SAVE "CHDATA", chelldata_start, chelldata_end
+
+; Loading screen (MODE 2) file.
+;
+; Binary is generated at build-time into .tmp/loadscr_mode2.bin.
+; It is laid out as MODE 2 screen memory (20KB) and is intended to be
+; *LOADed to &3000 from BASIC during boot.
+
+CLEAR &3000, &8000
+ORG &3000
+.loadscr_start
+INCBIN ".tmp/loadscr_mode2.bin"
+.loadscr_end
+SAVE "LOADSCR", loadscr_start, loadscr_end

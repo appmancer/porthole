@@ -363,6 +363,39 @@
     SKIP 13
 
 
+; Initialize SWRAM bank selectors for reads.
+;
+; PROGRAM (boot loader) loads OBJDAT/CHDATA into the default banks. Here we
+; just need to choose the ROMSEL values that map those banks in this environment
+; (B2 may require bit 7).
+;
+; We reuse the existing bank-selection logic used for SWRAM writes.
+;
+; Output:
+; - `obj_bank` and `chell_bank` set
+; - ROMSEL restored to its entry value
+; Returns: C=0 if ok, C=1 if either bank couldn't be selected
+.init_swr_banks
+    LDA ROMSEL
+    STA saved_romsel
+
+    JSR select_obj_romsel
+    BCS isb_fail
+    JSR select_chell_romsel
+    BCS isb_fail
+
+    LDA saved_romsel
+    STA ROMSEL
+    CLC
+    RTS
+
+.isb_fail
+    LDA saved_romsel
+    STA ROMSEL
+    SEC
+    RTS
+
+
 ; Select a ROMSEL value for Chell SWRAM writes.
 ; Tries bank 4, then bank 4|&80 (B2 quirk).
 ;
