@@ -254,9 +254,10 @@
      STA portal_a_orient
    .ppr_done
 
-     LDA #1
-     STA portal_pending
-     RTS
+      LDA #1
+      STA portal_pending
+
+      RTS
 
 
 ; Apply a pending portal update without redrawing the whole room.

@@ -11,6 +11,14 @@
 
 OBJ_STATE_CARRIED = &80
 
+; Cube physics tuning (tile-aligned).
+; vx is in 8px tiles, vy is in 16px rows.
+CUBE_TERMINAL_VX = 4
+CUBE_TERMINAL_VY = 4
+
+; Reuse Chell portal cooldown length.
+CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
+
 ; --- Object redraw footprints (in tiles) ---
 ; Indexed by obj_type (OBJ_TYPE_*). Entry 0 is unused.
 ; These footprints are used when patching background tiles under a dirty object.
@@ -42,6 +50,16 @@ OBJ_STATE_CARRIED = &80
     INX
     CPX #OBJ_COUNT
     BNE ipo_clear_dirty
+
+    ; Clear per-object physics/cooldowns.
+    LDX #0
+  .ipo_clear_phys
+    STA obj_vx,X
+    STA obj_vy,X
+    STA obj_portal_cd,X
+    INX
+    CPX #OBJ_COUNT
+    BNE ipo_clear_phys
 
     LDX #0                  ; obj_index
     LDY #0                  ; byte offset into obj_defs
@@ -82,6 +100,1220 @@ OBJ_STATE_CARRIED = &80
     INX
     CPX #OBJ_COUNT
     BNE ipo_next
+    RTS
+
+
+; Update cube physics (simple velocity + portals).
+;
+; - Gravity accelerates vy downwards when unsupported.
+; - vx/vy are applied in tile steps.
+; - If a cube overlaps a portal opening and has intent, it teleports with
+;   momentum mapping (coarse, grid-aligned).
+;
+; Must be called during update before rebuilding `solid_phys_plane`.
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr,temp_sprite_ptr,temp_mask_ptr
+; Cube physics/portal interactions are disabled in the size-recovery build.
+.update_cubes_physics
+    RTS
+
+
+; Update a single cube's physics + portal interactions.
+; Input: Y=obj_index (must be a cube in current_room and not carried).
+; Output: none.
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter,screen_ptr,temp_sprite_ptr,temp_mask_ptr
+IF 0
+.update_one_cube_physics
+    ; Tick portal cooldown.
+    LDA obj_portal_cd,Y
+    BEQ oucp_cd_done
+    SEC
+    SBC #1
+    STA obj_portal_cd,Y
+  .oucp_cd_done
+
+    ; If overlapping a portal opening, teleport (may set objects_pending).
+    JSR cube_try_portal_entry
+    BCC oucp_not_teleported
+    RTS
+  .oucp_not_teleported
+
+    ; --- Apply vertical movement by vy rows ---
+    LDA obj_vy,Y
+    BNE oucp_vy_nonzero
+    JMP oucp_horiz
+  .oucp_vy_nonzero
+    BPL oucp_vy_down_start
+    JMP oucp_vy_up
+
+  .oucp_vy_down_start
+    ; vy > 0 : step down.
+    STA row_counter          ; steps
+  .oucp_vy_down_loop
+    ; Bottom edge: attempt to fall through a down-edge exit (off-screen simulation).
+    LDA obj_y,Y
+    CMP #15
+    BNE oucp_down_not_bottom
+
+    ; temp = cube center_x_cell (2-wide => left+1)
+    LDA obj_x,Y
+    CLC
+    ADC #1
+    STA temp
+
+    ; find_exit_down_for_room clobbers Y.
+    TYA
+    PHA
+    LDA obj_room,Y
+    JSR find_exit_down_for_room
+    PLA
+    TAY
+    BCS oucp_down_do_exit
+
+    ; No down exit: stop falling.
+    LDA #0
+    STA obj_vy,Y
+    JMP oucp_horiz
+
+  .oucp_down_do_exit
+    ; Record previous on-screen position for patch/erase.
+    LDA obj_room,Y
+    STA obj_prev_room,Y
+    LDA obj_x,Y
+    STA obj_prev_x,Y
+    LDA obj_y,Y
+    STA obj_prev_y,Y
+
+    ; Enter destination room from the top.
+    STA obj_room,Y
+    LDA #0
+    STA obj_y,Y
+
+    ; Stop velocity when leaving the room.
+    LDA #0
+    STA obj_vx,Y
+    STA obj_vy,Y
+    STA obj_portal_cd,Y
+
+    ; Mark pending patch + restamp.
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+    RTS
+
+  .oucp_down_not_bottom
+    ; Can we fall one row within the room?
+    JSR cube_can_fall_one_row
+    BCS oucp_down_step
+    ; Blocked: stop downward velocity.
+    LDA #0
+    STA obj_vy,Y
+    JMP oucp_horiz
+
+  .oucp_down_step
+    ; Record previous on-screen position for patch/erase.
+    LDA obj_room,Y
+    STA obj_prev_room,Y
+    LDA obj_x,Y
+    STA obj_prev_x,Y
+    LDA obj_y,Y
+    STA obj_prev_y,Y
+
+    ; Move down 1 tile row.
+    LDA obj_y,Y
+    CLC
+    ADC #1
+    STA obj_y,Y
+
+    ; Mark pending patch + restamp.
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+
+    ; Portal check at the new position.
+    JSR cube_try_portal_entry
+    BCC oucp_down_continue
+    RTS
+  .oucp_down_continue
+
+    DEC row_counter
+    BEQ oucp_vy_down_done
+    JMP oucp_vy_down_loop
+  .oucp_vy_down_done
+    JMP oucp_horiz
+
+
+  .oucp_vy_up
+    ; vy < 0 : step up by -vy.
+    ; steps = -vy
+    EOR #&FF
+    CLC
+    ADC #1
+    STA row_counter
+  .oucp_vy_up_loop
+    ; If already at top, stop.
+    LDA obj_y,Y
+    BEQ oucp_up_blocked
+
+    ; Check above row tiles are empty (both columns) and no cube occupies it.
+    JSR cube_can_rise_one_row
+    BCS oucp_up_step
+  .oucp_up_blocked
+    LDA #0
+    STA obj_vy,Y
+    JMP oucp_horiz
+
+  .oucp_up_step
+    ; Record previous on-screen position for patch/erase.
+    LDA obj_room,Y
+    STA obj_prev_room,Y
+    LDA obj_x,Y
+    STA obj_prev_x,Y
+    LDA obj_y,Y
+    STA obj_prev_y,Y
+
+    LDA obj_y,Y
+    SEC
+    SBC #1
+    STA obj_y,Y
+
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+
+    ; Portal check at the new position.
+    JSR cube_try_portal_entry
+    BCC oucp_up_continue
+    RTS
+  .oucp_up_continue
+
+    DEC row_counter
+    BEQ oucp_vy_up_done
+    JMP oucp_vy_up_loop
+  .oucp_vy_up_done
+
+
+  .oucp_horiz
+    ; --- Apply horizontal movement by vx tiles ---
+    LDA obj_vx,Y
+    BEQ oucp_gravity
+    BMI oucp_vx_left
+
+    ; vx > 0 : step right.
+    STA row_counter
+  .oucp_vx_right_loop
+    JSR cube_try_step_right
+    BCS oucp_vx_right_moved
+    ; Blocked: stop.
+    LDA #0
+    STA obj_vx,Y
+    JMP oucp_gravity
+  .oucp_vx_right_moved
+    ; Portal check at new position.
+    JSR cube_try_portal_entry
+    BCC oucp_vx_right_continue
+    RTS
+  .oucp_vx_right_continue
+    DEC row_counter
+    BEQ oucp_vx_right_done
+    JMP oucp_vx_right_loop
+  .oucp_vx_right_done
+    JMP oucp_gravity
+
+  .oucp_vx_left
+    ; vx < 0 : step left by -vx.
+    EOR #&FF
+    CLC
+    ADC #1
+    STA row_counter
+  .oucp_vx_left_loop
+    JSR cube_try_step_left
+    BCS oucp_vx_left_moved
+    LDA #0
+    STA obj_vx,Y
+    JMP oucp_gravity
+  .oucp_vx_left_moved
+    JSR cube_try_portal_entry
+    BCC oucp_vx_left_continue
+    RTS
+  .oucp_vx_left_continue
+    DEC row_counter
+    BEQ oucp_vx_left_done
+    JMP oucp_vx_left_loop
+  .oucp_vx_left_done
+
+
+  .oucp_gravity
+    ; --- Gravity for next frame ---
+    ; If cube can fall AND isn't immediately entering a floor portal, accelerate down.
+    ; (If a floor portal is active under the cube, cube_try_portal_entry will have
+    ; already teleported it on this frame when cooldown permits.)
+
+    ; Supported? (C=1 if can fall)
+    JSR cube_can_fall_one_row
+    BCS oucp_not_supported
+
+    ; Supported: clamp vy to 0 if not rising.
+    LDA obj_vy,Y
+    BMI oucp_done
+    LDA #0
+    STA obj_vy,Y
+    JMP oucp_done
+
+  .oucp_not_supported
+    ; Accelerate downward (vy += 1) up to terminal.
+    LDA obj_vy,Y
+    CMP #CUBE_TERMINAL_VY
+    BCS oucp_done
+    CLC
+    ADC #1
+    STA obj_vy,Y
+
+  .oucp_done
+    RTS
+
+
+; --- Cube movement helpers ---
+
+; C=1 if cube Y can rise one row (y-1) within its current room.
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter,temp_sprite_ptr
+.cube_can_rise_one_row
+    ; temp_y = above_y
+    LDA obj_y,Y
+    BNE ccror_y_ok
+    JMP ccror_fail
+  .ccror_y_ok
+    SEC
+    SBC #1
+    STA temp_y
+
+    ; temp_sprite_ptr := tilemap pointer for obj_room
+    LDA obj_room,Y
+    ASL A
+    TAX
+    LDA room_pointers,X
+    STA temp_sprite_ptr
+    LDA room_pointers+1,X
+    STA temp_sprite_ptr+1
+
+    ; idx = above_y*16 + obj_x
+    LDX temp_y
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    STA row_counter
+
+    ; Tile 0 empty?
+    TYA
+    PHA
+    LDY row_counter
+    LDA (temp_sprite_ptr),Y
+    PLA
+    TAY
+    BEQ ccror_tile0_ok
+    CMP #TILE_BACKWALL_PORTAL
+    BEQ ccror_tile0_ok
+    JMP ccror_fail
+  .ccror_tile0_ok
+
+    ; Tile 1 empty?
+    LDA row_counter
+    CLC
+    ADC #1
+    STA row_counter
+    TYA
+    PHA
+    LDY row_counter
+    LDA (temp_sprite_ptr),Y
+    PLA
+    TAY
+    BEQ ccror_tiles_ok
+    CMP #TILE_BACKWALL_PORTAL
+    BEQ ccror_tiles_ok
+    JMP ccror_fail
+  .ccror_tiles_ok
+
+    ; Other cube check (same room at above_y)
+    LDA obj_x,Y
+    STA row_counter
+    TYA
+    STA col_counter
+    LDX #0
+  .ccror_scan
+    CPX #OBJ_COUNT
+    BEQ ccror_ok
+    CPX col_counter
+    BEQ ccror_next
+    LDA obj_type,X
+    CMP #OBJ_TYPE_CUBE
+    BNE ccror_next
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE ccror_next
+    LDA obj_room,X
+    CMP obj_room,Y
+    BNE ccror_next
+    LDA obj_y,X
+    CMP temp_y
+    BNE ccror_next
+    ; 2-wide overlap between obj_x[X] and row_counter
+    LDA row_counter
+    CLC
+    ADC #2
+    STA temp
+    LDA obj_x,X
+    CMP temp
+    BCS ccror_next
+    LDA obj_x,X
+    CLC
+    ADC #2
+    STA temp
+    LDA row_counter
+    CMP temp
+    BCS ccror_next
+    JMP ccror_fail
+  .ccror_next
+    INX
+    JMP ccror_scan
+
+  .ccror_ok
+    SEC
+    RTS
+  .ccror_fail
+    CLC
+    RTS
+
+
+; Attempt to move cube Y one tile right.
+; Output: C=1 moved, C=0 blocked.
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter,temp_sprite_ptr
+.cube_try_step_right
+    ; Reject if x would exceed 14 (2-wide cube).
+    LDA obj_x,Y
+    CMP #14
+    BEQ ctsr_block
+    CLC
+    ADC #1
+    STA temp             ; cand_x
+    JMP cube_try_step_to_x
+
+  .ctsr_block
+    CLC
+    RTS
+
+
+; Attempt to move cube Y one tile left.
+; Output: C=1 moved, C=0 blocked.
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter,temp_sprite_ptr
+.cube_try_step_left
+    LDA obj_x,Y
+    BEQ ctsl_block
+    SEC
+    SBC #1
+    STA temp
+    JMP cube_try_step_to_x
+
+  .ctsl_block
+    CLC
+    RTS
+
+
+; Common step helper: move cube Y to cand_x in temp.
+; Output: C=1 moved, C=0 blocked.
+; Clobbers: A,X,temp_y,row_counter,col_counter,temp_sprite_ptr
+.cube_try_step_to_x
+    ; temp_sprite_ptr := tilemap pointer for obj_room
+    LDA obj_room,Y
+    ASL A
+    TAX
+    LDA room_pointers,X
+    STA temp_sprite_ptr
+    LDA room_pointers+1,X
+    STA temp_sprite_ptr+1
+
+    ; idx = obj_y*16 + cand_x
+    LDA obj_y,Y
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC temp
+    STA row_counter
+
+    ; Tile 0 empty?
+    TYA
+    PHA
+    LDY row_counter
+    LDA (temp_sprite_ptr),Y
+    PLA
+    TAY
+    BEQ ctstx_tile0_ok
+    CMP #TILE_BACKWALL_PORTAL
+    BEQ ctstx_tile0_ok
+    JMP ctstx_block
+  .ctstx_tile0_ok
+    ; Tile 1 empty?
+    LDA row_counter
+    CLC
+    ADC #1
+    STA row_counter
+    TYA
+    PHA
+    LDY row_counter
+    LDA (temp_sprite_ptr),Y
+    PLA
+    TAY
+    BEQ ctstx_tiles_ok
+    CMP #TILE_BACKWALL_PORTAL
+    BEQ ctstx_tiles_ok
+    JMP ctstx_block
+  .ctstx_tiles_ok
+
+    ; Other cube check: any cube at same y in same room overlapping new x?
+    LDA temp
+    STA row_counter       ; new_left
+    TYA
+    STA col_counter       ; self index
+    LDX #0
+  .ctstx_scan
+    CPX #OBJ_COUNT
+    BEQ ctstx_do_move
+    CPX col_counter
+    BEQ ctstx_next
+    LDA obj_type,X
+    CMP #OBJ_TYPE_CUBE
+    BNE ctstx_next
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE ctstx_next
+    LDA obj_room,X
+    CMP obj_room,Y
+    BNE ctstx_next
+    LDA obj_y,X
+    CMP obj_y,Y
+    BNE ctstx_next
+    ; 2-wide overlap between obj_x[X] and row_counter
+    LDA row_counter
+    CLC
+    ADC #2
+    STA temp_y
+    LDA obj_x,X
+    CMP temp_y
+    BCS ctstx_next
+    LDA obj_x,X
+    CLC
+    ADC #2
+    STA temp_y
+    LDA row_counter
+    CMP temp_y
+    BCS ctstx_next
+    JMP ctstx_block
+  .ctstx_next
+    INX
+    JMP ctstx_scan
+
+  .ctstx_do_move
+    ; Record previous for patch/erase.
+    LDA obj_room,Y
+    STA obj_prev_room,Y
+    LDA obj_x,Y
+    STA obj_prev_x,Y
+    LDA obj_y,Y
+    STA obj_prev_y,Y
+
+    ; Commit x.
+    LDA temp
+    STA obj_x,Y
+
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+    SEC
+    RTS
+
+  .ctstx_block
+    CLC
+    RTS
+
+
+; --- Cube portal interactions ---
+
+; Try to teleport cube Y through a portal opening.
+; Output: C=1 if teleported, C=0 otherwise.
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter,screen_ptr,temp_sprite_ptr,temp_mask_ptr
+.cube_try_portal_entry
+    ; Cooldown blocks re-entry.
+    LDA obj_portal_cd,Y
+    BNE ctpe_no
+
+    ; Prefer portal A.
+    LDA portal_a_enabled
+    BEQ ctpe_try_b
+    LDA portal_a_room
+    CMP current_room
+    BNE ctpe_try_b
+    LDA #0
+    JSR cube_try_portal_kind
+    BCS ctpe_yes
+
+  .ctpe_try_b
+    LDA portal_b_enabled
+    BEQ ctpe_no
+    LDA portal_b_room
+    CMP current_room
+    BNE ctpe_no
+    LDA #1
+    JSR cube_try_portal_kind
+    BCS ctpe_yes
+
+  .ctpe_no
+    CLC
+    RTS
+  .ctpe_yes
+    SEC
+    RTS
+
+
+; If a newly placed floor portal overlaps a cube, force the cube to fall through.
+;
+; Called from portal placement (reticle mode). Uses `portal_kind` to decide which
+; portal instance was updated.
+;
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr,temp_sprite_ptr,temp_mask_ptr
+.maybe_kick_cubes_for_new_portal
+    ; Determine which portal was placed.
+    LDA portal_kind
+    STA temp              ; entry_kind
+
+    ; Only floor portals act as "holes" under cubes.
+    LDA portal_kind
+    BEQ mkcp_check_a
+    ; B
+    LDA portal_b_enabled
+    BEQ mkcp_done
+    LDA portal_b_room
+    CMP current_room
+    BNE mkcp_done
+    LDA portal_b_orient
+    CMP #PORTAL_ORIENT_FLOOR
+    BNE mkcp_done
+    JMP mkcp_kind_ok
+  .mkcp_check_a
+    LDA portal_a_enabled
+    BEQ mkcp_done
+    LDA portal_a_room
+    CMP current_room
+    BNE mkcp_done
+    LDA portal_a_orient
+    CMP #PORTAL_ORIENT_FLOOR
+    BNE mkcp_done
+
+  .mkcp_kind_ok
+    ; Must have the other portal active to allow entry.
+    LDA temp
+    EOR #1
+    BEQ mkcp_need_a
+    ; need B
+    LDA portal_b_enabled
+    BEQ mkcp_done
+    JMP mkcp_scan
+  .mkcp_need_a
+    LDA portal_a_enabled
+    BEQ mkcp_done
+
+  .mkcp_scan
+    LDY #0
+  .mkcp_loop
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BNE mkcp_next
+    LDA obj_state,Y
+    AND #OBJ_STATE_CARRIED
+    BNE mkcp_next
+    LDA obj_room,Y
+    CMP current_room
+    BNE mkcp_next
+
+    ; Clear cooldown so the cube can enter immediately.
+    LDA #0
+    STA obj_portal_cd,Y
+    ; Give it a small downward intent.
+    STA obj_vx,Y
+    LDA #1
+    STA obj_vy,Y
+
+    LDA temp
+    JSR cube_try_portal_kind
+
+  .mkcp_next
+    INY
+    CPY #OBJ_COUNT
+    BNE mkcp_loop
+
+  .mkcp_done
+    RTS
+
+
+; Try teleport for a specific entry portal kind.
+; Input: A=entry_kind (0=A,1=B)
+; Output: C=1 teleported, C=0 no.
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter,screen_ptr,temp_sprite_ptr,temp_mask_ptr
+.cube_try_portal_kind
+    STA temp                ; entry_kind
+
+    ; Load entry portal state into temp_sprite_ptr (room), screen_ptr(x), temp_y(y), row_counter(orient).
+    LDA temp
+    BEQ ctp_k_a
+    ; B
+    LDA portal_b_enabled
+    BNE ctp_k_b_enabled
+    JMP ctp_k_no
+  .ctp_k_b_enabled
+    LDA portal_b_room
+    STA temp_sprite_ptr
+    LDA portal_b_x
+    STA screen_ptr
+    LDA portal_b_y
+    STA temp_y
+    LDA portal_b_orient
+    STA row_counter
+    JMP ctp_k_have_entry
+  .ctp_k_a
+    LDA portal_a_enabled
+    BNE ctp_k_a_enabled
+    JMP ctp_k_no
+  .ctp_k_a_enabled
+    LDA portal_a_room
+    STA temp_sprite_ptr
+    LDA portal_a_x
+    STA screen_ptr
+    LDA portal_a_y
+    STA temp_y
+    LDA portal_a_orient
+    STA row_counter
+
+  .ctp_k_have_entry
+    ; Ignore back-wall portals for cubes (intent policy not defined).
+    LDA row_counter
+    CMP #PORTAL_ORIENT_BACK
+    BNE ctp_k_not_back
+    JMP ctp_k_no
+  .ctp_k_not_back
+
+    ; Compute entry portal collision rect in tile coords:
+    ; temp_sprite_ptr+1 = rect_x0, temp_mask_ptr+1 = rect_y0, col_counter = w, screen_ptr+1 = h
+    JSR cube_compute_portal_rect
+
+    ; Overlap test vs cube rect.
+    JSR cube_overlap_portal_rect
+    BCS ctp_k_overlap_ok
+    JMP ctp_k_no
+  .ctp_k_overlap_ok
+
+    ; Intent test.
+    LDA row_counter          ; orient
+    CMP #PORTAL_ORIENT_WALL_L
+    BEQ ctp_k_intent_wall_l
+    CMP #PORTAL_ORIENT_WALL_R
+    BEQ ctp_k_intent_wall_r
+    CMP #PORTAL_ORIENT_FLOOR
+    BEQ ctp_k_intent_floor
+    ; ceil
+    JMP ctp_k_intent_ceil
+
+  .ctp_k_intent_wall_l
+    ; Enter left-wall portal by moving left (vx < 0)
+    LDA obj_vx,Y
+    BMI ctp_k_do
+    JMP ctp_k_no
+  .ctp_k_intent_wall_r
+    ; Enter right-wall portal by moving right (vx > 0)
+    LDA obj_vx,Y
+    BNE ctp_k_wallr_nonzero
+    JMP ctp_k_no
+  .ctp_k_wallr_nonzero
+    BMI ctp_k_no
+    JMP ctp_k_do
+  .ctp_k_intent_floor
+    ; Enter floor portal when falling (vy > 0). If vy==0, gravity will pull it in.
+    LDA obj_vy,Y
+    BNE ctp_k_floor_nonzero
+    LDA #1
+    STA obj_vy,Y
+    JMP ctp_k_do
+  .ctp_k_floor_nonzero
+    BMI ctp_k_no
+    JMP ctp_k_do
+  .ctp_k_intent_ceil
+    LDA obj_vy,Y
+    BMI ctp_k_do
+    JMP ctp_k_no
+
+  .ctp_k_do
+    ; Stash entry orient for momentum mapping.
+    LDA row_counter
+    STA temp_mask_ptr      ; entry_orient
+
+    ; Exit kind is the other portal.
+    LDA temp
+    EOR #1
+    STA temp_y             ; exit_kind
+
+    ; Ensure exit portal exists.
+    LDA temp_y
+    BEQ ctp_k_need_a
+    ; Need B
+    LDA portal_b_enabled
+    BNE ctp_k_have_exit
+    JMP ctp_k_no
+  .ctp_k_need_a
+    LDA portal_a_enabled
+    BNE ctp_k_have_exit
+    JMP ctp_k_no
+  .ctp_k_have_exit
+    ; Record previous position for patch/erase.
+    LDA obj_room,Y
+    STA obj_prev_room,Y
+    LDA obj_x,Y
+    STA obj_prev_x,Y
+    LDA obj_y,Y
+    STA obj_prev_y,Y
+
+    ; Perform teleport (updates obj_x/obj_y/obj_room and velocities).
+    JSR cube_do_teleport
+
+    ; Mark pending patch + restamp.
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+
+    ; Cooldown.
+    LDA #CUBE_PORTAL_COOLDOWN_FRAMES
+    STA obj_portal_cd,Y
+    SEC
+    RTS
+
+  .ctp_k_no
+    CLC
+    RTS
+
+
+; Compute portal collision rect for the entry portal currently in:
+; - screen_ptr = portal_x (stored)
+; - temp_y = portal_y (stored)
+; - row_counter = orient
+;
+; Output:
+; - temp_sprite_ptr+1 = rect_x0
+; - temp_mask_ptr+1   = rect_y0
+; - col_counter       = rect_w
+; - screen_ptr+1      = rect_h
+;
+; Clobbers: A,X
+.cube_compute_portal_rect
+    ; y0
+    LDA temp_y
+    STA temp_mask_ptr+1
+
+    ; Default dims.
+    LDA #1
+    STA col_counter
+    LDA #2
+    STA screen_ptr+1
+
+    LDA row_counter
+    CMP #PORTAL_ORIENT_FLOOR
+    BCC ccpr_wall
+    ; floor/ceil: 2x1
+    LDA #2
+    STA col_counter
+    LDA #1
+    STA screen_ptr+1
+    LDA screen_ptr
+    STA temp_sprite_ptr+1
+    RTS
+
+  .ccpr_wall
+    ; wall: collision opening is adjacent to the wall tile.
+    LDA row_counter
+    CMP #PORTAL_ORIENT_WALL_L
+    BEQ ccpr_wall_l
+    ; wall_r: open to left
+    LDA screen_ptr
+    BEQ ccpr_wall_r_clamp
+    SEC
+    SBC #1
+    STA temp_sprite_ptr+1
+    RTS
+  .ccpr_wall_r_clamp
+    LDA #0
+    STA temp_sprite_ptr+1
+    RTS
+  .ccpr_wall_l
+    ; open to right
+    LDA screen_ptr
+    CMP #15
+    BEQ ccpr_wall_l_clamp
+    CLC
+    ADC #1
+    STA temp_sprite_ptr+1
+    RTS
+  .ccpr_wall_l_clamp
+    LDA #15
+    STA temp_sprite_ptr+1
+    RTS
+
+
+; Overlap test between cube Y (2x1 tiles) and portal rect.
+; Inputs:
+; - temp_sprite_ptr+1 = rect_x0
+; - temp_mask_ptr+1   = rect_y0
+; - col_counter       = rect_w
+; - screen_ptr+1      = rect_h
+;
+; Output: C=1 overlap, C=0 no.
+; Clobbers: A
+.cube_overlap_portal_rect
+    ; cube_x0 in temp
+    LDA obj_x,Y
+    STA temp
+
+    ; if (rect_x0 + rect_w) <= cube_x0 => no overlap
+    LDA temp_sprite_ptr+1
+    CLC
+    ADC col_counter
+    CMP temp
+    BEQ copr_no
+    BCC copr_no
+
+    ; if (cube_x0 + 2) <= rect_x0 => no overlap
+    LDA temp
+    CLC
+    ADC #2
+    CMP temp_sprite_ptr+1
+    BEQ copr_no
+    BCC copr_no
+
+    ; y overlap
+    ; if (rect_y0 + rect_h) <= cube_y0 => no overlap
+    LDA temp_mask_ptr+1
+    CLC
+    ADC screen_ptr+1
+    CMP obj_y,Y
+    BEQ copr_no
+    BCC copr_no
+
+    ; if (cube_y0 + 1) <= rect_y0 => no overlap
+    LDA obj_y,Y
+    CLC
+    ADC #1
+    CMP temp_mask_ptr+1
+    BEQ copr_no
+    BCC copr_no
+
+    SEC
+    RTS
+  .copr_no
+    CLC
+    RTS
+
+
+; Teleport cube Y from entry portal kind in temp_mask_ptr to exit kind in temp.
+; Uses entry orient in row_counter and entry rect base in temp_sprite_ptr+1/temp_mask_ptr+1.
+; Updates obj_room/obj_x/obj_y and obj_vx/obj_vy.
+; Clobbers: A,X,temp_y,col_counter,screen_ptr,temp_sprite_ptr
+
+.cube_do_teleport
+    ; Load exit portal state.
+    ; Inputs:
+    ; - temp_y = exit_kind (0=A,1=B)
+    ; - temp_mask_ptr = entry_orient
+    ;
+    ; Locals:
+    ; - temp_sprite_ptr = exit_room
+    ; - screen_ptr = exit_portal_x (stored)
+    ; - temp = exit_portal_y (stored)
+    ; - row_counter = exit_orient
+    LDA temp_y
+    BEQ cdt_exit_a
+    ; Exit B
+    LDA portal_b_room
+    STA temp_sprite_ptr
+    LDA portal_b_x
+    STA screen_ptr
+    LDA portal_b_y
+    STA temp
+    LDA portal_b_orient
+    STA row_counter
+    JMP cdt_have_exit
+  .cdt_exit_a
+    LDA portal_a_room
+    STA temp_sprite_ptr
+    LDA portal_a_x
+    STA screen_ptr
+    LDA portal_a_y
+    STA temp
+    LDA portal_a_orient
+    STA row_counter
+
+  .cdt_have_exit
+    ; Ignore back-wall exits for cubes.
+    LDA row_counter
+    CMP #PORTAL_ORIENT_BACK
+    BNE cdt_exit_ok
+    JMP cdt_abort
+  .cdt_exit_ok
+
+    ; Compute exit portal collision rect into temp_sprite_ptr+1 (x0) and temp_mask_ptr+1 (y0).
+    LDA temp
+    STA temp_y
+    ; screen_ptr already holds stored x.
+    JSR cube_compute_portal_rect
+
+    ; --- Momentum mapping in 8px units ---
+    ; vx8 in screen_ptr (signed), vy8 in temp_y (signed)
+    LDA obj_vx,Y
+    STA screen_ptr
+    LDA obj_vy,Y
+    ASL A
+    STA temp_y
+
+    ; (v_t in sprite_ptr, v_n in sprite_ptr+1)
+    LDA temp_mask_ptr         ; entry_orient
+    CMP #PORTAL_ORIENT_WALL_L
+    BEQ cdt_vtn_wall_l
+    CMP #PORTAL_ORIENT_WALL_R
+    BEQ cdt_vtn_wall_r
+    CMP #PORTAL_ORIENT_FLOOR
+    BEQ cdt_vtn_floor
+    JMP cdt_vtn_ceil
+
+  .cdt_vtn_wall_l
+    ; v_t = vy8
+    LDA temp_y
+    STA sprite_ptr
+    ; v_n = -vx8
+    LDA screen_ptr
+    EOR #&FF
+    CLC
+    ADC #1
+    STA sprite_ptr+1
+    JMP cdt_recompose
+
+  .cdt_vtn_wall_r
+    ; v_t = -vy8
+    LDA temp_y
+    EOR #&FF
+    CLC
+    ADC #1
+    STA sprite_ptr
+    ; v_n = vx8
+    LDA screen_ptr
+    STA sprite_ptr+1
+    JMP cdt_recompose
+
+  .cdt_vtn_floor
+    ; v_t = vx8
+    LDA screen_ptr
+    STA sprite_ptr
+    ; v_n = vy8
+    LDA temp_y
+    STA sprite_ptr+1
+    JMP cdt_recompose
+
+  .cdt_vtn_ceil
+    ; v_t = -vx8
+    LDA screen_ptr
+    EOR #&FF
+    CLC
+    ADC #1
+    STA sprite_ptr
+    ; v_n = -vy8
+    LDA temp_y
+    EOR #&FF
+    CLC
+    ADC #1
+    STA sprite_ptr+1
+
+  .cdt_recompose
+    ; Recompose for exit orient in row_counter.
+    ; vx8' -> screen_ptr, vy8' -> temp_y
+    LDA row_counter
+    CMP #PORTAL_ORIENT_WALL_L
+    BEQ cdt_out_wall_l
+    CMP #PORTAL_ORIENT_WALL_R
+    BEQ cdt_out_wall_r
+    CMP #PORTAL_ORIENT_FLOOR
+    BEQ cdt_out_floor
+    JMP cdt_out_ceil
+
+  .cdt_out_wall_l
+    LDA sprite_ptr+1
+    STA screen_ptr
+    LDA sprite_ptr
+    STA temp_y
+    JMP cdt_store_vel
+
+  .cdt_out_wall_r
+    LDA sprite_ptr+1
+    EOR #&FF
+    CLC
+    ADC #1
+    STA screen_ptr
+    LDA sprite_ptr
+    EOR #&FF
+    CLC
+    ADC #1
+    STA temp_y
+    JMP cdt_store_vel
+
+  .cdt_out_floor
+    LDA sprite_ptr
+    STA screen_ptr
+    LDA sprite_ptr+1
+    EOR #&FF
+    CLC
+    ADC #1
+    STA temp_y
+    JMP cdt_store_vel
+
+  .cdt_out_ceil
+    LDA sprite_ptr
+    EOR #&FF
+    CLC
+    ADC #1
+    STA screen_ptr
+    LDA sprite_ptr+1
+    STA temp_y
+
+  .cdt_store_vel
+    ; Clamp vx8 to +/-CUBE_TERMINAL_VX.
+    LDA screen_ptr
+    BMI cdt_vx_neg
+    CMP #CUBE_TERMINAL_VX+1
+    BCC cdt_vx_store
+    LDA #CUBE_TERMINAL_VX
+    JMP cdt_vx_store
+  .cdt_vx_neg
+    EOR #&FF
+    CLC
+    ADC #1
+    CMP #CUBE_TERMINAL_VX+1
+    BCC cdt_vx_neg_ok
+    LDA #CUBE_TERMINAL_VX
+  .cdt_vx_neg_ok
+    EOR #&FF
+    CLC
+    ADC #1
+  .cdt_vx_store
+    STA obj_vx,Y
+
+    ; Quantize vy8 to 16px rows (toward zero), clamp to +/-CUBE_TERMINAL_VY.
+    LDA temp_y
+    AND #&FE
+    STA temp_y
+    LDA temp_y
+    BMI cdt_vy_neg
+    LSR A
+    JMP cdt_vy_clamp
+  .cdt_vy_neg
+    EOR #&FF
+    CLC
+    ADC #1
+    LSR A
+    EOR #&FF
+    CLC
+    ADC #1
+  .cdt_vy_clamp
+    ; Clamp signed vy
+    BMI cdt_vy_clamp_neg
+    CMP #CUBE_TERMINAL_VY+1
+    BCC cdt_vy_store
+    LDA #CUBE_TERMINAL_VY
+    JMP cdt_vy_store
+  .cdt_vy_clamp_neg
+    EOR #&FF
+    CLC
+    ADC #1
+    CMP #CUBE_TERMINAL_VY+1
+    BCC cdt_vy_neg_ok
+    LDA #CUBE_TERMINAL_VY
+  .cdt_vy_neg_ok
+    EOR #&FF
+    CLC
+    ADC #1
+  .cdt_vy_store
+    STA obj_vy,Y
+
+    ; --- Place cube near exit portal ---
+    ; Default new_x/new_y = exit rect base.
+    LDA temp_sprite_ptr+1     ; exit rect x0
+    STA obj_x,Y
+    LDA temp_mask_ptr+1       ; exit rect y0
+    STA obj_y,Y
+
+    ; Nudge along exit normal to avoid overlap.
+    LDA row_counter
+    CMP #PORTAL_ORIENT_WALL_L
+    BEQ cdt_nudge_wall_l
+    CMP #PORTAL_ORIENT_WALL_R
+    BEQ cdt_nudge_wall_r
+    CMP #PORTAL_ORIENT_FLOOR
+    BEQ cdt_nudge_floor
+    JMP cdt_nudge_ceil
+
+  .cdt_nudge_wall_l
+    ; Place to the right of the opening column.
+    LDA obj_x,Y
+    CLC
+    ADC #1
+    CMP #15
+    BCC cdt_nudge_wall_l_ok
+    LDA #14
+  .cdt_nudge_wall_l_ok
+    STA obj_x,Y
+    JMP cdt_commit_room
+
+  .cdt_nudge_wall_r
+    ; Place to the left of the opening column.
+    LDA obj_x,Y
+    SEC
+    SBC #2
+    BCS cdt_nudge_wall_r_ok
+    LDA #0
+  .cdt_nudge_wall_r_ok
+    STA obj_x,Y
+    JMP cdt_commit_room
+
+  .cdt_nudge_floor
+    ; Exit upwards: y := rect_y0 - 1
+    LDA obj_y,Y
+    BEQ cdt_nudge_floor_ok
+    SEC
+    SBC #1
+    STA obj_y,Y
+  .cdt_nudge_floor_ok
+    JMP cdt_commit_room
+
+  .cdt_nudge_ceil
+    ; Exit downwards: y := rect_y0 + 1
+    LDA obj_y,Y
+    CMP #15
+    BEQ cdt_nudge_ceil_ok
+    CLC
+    ADC #1
+    STA obj_y,Y
+  .cdt_nudge_ceil_ok
+
+  .cdt_commit_room
+    ; Update room.
+    LDA temp_sprite_ptr
+    STA obj_room,Y
+
+    CLC
+    RTS
+
+  .cdt_abort
+    ; Can't teleport: keep cube where it is.
+    CLC
     RTS
 
 
@@ -557,6 +1789,8 @@ OBJ_STATE_CARRIED = &80
     STA obj_y,Y
     RTS
 
+
+ENDIF
 
 ; Update `sig_state` from drivers, and update per-object visual state bits.
 ;
@@ -1255,6 +2489,12 @@ OBJ_STATE_CARRIED = &80
     ORA #OBJ_STATE_CARRIED
     STA obj_state,Y
 
+    ; While carried, cube physics is disabled.
+    LDA #0
+    STA obj_vx,Y
+    STA obj_vy,Y
+    STA obj_portal_cd,Y
+
     LDA #1
     STA objects_pending
     STA obj_dirty,Y
@@ -1451,6 +2691,12 @@ OBJ_STATE_CARRIED = &80
     LDA obj_state,Y
     AND #&7F
     STA obj_state,Y
+
+    ; Dropped cube starts with no velocity.
+    LDA #0
+    STA obj_vx,Y
+    STA obj_vy,Y
+    STA obj_portal_cd,Y
 
     LDA #1
     STA objects_pending
