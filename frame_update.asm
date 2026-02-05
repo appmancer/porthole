@@ -12,8 +12,26 @@
     LDA keys_held
     AND #8
     BNE murm_shift_ok
+    ; Ensure reticle deactivates immediately when SHIFT is not held.
+    LDA reticle_active
+    BEQ murm_shift_clear_done
+    LDA #0
+    STA reticle_active
+    LDA #1
+    STA reticle_dirty
+  .murm_shift_clear_done
     CLC
     RTS
+
+
+; Clear per-frame jump debug bits (keep other debug flags intact).
+.clear_jump_debug
+    LDA debug_flags
+    AND #&F9
+    STA debug_flags
+    RTS
+
+
   .murm_shift_ok
 
     LDA char_grounded
@@ -33,7 +51,7 @@
 
     ; Debug toggle: SPACE edge while in reticle mode.
     ; (Avoids interfering with SPACE actions in normal gameplay.)
-    LDA action_pressed_latch
+    LDA action_pressed
     BEQ murm_debug_done
     LDA debug_flags
     EOR #1
@@ -49,88 +67,25 @@
     STA reticle_dirty
   .murm_reticle_no_dirty
 
-    ; Portal placement request handling.
-    ; We latch A/S key-down into portal_req and allow placement on a later
-    ; green frame. To avoid "delayed shot at a new target" we snapshot the
-    ; current target on the press frame (portal_req bit7 marks snapshot-pending)
-    ; and cancel the request if the target changes afterward.
-
-    LDA portal_req
-    BEQ murm_reticle_req_ok
-
-    ; temp = (reticle_cell_x<<4) | reticle_cell_y
-    LDA reticle_cell_x
-    ASL A
-    ASL A
-    ASL A
-    ASL A
-    ORA reticle_cell_y
-    STA temp
-
-    ; Snapshot target if requested (bit7).
-    LDA portal_req
-    AND #&80
-    BEQ murm_reticle_req_no_snap
-
-    LDA temp
-    STA PORTAL_REQ_SNAP_POS
-    LDA reticle_wall_orient
-    STA PORTAL_REQ_SNAP_ORIENT
-
-    ; Clear snapshot-pending flag.
-    LDA portal_req
-    AND #&7F
-    STA portal_req
-
- .murm_reticle_req_no_snap
-
-    ; If the target changed after the request was made, cancel it.
-    LDA portal_req
-    AND #3
-    BEQ murm_reticle_req_ok
-
-    LDA temp
-    CMP PORTAL_REQ_SNAP_POS
-    BNE murm_reticle_cancel_req
-    LDA reticle_wall_orient
-    CMP PORTAL_REQ_SNAP_ORIENT
-    BEQ murm_reticle_req_ok
-
- .murm_reticle_cancel_req
-    LDA #0
-    STA portal_req
-
- .murm_reticle_req_ok
-
     ; Portal placement while in reticle mode.
-    ; Use portal_req (latched edge) so a one-frame reticle flicker doesn't
-    ; force you to re-press.
-    ; Only place when the reticle is currently valid (green).
+    ; Use keys_pressed edge; only place when reticle is valid (green).
     LDA reticle_state
     BEQ murm_reticle_place_done
 
     ; Prefer Portal A if both pressed.
-    LDA portal_req
-    AND #1
+    LDA keys_pressed
+    AND #&40
     BEQ murm_reticle_check_place_b
     LDA #0
     JSR place_portal_from_reticle
-    ; Consume request (requires key-up before next placement).
-    LDA portal_req
-    AND #&FE
-    STA portal_req
     JMP murm_reticle_place_done
 
  .murm_reticle_check_place_b
-    LDA portal_req
-    AND #2
+    LDA keys_pressed
+    AND #&80
     BEQ murm_reticle_place_done
     LDA #1
     JSR place_portal_from_reticle
-    ; Consume request.
-    LDA portal_req
-    AND #&FD
-    STA portal_req
 
  .murm_reticle_place_done
     SEC
@@ -143,19 +98,14 @@
 
 ; Normal mode: handle reticle deactivation, movement, and gravity.
  .update_normal_mode
-    ; Portal placement requests are only meaningful in reticle mode.
-    ; Clear them when not in reticle mode so taps can't leak into gameplay.
-    LDA #0
-    STA portal_req
-
     ; Quick-shot portal firing (outside reticle mode).
     JSR handle_quick_shot
 
     ; Cube pickup/drop (SPACE edge).
     JSR handle_cube_pickup_drop
 
-    ; Cube gravity (16px steps).
-    JSR update_cubes_gravity
+    ; Cubes: simple physics + portal interactions.
+    JSR update_cubes_physics
 
     ; Keep the physics solidity plane up to date (tiles + standable objects).
     ; This lets Chell stand on cubes.
@@ -283,22 +233,22 @@
  ;
  ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
   .handle_quick_shot
-      ; Use latched key-down edges so taps aren't dropped on skipped sim frames.
-      LDA keys_pressed_latch
+      ; Use edge-triggered keys for quick-shot.
+      LDA keys_pressed
       AND #&C0
       BNE hqs_have_newpress
       JMP hqs_done
    .hqs_have_newpress
 
       ; Prefer A if both were pressed.
-      LDA keys_pressed_latch
+      LDA keys_pressed
       AND #&40
       BEQ hqs_try_b
       LDA #0
       JMP hqs_have_kind
 
    .hqs_try_b
-      LDA keys_pressed_latch
+      LDA keys_pressed
       AND #&80
       BEQ hqs_done_far
       LDA #1

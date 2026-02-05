@@ -108,16 +108,23 @@ phase.
   - small render lists
   - 256-byte streaming buffer(s) (used during load, not during render)
 
-### Shadow view: `&3000..&57FF` (keep clear unless explicitly allocated)
+### Shadow view: `&3000..&57FF` (render-only tables)
 
-We currently do not write to `&3000..&57FF` while rendering, so it *can* remain
-unused in the shadow view.
+We can reserve a small portion of this window for **render-only lookup tables**
+that are read exclusively during the post-VSYNC render phase (while the CPU is
+mapped to shadow).
+
+Proposed allocation:
+
+- `&3000..&37FF`: render lookup tables (row bases, column offsets, stripe tables)
+- `&3800..&57FF`: reserve for future render-only tables
 
 Policy:
 
-- Treat shadow `&3000..&57FF` as free space.
-- Do not place critical render-time assets here unless we explicitly allocate
-  and protect them (because any future clear/effect could clobber them).
+- Only read these tables while mapped to **shadow** during render.
+- Never read them during update (main mapping), to avoid bank hazards.
+- Keep them small and deterministic; avoid anything that must persist through
+  MOS screen clears unless we explicitly manage it.
 
 ### Main view: update-time working set
 

@@ -67,17 +67,14 @@ mkdir -p .tmp
   --spec "portal_h_red_ceil:sprites/Portal H - Red (Ceil).csv" \
   --spec "portal_h_yel_floor:sprites/Portal H - Yellow (Floor).csv" \
   --spec "portal_h_yel_ceil:sprites/Portal H - Yellow (Ceil).csv" \
-  --spec "obj_cube:sprites/Objects - Cube.csv" \
-  --spec "obj_button:sprites/Objects - Button.csv" \
-  --spec "obj_pad:sprites/Objects - Pressure Pad.csv" \
-  --spec "obj_exit:sprites/Objects - Exit.csv"
+  --spec "obj_cube:sprites/Objects - Cube.csv"
 
 ./tools/gen-tiles \
   --in "sprites/NewTiles - Grid.csv" \
   --out "sprites/generated_tiles.asm"
 
 ./tools/gen-level \
-  --level "levels/level2" \
+  --level "levels/level1" \
   --out "levels/generated_level1.asm"
 
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)

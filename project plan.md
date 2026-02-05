@@ -192,6 +192,13 @@ Authoring files
 - Room transitions (flick-screen exits) are authored in TMX objectgroup `meta`:
   - rectangle objects of type `edge_exit`
   - property `to=roomNN`
+- Puzzle/logic metadata is authored in TMX objectgroup `meta`:
+  - `acid` (rectangle), property `id=<string>`
+  - `fizzler` (rectangle), property `id=<string>`
+  - `laser_emitter` (point), properties `id=<string>`, `dir=left|right|up|down`
+  - `laser_target` (point), properties `id=<string>`, `channel=<int>`
+  - `laser_portal_point` (point), property `id=<string>` (valid portal entry for laser redirection)
+  - `spawner` (point), properties `id=<string>`, `channel=<int>`
 - Gameplay objects (cube/button/pad/exit) are authored in TMX objectgroup `objects`:
   - point objects with type `cube|button|pad|exit`
   - required property `id=<string>` unique across the whole level (for persistence)
@@ -236,6 +243,45 @@ We need puzzle state to persist across room transitions, so we treat objects as 
   - `pad` pressed if Chell stands on it OR cube rests on it
   - `button` pressed on SPACE (action key) while Chell overlaps the button zone
   - `exit` open if `signal_bits & (1<<channel)`
+  - `laser_target` drives its channel when lit by a traced laser
+  - `spawner` spawns a cube on channel rising edge (one-shot)
+
+### Tile-driven puzzle visuals (pads, exits, receivers)
+
+We now treat several gameplay objects as **tile visuals**, with the TMX object marking
+the tiles that should swap when state changes (not necessarily the standing zone).
+
+- `pad` object position anchors the **pad tiles** that swap between inactive/active.
+  - Chell/cube stands **above** this tile area; the trigger logic checks overlap with
+    the pad’s *activation zone* derived from the object position.
+  - This means the object is aligned to the floor tiles that visually change, not the
+    footprint of Chell.
+- `exit` object position anchors the **door tiles** that swap between closed/open.
+  - The exit trigger remains a logical zone; door tiles are cosmetic state.
+- `laser_target` uses tiles for inactive/active receiver visuals, but still drives a
+  signal bit when lit.
+
+Authoring rule:
+
+- Place the TMX object on the exact tiles you want to change. The engine will
+  compute the activation/trigger zone relative to that anchor (e.g. one cell above
+  for a floor pad).
+
+### Lasers (tile-based rendering)
+
+We render laser beams using tiles rather than blitting pixels.
+
+- Beam path is traced on the 16x16 tile grid.
+- Beam tiles are applied only when the beam changes (portal placed/removed or a blocking object moved).
+- Crossroads (90-degree intersections) use a dedicated tile (T50/T51).
+- Portal-back laser tiles are selected when the underlying tile id is 19, 40, or 41.
+- Level design constraint: avoid lasers crossing exits or back-wall portal placement; keep beams to the playfield.
+
+### Fizzler + acid rules
+
+- Fizzler is always active: clears open portals and drops any carried cube when Chell crosses its region.
+- Portal placement LOS is blocked by fizzler regions (cannot shoot portals through a fizzler).
+- Acid is fatal: Chell dies on contact; level resets on next key press.
 
 ## Switching Rules
 

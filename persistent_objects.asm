@@ -25,7 +25,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
 .obj_redraw_w_tiles
     EQUB 0                 ; type 0 (unused)
     EQUB 2                 ; cube   (16x16)
-    EQUB 2                 ; button (16x16)
+    EQUB 1                 ; button (8x16)
     EQUB 2                 ; pad    (16x16)
     EQUB 2                 ; exit   (16x32)
 
@@ -1765,8 +1765,8 @@ IF 0
     LDY col_counter
     LDA (temp_sprite_ptr),Y
     TAX
-    LDA tile_material_flags,X
-    AND #2
+    TXA
+    AND #&20
     BNE ccl_place
 
     ; Tile 1 (x+1) solidity
@@ -1774,8 +1774,8 @@ IF 0
     INY
     LDA (temp_sprite_ptr),Y
     TAX
-    LDA tile_material_flags,X
-    AND #2
+    TXA
+    AND #&20
     BNE ccl_place
 
     ; Next row.
@@ -1868,6 +1868,8 @@ ENDIF
     LDA screen_ptr
     STA obj_state,Y
 
+    JSR update_object_tiles_for_state
+
     ; Visible change? only matters if this object is in the current room.
     LDA obj_room,Y
     CMP current_room
@@ -1915,6 +1917,8 @@ ENDIF
     LDA screen_ptr
     STA obj_state,Y
 
+    JSR update_object_tiles_for_state
+
     ; Visible change? only matters if this exit is in the current room.
     LDA obj_room,Y
     CMP current_room
@@ -1928,6 +1932,136 @@ ENDIF
     CPY #OBJ_COUNT
     BNE usos_cons_loop
 
+    RTS
+
+
+; Update tilemap entries for pad/button/exit based on obj_state bit0.
+; Input: Y=obj_index
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr,temp_sprite_ptr
+.update_object_tiles_for_state
+    TYA
+    PHA
+    STA temp_y             ; obj_index
+
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_PAD
+    BEQ uots_pad
+    CMP #OBJ_TYPE_BUTTON
+    BEQ uots_button
+    CMP #OBJ_TYPE_EXIT
+    BEQ uots_exit
+    JMP uots_done
+
+  .uots_pad
+    LDA obj_state,Y
+    AND #1
+    BEQ uots_pad_up
+    LDA #TILE_PAD_DOWN_L
+    STA temp
+    LDA #TILE_PAD_DOWN_R
+    STA col_counter
+    JMP uots_pad_write
+  .uots_pad_up
+    LDA #TILE_PAD_UP_L
+    STA temp
+    LDA #TILE_PAD_UP_R
+    STA col_counter
+  .uots_pad_write
+    JSR uots_set_room_ptr_and_offset
+    LDA temp
+    STA (temp_sprite_ptr),Y
+    INY
+    LDA col_counter
+    STA (temp_sprite_ptr),Y
+    JMP uots_done
+
+  .uots_button
+    LDA obj_state,Y
+    AND #1
+    BEQ uots_button_up
+    LDA #TILE_BUTTON_DOWN
+    JMP uots_button_write
+  .uots_button_up
+    LDA #TILE_BUTTON_UP
+  .uots_button_write
+    STA temp
+    JSR uots_set_room_ptr_and_offset
+    LDA temp
+    STA (temp_sprite_ptr),Y
+    JMP uots_done
+
+  .uots_exit
+    LDA obj_state,Y
+    AND #1
+    BEQ uots_exit_closed
+    LDA #TILE_EXIT_OPEN_TL
+    STA temp
+    LDA #TILE_EXIT_OPEN_TR
+    STA col_counter
+    LDA #TILE_EXIT_OPEN_BL
+    STA screen_ptr
+    LDA #TILE_EXIT_OPEN_BR
+    STA screen_ptr+1
+    JMP uots_exit_write
+  .uots_exit_closed
+    LDA #TILE_EXIT_CLOSED_TL
+    STA temp
+    LDA #TILE_EXIT_CLOSED_TR
+    STA col_counter
+    LDA #TILE_EXIT_CLOSED_BL
+    STA screen_ptr
+    LDA #TILE_EXIT_CLOSED_BR
+    STA screen_ptr+1
+  .uots_exit_write
+    JSR uots_set_room_ptr_and_offset
+    LDA temp
+    STA (temp_sprite_ptr),Y
+    INY
+    LDA col_counter
+    STA (temp_sprite_ptr),Y
+    TYA
+    CLC
+    ADC #15
+    TAY
+    LDA screen_ptr
+    STA (temp_sprite_ptr),Y
+    INY
+    LDA screen_ptr+1
+    STA (temp_sprite_ptr),Y
+
+  .uots_done
+    PLA
+    TAY
+    RTS
+
+
+; Set temp_sprite_ptr to the room tilemap for obj_index in temp_y.
+; Also returns Y as tilemap offset (tile_y*16 + tile_x).
+; Clobbers: A,X,Y
+.uots_set_room_ptr_and_offset
+    LDY temp_y
+    LDA obj_room,Y
+    JSR get_room_tilemap_ptr
+
+    LDY temp_y
+    LDA obj_y,Y
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAY
+    RTS
+
+
+; Set temp_sprite_ptr to the tilemap pointer for room index in A.
+; Clobbers: A,X
+.get_room_tilemap_ptr
+    ASL A
+    TAX
+    LDA room_pointers,X
+    STA temp_sprite_ptr
+    LDA room_pointers+1,X
+    STA temp_sprite_ptr+1
     RTS
 
 
@@ -2173,20 +2307,18 @@ ENDIF
   .spo_chk_button
     CMP #OBJ_TYPE_BUTTON
     BNE spo_chk_pad
-    JMP spo_button
+    JMP spo_done
 
   .spo_chk_pad
     CMP #OBJ_TYPE_PAD
     BNE spo_chk_exit
-    JMP spo_pad
+    JMP spo_done
 
   .spo_chk_exit
     CMP #OBJ_TYPE_EXIT
-    BEQ spo_is_exit
+    BEQ spo_done
     JMP spo_done
 
-  .spo_is_exit
-    JMP spo_exit
 
   .spo_cube
     LDA #<obj_cube_x0
@@ -2206,105 +2338,6 @@ ENDIF
     TAY
     RTS
 
-  .spo_button
-    ; state bit0 selects x0/x1
-    LDA obj_state,Y
-    AND #1
-    BEQ spo_button0
-    LDA #<obj_button_x1
-    STA sprite_ptr
-    LDA #>obj_button_x1
-    STA sprite_ptr+1
-    LDA #<obj_button_x1_mask
-    STA mask_ptr
-    LDA #>obj_button_x1_mask
-    STA mask_ptr+1
-    JMP spo_button_stamp
-  .spo_button0
-    LDA #<obj_button_x0
-    STA sprite_ptr
-    LDA #>obj_button_x0
-    STA sprite_ptr+1
-    LDA #<obj_button_x0_mask
-    STA mask_ptr
-    LDA #>obj_button_x0_mask
-    STA mask_ptr+1
-  .spo_button_stamp
-    ; 16x16
-    LDA #2
-    LDX #32
-    LDY #32
-    JSR stamp_striped_masked
-    PLA
-    TAY
-    RTS
-
-  .spo_pad
-    ; state bit0 selects x0/x1
-    LDA obj_state,Y
-    AND #1
-    BEQ spo_pad0
-    LDA #<obj_pad_x1
-    STA sprite_ptr
-    LDA #>obj_pad_x1
-    STA sprite_ptr+1
-    LDA #<obj_pad_x1_mask
-    STA mask_ptr
-    LDA #>obj_pad_x1_mask
-    STA mask_ptr+1
-    JMP spo_pad_stamp
-  .spo_pad0
-    LDA #<obj_pad_x0
-    STA sprite_ptr
-    LDA #>obj_pad_x0
-    STA sprite_ptr+1
-    LDA #<obj_pad_x0_mask
-    STA mask_ptr
-    LDA #>obj_pad_x0_mask
-    STA mask_ptr+1
-  .spo_pad_stamp
-    ; 16x16
-    LDA #2
-    LDX #32
-    LDY #32
-    JSR stamp_striped_masked
-    PLA
-    TAY
-    RTS
-
-  .spo_exit
-    ; state bit0 selects x0/x1 (closed/open)
-    LDA obj_state,Y
-    AND #1
-    BEQ spo_exit0
-    LDA #<obj_exit_x1
-    STA sprite_ptr
-    LDA #>obj_exit_x1
-    STA sprite_ptr+1
-    LDA #<obj_exit_x1_mask
-    STA mask_ptr
-    LDA #>obj_exit_x1_mask
-    STA mask_ptr+1
-    JMP spo_exit_stamp
-  .spo_exit0
-    LDA #<obj_exit_x0
-    STA sprite_ptr
-    LDA #>obj_exit_x0
-    STA sprite_ptr+1
-    LDA #<obj_exit_x0_mask
-    STA mask_ptr
-    LDA #>obj_exit_x0_mask
-    STA mask_ptr+1
-  .spo_exit_stamp
-    ; 16x32
-    LDA #4
-    LDX #32
-    LDY #32
-    JSR stamp_striped_masked
-    PLA
-    TAY
-    RTS
-
   .spo_done
     PLA
     TAY
@@ -2312,79 +2345,35 @@ ENDIF
 
 
 ; Return A=1 if pad object Y is pressed, else A=0.
-; Uses Chell + cubes. Clobbers: A,X,temp,temp_y,row_counter,col_counter,screen_ptr,sprite_ptr
+; Activation zone is one tile above the pad tile anchor (obj_y-1).
+; Uses Chell only. Clobbers: A,temp,row_counter,col_counter
 .compute_pad_pressed
     ; Default: not pressed.
     LDA #0
     STA col_counter
 
-    ; Quick reject if Chell can't be interacting with this room.
-    LDA obj_room,Y
-    STA sprite_ptr          ; pad_room
-
     ; --- Chell stands on pad ---
     LDA char_grounded
-    BEQ pad_check_cubes
+    BEQ pad_done
 
-    LDA sprite_ptr
+    LDA obj_room,Y
     CMP current_room
-    BNE pad_check_cubes
+    BNE pad_done
 
-    ; Chell feet tile_y must match pad_y
+    ; Chell feet tile_y must match (pad_y - 1)
     LDA obj_y,Y
+    BEQ pad_done
+    SEC
+    SBC #1
     CMP row_counter
-    BNE pad_check_cubes
+    BNE pad_done
 
     ; X overlap (2 tiles wide vs 2 tiles wide)
     JSR overlap_2wide_chell_vs_obj
-    BCC pad_check_cubes
+    BCC pad_done
 
     LDA #1
     STA col_counter
-    JMP pad_done
-
-  .pad_check_cubes
-    ; --- Any cube rests on pad ---
-    ; Cache pad_x/pad_y in screen_ptr for comparisons.
-    LDA obj_x,Y
-    STA screen_ptr          ; pad_x
-    LDA obj_y,Y
-    STA screen_ptr+1        ; pad_y
-
-    LDX #0
-  .pad_cube_loop
-    LDA obj_type,X
-    CMP #OBJ_TYPE_CUBE
-    BNE pad_cube_next
-
-    ; Ignore carried cubes.
-    LDA obj_state,X
-    AND #OBJ_STATE_CARRIED
-    BNE pad_cube_next
-
-    ; Same room?
-    LDA obj_room,X
-    CMP sprite_ptr          ; pad_room
-    BNE pad_cube_next
-
-    ; Cube rests on pad if its tile_y matches pad_y.
-    ; (Both are 16px tall and sit on the same floor.)
-    LDA obj_y,X
-    CMP screen_ptr+1
-    BNE pad_cube_next
-
-    ; X overlap between cube and pad (both 2-wide)
-    JSR overlap_2wide_cube_vs_pad
-    BCC pad_cube_next
-
-    LDA #1
-    STA col_counter
-    JMP pad_done
-
-  .pad_cube_next
-    INX
-    CPX #OBJ_COUNT
-    BNE pad_cube_loop
 
   .pad_done
     LDA col_counter
@@ -2398,7 +2387,7 @@ ENDIF
     LDA #0
     STA col_counter
 
-    LDA action_pressed_latch
+    LDA action_pressed
     BEQ button_done
 
     LDA obj_room,Y
@@ -2434,7 +2423,7 @@ ENDIF
 ;
 ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
 .handle_cube_pickup_drop
-    LDA action_pressed_latch
+    LDA action_pressed
     BNE hcpd_go
     RTS
   .hcpd_go
@@ -2737,34 +2726,6 @@ ENDIF
     RTS
 
 
-; C=1 if cube object X overlaps cached pad_x in screen_ptr.
-; Assumes both are 2 tiles wide. Clobbers: A,row_counter
-.overlap_2wide_cube_vs_pad
-    ; If cube_left >= pad_left+2 => no overlap
-    LDA screen_ptr          ; pad_left
-    CLC
-    ADC #2
-    STA row_counter
-    LDA obj_x,X
-    CMP row_counter
-    BCS ovcp_no
-
-    ; If pad_left >= cube_left+2 => no overlap
-    LDA obj_x,X
-    CLC
-    ADC #2
-    STA row_counter
-    LDA screen_ptr          ; pad_left
-    CMP row_counter
-    BCS ovcp_no
-
-    SEC
-    RTS
-  .ovcp_no
-    CLC
-    RTS
-
-
 ; Stamp all objects whose obj_room == current_room.
 ; Uses obj_bank for sprite/mask reads.
 ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr,sprite_ptr,mask_ptr
@@ -2830,17 +2791,17 @@ ENDIF
   .rpobj_chk_button
     CMP #OBJ_TYPE_BUTTON
     BNE rpobj_chk_pad
-    JMP rpobj_button
+    JMP rpobj_next
 
   .rpobj_chk_pad
     CMP #OBJ_TYPE_PAD
     BNE rpobj_chk_exit
-    JMP rpobj_pad
+    JMP rpobj_next
 
   .rpobj_chk_exit
     CMP #OBJ_TYPE_EXIT
     BNE rpobj_not_exit
-    JMP rpobj_exit
+    JMP rpobj_next
   .rpobj_not_exit
     JMP rpobj_next
 
@@ -2857,111 +2818,6 @@ ENDIF
     PHA
     ; 16x16
     LDA #2
-    LDX #32
-    LDY #32
-    JSR stamp_striped_masked
-    PLA
-    TAY
-    JMP rpobj_next
-
-  .rpobj_button
-    ; state bit0 selects x0/x1
-    LDA obj_state,Y
-    AND #1
-    BEQ rpobj_button0
-    LDA #<obj_button_x1
-    STA sprite_ptr
-    LDA #>obj_button_x1
-    STA sprite_ptr+1
-    LDA #<obj_button_x1_mask
-    STA mask_ptr
-    LDA #>obj_button_x1_mask
-    STA mask_ptr+1
-    JMP rpobj_button_stamp
-  .rpobj_button0
-    LDA #<obj_button_x0
-    STA sprite_ptr
-    LDA #>obj_button_x0
-    STA sprite_ptr+1
-    LDA #<obj_button_x0_mask
-    STA mask_ptr
-    LDA #>obj_button_x0_mask
-    STA mask_ptr+1
-  .rpobj_button_stamp
-    ; 16x16
-    TYA
-    PHA
-    LDA #2
-    LDX #32
-    LDY #32
-    JSR stamp_striped_masked
-    PLA
-    TAY
-    JMP rpobj_next
-
-  .rpobj_pad
-    ; state bit0 selects x0/x1
-    LDA obj_state,Y
-    AND #1
-    BEQ rpobj_pad0
-    LDA #<obj_pad_x1
-    STA sprite_ptr
-    LDA #>obj_pad_x1
-    STA sprite_ptr+1
-    LDA #<obj_pad_x1_mask
-    STA mask_ptr
-    LDA #>obj_pad_x1_mask
-    STA mask_ptr+1
-    JMP rpobj_pad_stamp
-  .rpobj_pad0
-    LDA #<obj_pad_x0
-    STA sprite_ptr
-    LDA #>obj_pad_x0
-    STA sprite_ptr+1
-    LDA #<obj_pad_x0_mask
-    STA mask_ptr
-    LDA #>obj_pad_x0_mask
-    STA mask_ptr+1
-  .rpobj_pad_stamp
-    ; 16x16
-    TYA
-    PHA
-    LDA #2
-    LDX #32
-    LDY #32
-    JSR stamp_striped_masked
-    PLA
-    TAY
-    JMP rpobj_next
-
-  .rpobj_exit
-    ; state bit0 selects x0/x1 (closed/open)
-    LDA obj_state,Y
-    AND #1
-    BEQ rpobj_exit0
-    LDA #<obj_exit_x1
-    STA sprite_ptr
-    LDA #>obj_exit_x1
-    STA sprite_ptr+1
-    LDA #<obj_exit_x1_mask
-    STA mask_ptr
-    LDA #>obj_exit_x1_mask
-    STA mask_ptr+1
-    JMP rpobj_exit_stamp
-  .rpobj_exit0
-    LDA #<obj_exit_x0
-    STA sprite_ptr
-    LDA #>obj_exit_x0
-    STA sprite_ptr+1
-    LDA #<obj_exit_x0_mask
-    STA mask_ptr
-    LDA #>obj_exit_x0_mask
-    STA mask_ptr+1
-  .rpobj_exit_stamp
-    ; 16x32
-    TYA
-    PHA
-    LDA #4
     LDX #32
     LDY #32
     JSR stamp_striped_masked

@@ -29,6 +29,22 @@
 .obj_prev_room
     SKIP OBJ_COUNT
 
+; --- Cube physics (tile-aligned) ---
+;
+; These arrays are currently only meaningful for cubes (OBJ_TYPE_CUBE), but are
+; sized for OBJ_COUNT for simplicity.
+;
+; obj_vx: signed velocity in 8px tile columns per update.
+; obj_vy: signed velocity in 16px tile rows per update.
+.obj_vx
+    SKIP OBJ_COUNT
+.obj_vy
+    SKIP OBJ_COUNT
+
+; Per-object portal cooldown to prevent immediate re-entry (anti ping-pong).
+.obj_portal_cd
+    SKIP OBJ_COUNT
+
 
 ; --- Persistent object redraw bookkeeping ---
 ;

@@ -38,6 +38,8 @@ ORG &00
 .gravity_cooldown   SKIP 1    ; Frames until next gravity tick
 .rise_cooldown      SKIP 1    ; Frames until next upward step
 .fall_cooldown      SKIP 1    ; Frames until next downward step
+.jump_active        SKIP 1    ; 0/1: jump arc in progress
+.jump_phase         SKIP 1    ; Jump LUT index
 .room_dirty         SKIP 1    ; 0/1: room background needs redraw
 .objects_pending    SKIP 1    ; 0/1: persistent objects need restamp
 .exit_cooldown      SKIP 1    ; frames to ignore exits after transition
@@ -45,7 +47,6 @@ ORG &00
 .exit_probe1        SKIP 1    ; exit Y probe cell (y+24)>>4
 .keys_held          SKIP 1    ; Bitfield: held keys this frame
 .keys_pressed       SKIP 1    ; Bitfield: edge-trigger keys (held & ~prev)
-.keys_pressed_latch SKIP 1    ; Latched edge keys (OR of keys_pressed until consumed)
 .keys_prev          SKIP 1    ; Previous frame's keys_held
 .aim_held           SKIP 1    ; 0=none, 1=up, 2=down
 
@@ -53,12 +54,6 @@ ORG &00
 .action_held        SKIP 1
 .action_prev        SKIP 1
 .action_pressed     SKIP 1
-.action_pressed_latch SKIP 1  ; Latched SPACE edge (OR of action_pressed until consumed)
-
-; Portal placement requests.
-; bit0 = A, bit1 = B
-.portal_req         SKIP 1
-.quickshot_latch    SKIP 1    ; bits6/7: A/S press consumed in normal mode
 .dirty_flag         SKIP 1    ; 0/1: needs redraw this frame
 
 ; ROMSEL/SWRAM bank state.
@@ -198,7 +193,7 @@ PORTAL_REQ_SNAP_ORIENT= &7FF1
 GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
 GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
 GRAVITY_DOWN_PERIOD         = 2      ; gravity tick period while falling
-FALL_POSE_VY_THRESHOLD       = 3      ; switch to falling pose when vy >= this (8px steps)
+FALL_POSE_VY_THRESHOLD       = 1      ; switch to falling pose when vy >= this (8px steps)
 TERMINAL_VELOCITY_DOWN      = 6      ; max falling speed (8px steps)
 TERMINAL_VELOCITY_UP        = &FA    ; -6: max rising speed (8px steps)
 TERMINAL_VELOCITY_X         = 12     ; max |vx| (px/frame), also per-frame step clamp
@@ -206,6 +201,7 @@ WALK_VELOCITY               = 1      ; |vx| while walking / air-control
 JUMP_VELOCITY               = &FE    ; -2
 RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
 FALL_STEP_PERIOD            = 2      ; move down 1 stripe every N frames
+JUMP_LUT_LEN                = 10
 
 PORTAL_EXIT_NUDGE           = 2
 PORTAL_COOLDOWN_FRAMES      = 8
@@ -226,7 +222,23 @@ PORTAL_ORIENT_BACK           = 4
 
 ; Tile id for the special "backwall portal surface".
 ; Back-wall portals may only be placed onto 2x2 regions of this tile.
-TILE_BACKWALL_PORTAL         = 19
+TILE_BACKWALL_PORTAL         = 29
+
+; Tile ids for tile-backed objects (from reordered tileset).
+TILE_PAD_UP_L                 = 49
+TILE_PAD_UP_R                 = 50
+TILE_PAD_DOWN_L               = 51
+TILE_PAD_DOWN_R               = 52
+TILE_BUTTON_UP                = 1
+TILE_BUTTON_DOWN              = 2
+TILE_EXIT_CLOSED_TL           = 3
+TILE_EXIT_CLOSED_TR           = 4
+TILE_EXIT_CLOSED_BL           = 5
+TILE_EXIT_CLOSED_BR           = 6
+TILE_EXIT_OPEN_TL             = 7
+TILE_EXIT_OPEN_TR             = 8
+TILE_EXIT_OPEN_BL             = 9
+TILE_EXIT_OPEN_BR             = 10
 
 ; Overlay sprite indices (overlay_sprite_table).
 CHELL_OVERLAY_CARRY_RIGHT_BASE = 24
@@ -316,6 +328,8 @@ CHELL_FALL_LEFT_BASE        = 44
     STA gravity_cooldown
     STA rise_cooldown
     STA fall_cooldown
+    STA jump_active
+    STA jump_phase
     STA room_dirty
     STA objects_pending
     STA exit_cooldown
@@ -323,13 +337,10 @@ CHELL_FALL_LEFT_BASE        = 44
     STA exit_probe1
     STA keys_held
     STA keys_pressed
-    STA keys_pressed_latch
     STA keys_prev
     STA action_held
     STA action_prev
      STA action_pressed
-     STA action_pressed_latch
-     STA portal_req
     STA anim_frame
     STA move_held
     STA last_move_held
@@ -348,7 +359,8 @@ CHELL_FALL_LEFT_BASE        = 44
      STA reticle_cell_x
      STA reticle_cell_y
      STA reticle_state
-     STA reticle_wall_orient
+    STA reticle_wall_orient
+
 
     STA chell_dirty
     STA reticle_dirty
@@ -394,7 +406,6 @@ CHELL_FALL_LEFT_BASE        = 44
       LDA #0
       STA debug_flags
       STA sim_phase
-      STA quickshot_latch
 
     ; Default: face right.
     LDA #1
@@ -447,18 +458,14 @@ CHELL_FALL_LEFT_BASE        = 44
         STA dirty_flag
   .main_skip_render
 
-        ; Sample input once per frame; gameplay consumes only key bits.
-        JSR sample_keys
+         ; Sample input once per frame.
+         JSR sample_keys
 
          ; Slow-motion pacing: update gameplay every other frame (50% speed).
          LDA sim_phase
          BNE main_skip_update
          JSR update_chell
 
-         ; Consume latched edge inputs only when update runs.
-         LDA #0
-         STA keys_pressed_latch
-         STA action_pressed_latch
    .main_skip_update
          LDA sim_phase
          EOR #1
@@ -610,11 +617,31 @@ CHELL_FALL_LEFT_BASE        = 44
 ; --- Update pipeline ---
 ; Updates Chell state from input and physics.
 ; Sets dirty_flag if redraw is needed.
-.update_chell
+  .update_chell
+       ; Compute edge-triggered keys at update rate.
+       LDA keys_prev
+       EOR #&FF
+       AND keys_held
+       STA keys_pressed
+       LDA keys_held
+       STA keys_prev
+
+       ; action_pressed = action_held & ~action_prev
+       LDA action_prev
+       EOR #&FF
+       AND action_held
+       STA action_pressed
+       LDA action_held
+       STA action_prev
+
        ; Reset per-object dirty flags.
        LDA #0
        STA chell_dirty
        STA reticle_dirty
+
+       ; Clear per-frame jump debug bits.
+       JSR clear_jump_debug
+
 
        ; Track previous reticle_active so we can detect hide/show transitions.
        LDA reticle_active

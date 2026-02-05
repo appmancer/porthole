@@ -1,6 +1,9 @@
 ; movement.asm
 ; Chell movement, collision sampling, and gravity stepping.
 
+DEBUG_FLAG_JUMP_SEEN     = 2
+DEBUG_FLAG_JUMP_BLOCKED  = 4
+
  ; Poll Z/X for left/right movement (single-pixel).
  ;
  ; Uses OSBYTE 129 (INKEY) "scan for a particular key":
@@ -12,7 +15,7 @@
  ;   char_pixel_offset  = 0..3 (1px subpixel via pre-shifted sprites)
  ;
  ; Output: C=1 if sprite needs redraw.
- .poll_move_keys
+.poll_move_keys
       ; Track move key transitions so we can redraw into idle.
       LDA move_held
       STA last_move_held
@@ -21,71 +24,18 @@
       STA temp                  ; redraw flag
       STA move_held             ; clear each frame; set when key held
 
-
-     ; Jump on RETURN (edge-triggered) when grounded.
-     LDA keys_pressed_latch
-     AND #4
-     BEQ after_jump
-
-     ; Only start a jump if grounded and not already moving vertically.
-     LDA char_grounded
-     BEQ after_jump
-     LDA char_vy
-     BNE after_jump
-
-     ; Capture jump direction from held movement key.
-     LDA keys_held
-     AND #1
-     BNE jump_face_left
-     LDA keys_held
-     AND #2
-     BNE jump_face_right
-     JMP jump_dir_done
-
- .jump_face_left
-     LDA #0
-     STA anim_dir
-     STA last_anim_dir
-     JMP jump_dir_done
-
- .jump_face_right
-     LDA #1
-     STA anim_dir
-     STA last_anim_dir
-
-  .jump_dir_done
-      ; Start jump: upward velocity.
-      LDA #JUMP_VELOCITY
-      STA char_vy
+      ; Refresh grounded state before jump check (when not already jumping).
+      LDA jump_active
+      BNE pmk_ground_done
+      JSR is_char_grounded
+      BCC pmk_ground_clear
+      LDA #1
+      STA char_grounded
+      JMP pmk_ground_done
+    .pmk_ground_clear
       LDA #0
       STA char_grounded
-
-      ; Set horizontal jump velocity only if a move key is held.
-      ; (If no direction is held, jump straight up.)
-      LDA keys_held
-      AND #1
-      BNE jump_set_vx_left
-      LDA keys_held
-      AND #2
-      BNE jump_set_vx_right
-      LDA #0
-      STA char_vx
-      JMP jump_vx_done
-  .jump_set_vx_right
-      LDA #WALK_VELOCITY
-      STA char_vx
-      JMP jump_vx_done
-  .jump_set_vx_left
-      LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
-      STA char_vx
-  .jump_vx_done
-
-     ; Delay next gravity tick slightly so the jump starts cleanly.
-     LDA #(GRAVITY_UP_PERIOD-1)
-     STA gravity_cooldown
-
-     LDA #1
-     STA temp
+    .pmk_ground_done
 
  .after_jump
 
@@ -116,6 +66,10 @@
       STA last_anim_dir
       LDA #1
       STA temp
+
+      ; Jump started: return early so apply_gravity sees jump_active.
+      SEC
+      RTS
  .pmk_dir_ok
 
       ; Input only sets vx while grounded, or if airborne and already slow.
@@ -447,222 +401,163 @@
     RTS
   
 
-; Apply vertical physics (jump/fall).
-; - Moves by current `char_vy` (signed, in 8px steps).
-; - Then applies gravity to `char_vy` for next frame.
-; - Clamps falling speed to `TERMINAL_VELOCITY`.
-;
+; Apply vertical movement using a short jump LUT and 8px steps.
 ; Returns: C=1 if position changed (needs redraw).
- .apply_gravity
+.apply_gravity
     ; Remember pre-step vy so portal entry can trigger on landing.
     LDA char_vy
     STA char_prev_vy
 
-    ; Jumping (vy negative) must be treated as airborne even if we were grounded
-    ; at the start of the frame.
-    LDA char_vy
-    BMI apply_airborne
+    LDA #0
+    STA temp              ; moved flag
 
-    ; If we're grounded, pin vy to 0 and don't move.
-    JSR is_char_grounded
-    BCC apply_airborne
-
-    ; If we were airborne last frame, landing changes pose (jump -> idle), so
-    ; force a redraw even if we didn't move this frame.
+    ; Jump arc in progress?
+    LDA jump_active
+    BNE ag_jump_active
+    ; If grounded and RETURN held, start jump here.
     LDA char_grounded
-    BNE apply_grounded_already
+    BNE ag_check_jump
+    JMP ag_check_ground
+  .ag_check_jump
+    LDA keys_held
+    AND #4
+    BNE ag_start_jump
+    JMP ag_check_ground
+
+  .ag_start_jump
 
     LDA #1
-    STA char_grounded
+    STA jump_active
+    LDA debug_flags
+    ORA #DEBUG_FLAG_JUMP_SEEN
+    STA debug_flags
     LDA #0
+    STA jump_phase
+    LDA #0
+    STA char_grounded
     STA char_vy
-    STA gravity_cooldown
-    SEC
-    RTS
 
- .apply_grounded_already
+    ; Set horizontal jump velocity only if a move key is held.
+    ; (If no direction is held, jump straight up.)
+    LDA keys_held
+    AND #1
+    BNE ag_jump_set_vx_left
+    LDA keys_held
+    AND #2
+    BNE ag_jump_set_vx_right
+    LDA #0
+    STA char_vx
+    JMP ag_jump_step
+  .ag_jump_set_vx_right
+    LDA #WALK_VELOCITY
+    STA char_vx
+    JMP ag_jump_step
+  .ag_jump_set_vx_left
+    LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
+    STA char_vx
+    JMP ag_jump_step
+
+  .ag_jump_active
+    ; If jump arc finished, fall normally.
+    LDA jump_phase
+    CMP #JUMP_LUT_LEN
+    BCC ag_jump_step
+    LDA #0
+    STA jump_active
+    JMP ag_check_ground
+
+.ag_jump_step
+    TAX
+    LDA jump_lut,X
+    STA char_vy
+    INC jump_phase
+    LDA char_vy
+    BMI ag_jump_up
+    BEQ ag_jump_done
+
+    ; Step down.
+    JSR step_down_8
+    BCC ag_jump_hit_ground
     LDA #1
-    STA char_grounded
-    LDA #0
-    STA char_vy
-    STA gravity_cooldown
-    CLC
-    RTS
-
- .apply_airborne
-     LDA #0
-     STA char_grounded
-
-     LDA #0
-     STA temp          ; moved flag
-
-     ; Move by current vy.
-     LDA char_vy
-     BNE ag_vy_nonzero
-     JMP apply_gravity_only
- .ag_vy_nonzero
-     BMI apply_move_up
-
-.apply_move_down
-     ; For low fall speeds, keep the old paced feel (one stripe step every
-     ; FALL_STEP_PERIOD frames). For high fall speeds (fling), allow multiple
-     ; stripes per frame.
-     LDA char_vy
-     CMP #2
-     BCS fall_fast
-
-     ; vy = 1: paced fall.
-     LDA fall_cooldown
-     BEQ fall_paced_do
-     DEC fall_cooldown
-     JMP apply_gravity_only
- .fall_paced_do
-     LDA #(FALL_STEP_PERIOD-1)
-     STA fall_cooldown
-     JSR step_down_8
-     BCC hit_ground
-     LDA #1
-     STA temp
-     JMP apply_gravity_only
-
- .fall_fast
-     ; vy >= 2: move by vy stripes this frame.
-     LDA char_vy
-     STA row_counter            ; steps remaining
- .fall_step_loop
-     JSR step_down_8
-     BCC hit_ground
-     LDA #1
-     STA temp
-     DEC row_counter
-     BNE fall_step_loop
-     JMP apply_gravity_only
-
-.apply_move_up
-     ; Clamp rising speed to avoid pathological per-frame work.
-     LDA char_vy
-     CMP #TERMINAL_VELOCITY_UP
-     BCS rise_vy_ok
-     LDA #TERMINAL_VELOCITY_UP
-     STA char_vy
- .rise_vy_ok
-
-     ; For small jump speeds, keep the old paced rise feel (one stripe step
-     ; every RISE_STEP_PERIOD frames). For high upward speeds (fling), allow
-     ; multiple stripes per frame.
-
-     ; abs(vy) in A
-     LDA char_vy
-     EOR #&FF
-     CLC
-     ADC #1
-     CMP #3
-     BCS rise_fast
-
-     ; abs(vy) = 1..2: paced rise.
-     LDA rise_cooldown
-     BEQ rise_paced_do
-     DEC rise_cooldown
-     JMP apply_gravity_only
- .rise_paced_do
-     LDA #(RISE_STEP_PERIOD-1)
-     STA rise_cooldown
-     JSR step_up_8
-     BCC hit_ceiling
-     LDA #1
-     STA temp
-     JMP apply_gravity_only
-
- .rise_fast
-     ; abs(vy) >= 3: move by -vy stripes this frame.
-     ; steps remaining = -vy
-     LDA char_vy
-     EOR #&FF
-     CLC
-     ADC #1
-     STA row_counter
- .rise_step_loop
-     JSR step_up_8
-     BCC hit_ceiling
-     LDA #1
-     STA temp
-     DEC row_counter
-     BNE rise_step_loop
-     JMP apply_gravity_only
-
- .hit_ground
-     ; Collided: stop and mark grounded.
-     LDA #0
-     STA char_vy
-     STA gravity_cooldown
-     STA fall_cooldown
-     STA rise_cooldown
-     LDA #1
-     STA char_grounded
-
-    ; Landing changes pose (jump -> idle), so force a redraw even if we didn't
-    ; move this frame.
     STA temp
-    JMP apply_return
+    JMP ag_jump_done
 
-.hit_ceiling
-     ; Hit head: stop upward motion.
-     LDA #0
-     STA char_vy
+  .ag_jump_up
+    JSR step_up_8
+    BCC ag_jump_hit_ceiling
+    LDA #1
+    STA temp
+    JMP ag_jump_done
 
-.apply_gravity_only
-    ; If we landed during movement, don't re-accelerate.
-    LDA char_grounded
-    BNE apply_return
-
-    ; Gravity for next frame (rate-limited).
-    LDA gravity_cooldown
-    BEQ do_gravity_tick
-    DEC gravity_cooldown
-    JMP apply_return
-
-.do_gravity_tick
-    ; Use a slower tick while rising (floatier jump), but always tick while
-    ; falling so you can build momentum by dropping.
-    LDA char_vy
-    BMI gravity_rising
-
-    LDA #(GRAVITY_DOWN_PERIOD-1)
-    STA gravity_cooldown
-    JMP gravity_apply
-
-.gravity_rising
-    LDA #(GRAVITY_UP_PERIOD-1)
-    STA gravity_cooldown
-
- .gravity_apply
-     LDA char_vy
-     CLC
-     ADC #GRAVITY_ACCEL
-     STA temp_y
-
-     ; Fast-fall disabled for now.
-
- .grav_clamp
-     LDA temp_y
-
-     ; Clamp positive vy to the (higher) falling terminal velocity.
-     BMI store_vy
-     CMP #TERMINAL_VELOCITY_DOWN
-     BCC store_vy
-     LDA #TERMINAL_VELOCITY_DOWN
-
-.store_vy
+  .ag_jump_hit_ground
+    LDA #0
+    STA jump_active
     STA char_vy
+    LDA #1
+    STA char_grounded
+    LDA #1
+    STA temp
+    JMP ag_return
 
-.apply_return
+  .ag_jump_hit_ceiling
+    LDA debug_flags
+    ORA #DEBUG_FLAG_JUMP_BLOCKED
+    STA debug_flags
+    LDA #0
+    STA jump_active
+    LDA #0
+    STA char_vy
+    JMP ag_return
+
+  .ag_jump_done
+    LDA #0
+    STA char_grounded
+    JMP ag_return
+
+  .ag_check_ground
+    ; If grounded, stay put.
+    JSR is_char_grounded
+    BCC ag_fall
+
+    LDA #1
+    STA char_grounded
+    LDA #0
+    STA char_vy
+    JMP ag_return
+
+  .ag_fall
+    ; Fall one stripe per update.
+    LDA #0
+    STA char_grounded
+    LDA #1
+    STA char_vy
+    JSR step_down_8
+    BCC ag_fall_hit
+    LDA #1
+    STA temp
+    JMP ag_return
+
+  .ag_fall_hit
+    LDA #1
+    STA char_grounded
+    LDA #0
+    STA char_vy
+    LDA #1
+    STA temp
+
+  .ag_return
     LDA temp
     BEQ grav_no_move
     SEC
     RTS
-.grav_no_move
+  .grav_no_move
     CLC
     RTS
+
+
+; Jump arc LUT (short, fast hop). Values are stripe steps per update.
+.jump_lut
+    EQUB &FF,&FF,&FF,&FF,0,1,1,1,1,1
 
 
 ; Return C=1 if character is standing on solid.
@@ -834,7 +729,7 @@
 
     CLC
     RTS
-.collide_up
+ .collide_up
     SEC
     RTS
 

@@ -25,14 +25,14 @@
      LDA #0
      STA keys_held
 
-    ; Jump (RETURN)
-    LDX #&B6            ; INKEY(-74) = RETURN
-    JSR is_key_pressed
-    BCC sample_no_jump
-    LDA keys_held
-    ORA #4
-    STA keys_held
-.sample_no_jump
+     ; Jump (RETURN)
+     LDX #&B6            ; INKEY(-74) = RETURN
+     JSR is_key_pressed
+     BCC sample_no_jump
+     LDA keys_held
+     ORA #4
+     STA keys_held
+ .sample_no_jump
 
     ; Left (cursor left or Z)
     LDX #&E6            ; INKEY(-26) = Left
@@ -118,22 +118,6 @@
       STA keys_held
   .sample_no_portal_b
   
-      ; keys_pressed = keys_held & ~keys_prev
-
-     LDA keys_prev
-     EOR #&FF
-     AND keys_held
-     STA keys_pressed
-
-     ; Latch edge events so one-frame taps aren't dropped when gameplay update
-     ; runs every other frame.
-     LDA keys_pressed_latch
-     ORA keys_pressed
-     STA keys_pressed_latch
-
-     ; Update previous snapshot for next frame.
-     LDA keys_held
-     STA keys_prev
 
        ; --- Action button (SPACE) ---
       ; Keep separate from keys_held (we've run out of bits).
@@ -150,48 +134,7 @@
       STA action_held
  .sample_no_action
 
-       ; action_pressed = action_held & ~action_prev
-        LDA action_prev
-        EOR #&FF
-        AND action_held
-        STA action_pressed
-
-       ; Latch SPACE edge for the same reason as keys_pressed_latch.
-       LDA action_pressed_latch
-       ORA action_pressed
-       STA action_pressed_latch
-
-      ; --- Portal placement requests (A/S) ---
-      ; We latch the A/S key-down edges into portal_req so if the reticle is
-      ; briefly not green on that exact frame, the placement still happens on the
-      ; next green frame.
-      ;
-      ; portal_req is consumed/cancelled in reticle mode.
-
-      ; If A just pressed, set request bit0.
-      LDA keys_pressed
-      AND #64
-      BEQ sample_no_portal_req_a
-      LDA portal_req
-      ORA #&81
-      STA portal_req
-  .sample_no_portal_req_a
-
-      ; If S just pressed, set request bit1.
-      LDA keys_pressed
-      AND #&80
-      BEQ sample_no_portal_req_b
-      LDA portal_req
-      ORA #&82
-      STA portal_req
-  .sample_no_portal_req_b
-
-      ; portal_req is sticky after a tap. It is cleared when:
-      ; - the portal is successfully placed (consumed),
-      ; - the reticle moves, or
-      ; - reticle mode is exited.
-
-      ; --- Aim sampling ---
+       ; --- Aim sampling ---
      ; aim_held: 0=none, 1=up, 2=down
      ; While SHIFT is held (reticle mode), aim keys are repurposed.
      LDA #0

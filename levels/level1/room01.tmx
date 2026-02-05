@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#40ffff" nextlayerid="4" nextobjectid="5">
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#40ffff" nextlayerid="4" nextobjectid="10">
  <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
  <layer id="1" name="tiles" width="16" height="16">
   <data encoding="csv">
-14,5,5,5,5,5,5,5,5,5,5,5,5,5,5,2,
-4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,
-4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,
-10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,
-1,1,1,1,1,1,1,1,1,1,15,16,17,1,1,2,
-1,1,1,1,1,1,1,1,15,16,17,1,1,1,1,2,
-1,1,1,1,1,1,15,16,17,1,1,1,1,1,1,2,
-3,16,16,16,16,16,17,1,1,1,1,1,1,1,1,2,
-4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,
-4,1,1,1,1,1,1,1,1,1,1,15,16,16,16,2,
-4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,
-4,1,1,1,1,1,1,1,15,16,17,1,1,1,1,2,
-4,1,1,1,1,15,16,17,1,1,1,1,1,1,1,2,
-4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,
-4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,
-11,3,3,3,3,3,3,3,3,3,3,3,3,3,3,2
+44,35,35,35,35,35,35,35,35,35,35,35,35,35,35,54,
+34,1,1,1,1,1,1,1,1,1,13,1,1,1,1,54,
+34,1,1,1,1,1,1,1,1,1,14,1,1,1,21,54,
+39,1,1,1,1,1,1,1,1,1,14,1,1,1,1,54,
+1,1,1,1,1,1,1,1,1,1,45,46,47,1,1,54,
+1,1,1,1,1,1,1,1,45,46,47,1,1,1,1,54,
+1,1,1,1,1,1,45,46,46,47,1,1,30,30,30,54,
+54,46,46,46,46,46,46,1,1,1,1,1,30,30,30,54,
+34,1,1,1,1,30,30,30,1,1,1,1,30,30,30,54,
+34,1,1,1,1,30,30,30,1,1,1,45,46,46,46,54,
+34,1,1,1,1,30,30,30,1,1,1,1,1,1,1,54,
+34,1,1,1,1,1,1,1,45,46,47,1,1,1,1,54,
+34,1,1,1,1,45,46,47,1,23,1,1,1,1,1,54,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,54,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,54,
+41,33,33,33,33,33,33,33,33,33,33,33,33,33,33,54
 </data>
  </layer>
  <objectgroup id="2" name="meta">
@@ -27,9 +27,27 @@
     <property name="to" value="room00"/>
    </properties>
   </object>
+  <object id="5" name="fizzler" type="fizzler" x="160" y="16" width="16" height="48">
+   <properties>
+    <property name="channel" value="0"/>
+    <property name="id" value="1"/>
+   </properties>
+  </object>
+  <object id="6" name="target" type="target" x="224" y="32" width="16" height="16">
+   <properties>
+    <property name="channel" value="2"/>
+    <property name="id" value="2"/>
+   </properties>
+  </object>
+  <object id="8" name="spawner" type="spawner" x="144" y="192" width="16" height="16">
+   <properties>
+    <property name="channel" value="2"/>
+    <property name="id" value="3"/>
+   </properties>
+  </object>
  </objectgroup>
  <objectgroup id="3" name="objects">
-  <object id="4" name="cube" type="cube" x="32" y="224">
+  <object id="4" name="cube" type="cube" x="144" y="208">
    <properties>
     <property name="channel" value="0"/>
     <property name="id" value="cube_0"/>

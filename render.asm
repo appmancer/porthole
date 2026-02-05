@@ -1195,8 +1195,8 @@ SOLID_TILE_PLANE          = &7A00
 .build_solid_tile_plane_loop
     LDA (tilemap_ptr),Y
     TAX
-    LDA tile_material_flags,X
-    AND #2
+    TXA
+    AND #&20
     BEQ not_solid_tile
     LDA #1
 .not_solid_tile
@@ -1208,16 +1208,21 @@ SOLID_TILE_PLANE          = &7A00
 
 ; Rebuild the physics solidity plane (tiles + standable objects).
 ;
-; Copies the world tile solidity (`SOLID_TILE_PLANE`) into `solid_phys_plane`,
-; then stamps standable objects (cubes) into it.
+; Rebuilds from the tilemap, then stamps standable objects (cubes) into it.
 ;
 ; Must be called during update before any collision queries for the frame.
 ; Clobbers: A,X,Y
 .rebuild_solid_phys_plane
-    ; Copy 256 bytes: SOLID_TILE_PLANE -> solid_phys_plane
+    ; Build solid plane directly from tilemap (avoids banked SOLID_TILE_PLANE).
     LDY #0
   .rsp_copy
-    LDA SOLID_TILE_PLANE,Y
+    LDA (tilemap_ptr),Y
+    TAX
+    TXA
+    AND #&20
+    BEQ rsp_not_solid
+    LDA #1
+  .rsp_not_solid
     STA solid_phys_plane,Y
     INY
     BNE rsp_copy
@@ -1362,37 +1367,6 @@ SOLID_TILE_PLANE          = &7A00
     CLC
     RTS
 
-
-  .tile_material_flags
-    ; Tile ids:
-    ; 0  = empty (background)
-    ; 1+ = room tiles.
-    ; For now, treat most non-zero tiles as solid.
-    ; TILE_BACKWALL_PORTAL is a decorative backwall surface and is non-solid.
-    ; (Only used to gate back-wall portal placement.)
-    ; bit1 (2) = solid
-    EQUB 0                    ; 0: empty
-    EQUB 2                    ; 1
-    EQUB 2                    ; 2
-    EQUB 2                    ; 3
-    EQUB 2                    ; 4
-    EQUB 2                    ; 5
-    EQUB 2                    ; 6
-    EQUB 2                    ; 7
-    EQUB 2                    ; 8
-    EQUB 2                    ; 9
-    EQUB 2                    ; 10
-    EQUB 2                    ; 11
-    EQUB 2                    ; 12
-    EQUB 2                    ; 13
-    EQUB 2                    ; 14
-    EQUB 2                    ; 15
-    EQUB 2                    ; 16
-    EQUB 2                    ; 17
-    EQUB 2                    ; 18
-    EQUB 0                    ; 19: backwall portal surface (non-solid)
-    ; Fill remaining entries with 0.
-    SKIP 256-20
 
 ; Legacy: redraw tiles behind the character (tilemap-based restore)
 .redraw_background_area

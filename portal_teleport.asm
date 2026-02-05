@@ -538,9 +538,11 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         STA anim_dir
         STA last_anim_dir
 
-        ; Clear grounded state; preserve vertical velocity for now.
+        ; Clear grounded state and any in-flight jump arc; preserve vertical velocity.
         LDA #0
         STA char_grounded
+        STA jump_active
+        STA jump_phase
 
         ; Avoid immediate re-trigger / edge effects.
         LDA #0
