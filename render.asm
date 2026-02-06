@@ -307,12 +307,12 @@
 ; - X: bytes to process per stripe (16 for 8px-wide, 32 for 16px-wide)
 ; - Y: source stride per stripe (usually 16 or 32)
  .stamp_striped_masked
-    PHP
-    SEI
-    JSR shadow_screen_on
     STA row_counter
     STX col_counter
     STY temp_y
+    PHP
+    SEI
+    JSR shadow_screen_on
 
     ; Preserve pointers.
     LDA screen_ptr

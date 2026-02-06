@@ -555,7 +555,6 @@ CHELL_FALL_LEFT_BASE        = 44
         JSR restore_chell_under
 
   .render_portal_maybe
-        ; If a portal was placed/moved, update background now (after restores).
         JSR apply_pending_portal_update
 
         ; If persistent objects changed visually, patch and restamp them now.
