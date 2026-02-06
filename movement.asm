@@ -35,6 +35,9 @@
       LDA #0
       STA char_grounded
     .ucm_ground_done
+      ; is_char_grounded clobbers temp; re-clear redraw flag.
+      LDA #0
+      STA temp
 
       ; --- 2. Update facing and intent ---
       LDA keys_held
