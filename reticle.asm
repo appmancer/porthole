@@ -249,10 +249,15 @@
      BNE crs_try_wall
 
      ; Must be floor or ceiling face.
+     ; Tiles 2/4 = portalable floor/ceiling, 32/34 = structural floor/ceiling.
      LDA temp
      CMP #2
      BEQ crs_fc_match
+     CMP #32
+     BEQ crs_fc_match
      CMP #4
+     BEQ crs_fc_match
+     CMP #34
      BEQ crs_fc_match
      JMP crs_try_wall
 
@@ -262,6 +267,8 @@
      ; - ceiling surface at y => empty row at y+1
      LDA temp
      CMP #4
+     BEQ crs_is_ceil
+     CMP #34
      BEQ crs_is_ceil
 
      ; floor
@@ -324,10 +331,14 @@
      LDA (tilemap_ptr),Y
      STA temp
 
-     ; temp must be 3 (left wall) or 5 (right wall)
+     ; temp must be a wall type: 3/33 (left) or 5/35 (right)
      CMP #3
      BEQ crs_wall_left_ok_type
+     CMP #33
+     BEQ crs_wall_left_ok_type
      CMP #5
+     BEQ crs_wall_left_ok_type
+     CMP #35
      BNE crs_try_wall_right
    .crs_wall_left_ok_type
 
@@ -342,31 +353,18 @@
      CMP temp
      BNE crs_try_wall_right
 
-     ; Determine orientation from tile type (3=left wall, 5=right wall).
+     ; Determine orientation from tile type (3/33=left wall, 5/35=right wall).
      LDA temp
      CMP #5
-     BNE crs_wall_left_is_left
-     LDA #PORTAL_ORIENT_WALL_R
-     BNE crs_wall_left_orient_done
-   .crs_wall_left_is_left
+     BEQ crs_wall_left_set_r
+     CMP #35
+     BEQ crs_wall_left_set_r
      LDA #PORTAL_ORIENT_WALL_L
+     JMP crs_wall_left_orient_done
+   .crs_wall_left_set_r
+     LDA #PORTAL_ORIENT_WALL_R
   .crs_wall_left_orient_done
       STA reticle_wall_orient
-
-      ; Facing constraint: wall must face Chell.
-      LDA reticle_wall_orient
-      CMP #PORTAL_ORIENT_WALL_L
-      BEQ crs_wall_left_need_right
-      ; WALL_R requires facing right.
-      LDA anim_dir
-      BNE crs_wall_left_face_ok
-      JMP crs_try_wall_right
-   .crs_wall_left_need_right
-      ; WALL_L requires facing left.
-      LDA anim_dir
-      BEQ crs_wall_left_face_ok
-      JMP crs_try_wall_right
-   .crs_wall_left_face_ok
 
      ; Adjacent empty space check for wall portals.
      ; temp_y = wall_x
@@ -391,7 +389,11 @@
 
      CMP #3
      BEQ crs_wall_right_ok_type
+     CMP #33
+     BEQ crs_wall_right_ok_type
      CMP #5
+     BEQ crs_wall_right_ok_type
+     CMP #35
      BEQ crs_wall_right_ok_type
      JMP crs_try_backwall
    .crs_wall_right_ok_type
@@ -408,28 +410,15 @@
 
      LDA temp
      CMP #5
-     BNE crs_wall_right_is_left
-     LDA #PORTAL_ORIENT_WALL_R
-     BNE crs_wall_right_orient_done
-   .crs_wall_right_is_left
+     BEQ crs_wall_right_set_r
+     CMP #35
+     BEQ crs_wall_right_set_r
      LDA #PORTAL_ORIENT_WALL_L
+     JMP crs_wall_right_orient_done
+   .crs_wall_right_set_r
+     LDA #PORTAL_ORIENT_WALL_R
   .crs_wall_right_orient_done
       STA reticle_wall_orient
-
-      ; Facing constraint: wall must face Chell.
-      LDA reticle_wall_orient
-      CMP #PORTAL_ORIENT_WALL_L
-      BEQ crs_wall_right_need_right
-      ; WALL_R requires facing right.
-      LDA anim_dir
-      BNE crs_wall_right_face_ok
-      JMP crs_try_backwall
-   .crs_wall_right_need_right
-      ; WALL_L requires facing left.
-      LDA anim_dir
-      BEQ crs_wall_right_face_ok
-      JMP crs_try_backwall
-   .crs_wall_right_face_ok
 
      LDA row_counter
      STA temp_y
