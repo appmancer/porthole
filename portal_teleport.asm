@@ -543,6 +543,7 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         LDA #0
         STA char_grounded
         STA jump_timer
+        STA peak_timer
 
         ; Avoid immediate re-trigger / edge effects.
         LDA #0

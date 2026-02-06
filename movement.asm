@@ -21,8 +21,10 @@
       STA temp                  ; redraw flag
       STA move_held             ; clear each frame; set below if key held
 
-      ; --- 1. Update grounded state (skip during jump rise) ---
+      ; --- 1. Update grounded state (skip during jump rise/peak) ---
       LDA jump_timer
+      BNE ucm_ground_done
+      LDA peak_timer
       BNE ucm_ground_done
       JSR is_char_grounded
       BCC ucm_ground_clear
@@ -112,7 +114,7 @@
       STA char_vx
       JMP ucm_vx_done
     .ucm_set_vx_left
-      LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
+      LDA #(256-WALK_VELOCITY) ; -WALK_VELOCITY
       STA char_vx
     .ucm_vx_done
 
@@ -391,10 +393,11 @@
 
 ; Vertical movement state machine.
 ;
-; Three states driven by jump_timer:
+; Four states driven by jump_timer + peak_timer:
 ;   RISING:   jump_timer > 0 → step_up_8, dec timer, vy=-1
-;   FALLING:  jump_timer = 0, not grounded → step_down_8, vy=+1
-;   GROUNDED: jump_timer = 0, grounded → check RETURN for jump start, vy=0
+;   PEAK:     jump_timer = 0, peak_timer > 0 → no movement, dec peak_timer, vy=0
+;   FALLING:  jump_timer = 0, peak_timer = 0, not grounded → step_down_8, vy=+1
+;   GROUNDED: on ground → check RETURN for jump start, vy=0
 ;
 ; Returns: C=1 if position changed (needs redraw).
 .apply_gravity
@@ -414,20 +417,38 @@
 
     ; Moved up successfully.
     DEC jump_timer
+    BNE ag_still_rising
+    ; Rise finished: start peak hang time.
+    LDA #JUMP_PEAK_FRAMES
+    STA peak_timer
+  .ag_still_rising
     LDA #0
     STA char_grounded
     SEC
     RTS
 
   .ag_hit_ceiling
-    ; Blocked: cancel rise, begin falling next frame.
+    ; Blocked: cancel rise, skip peak, begin falling next frame.
     LDA #0
     STA jump_timer
+    STA peak_timer
     STA char_vy
     CLC
     RTS
 
   .ag_not_rising
+    ; --- PEAK (apex hang time) ---
+    LDA peak_timer
+    BEQ ag_not_peak
+
+    DEC peak_timer
+    LDA #0
+    STA char_vy               ; vy = 0 (floating at apex)
+    STA char_grounded
+    CLC                       ; no position change
+    RTS
+
+  .ag_not_peak
     ; --- GROUNDED check ---
     JSR is_char_grounded
     BCC ag_fall
@@ -447,6 +468,7 @@
     LDA #JUMP_RISE_FRAMES
     STA jump_timer
     LDA #0
+    STA peak_timer
     STA char_grounded
     LDA #&FF
     STA char_vy               ; vy = -1 (rising)
@@ -460,6 +482,7 @@
     ; Ceiling right above: cancel jump.
     LDA #0
     STA jump_timer
+    STA peak_timer
     STA char_vy
   .ag_grounded_done
     CLC

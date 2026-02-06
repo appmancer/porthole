@@ -36,6 +36,7 @@ ORG &00
 .char_prev_vy       SKIP 1    ; Previous vy (for floor/ceiling entry on landing)
 .char_grounded      SKIP 1    ; 0/1: standing on solid
 .jump_timer         SKIP 1    ; Frames remaining in jump rise (0 = not jumping)
+.peak_timer         SKIP 1    ; Frames remaining at jump apex (0 = not at peak)
 .room_dirty         SKIP 1    ; 0/1: room background needs redraw
 .objects_pending    SKIP 1    ; 0/1: persistent objects need restamp
 .exit_cooldown      SKIP 1    ; frames to ignore exits after transition
@@ -178,12 +179,13 @@ OBJ_SWRAM_BANK_DEFAULT = 5
 TILE_SWRAM_BANK_DEFAULT = 6
 
 
-FALL_POSE_VY_THRESHOLD       = 1      ; switch to falling pose when vy >= this (8px steps)
-JUMP_RISE_FRAMES             = 4      ; frames of 8px upward movement per jump
+FALL_POSE_VY_THRESHOLD       = 2      ; switch to falling pose after 2+ fall steps (not immediately)
+JUMP_RISE_FRAMES             = 5      ; frames of 8px upward movement per jump (40px rise)
+JUMP_PEAK_FRAMES             = 2      ; frames of hang time at apex before falling
 TERMINAL_VELOCITY_DOWN      = 6      ; max falling speed (8px steps)
 TERMINAL_VELOCITY_UP        = &FA    ; -6: max rising speed (8px steps)
 TERMINAL_VELOCITY_X         = 12     ; max |vx| (px/frame), also per-frame step clamp
-WALK_VELOCITY               = 1      ; |vx| while walking / air-control
+WALK_VELOCITY               = 2      ; |vx| while walking / air-control (px/update)
 
 PORTAL_EXIT_NUDGE           = 2
 PORTAL_COOLDOWN_FRAMES      = 8
@@ -263,6 +265,12 @@ CHELL_FALL_LEFT_BASE        = 44
     JSR set_palette
 
 
+    ; Disable MOS ESCAPE key processing so it doesn't set the escape condition.
+    LDA #229
+    LDX #1
+    LDY #0
+    JSR OSBYTE
+
     ; Apply the game's narrower visible width (32 chars) and re-centre.
     ; CRTC R1 (horizontal displayed) = 32
     LDA #1
@@ -278,18 +286,22 @@ CHELL_FALL_LEFT_BASE        = 44
 
     ; Minimal demo harness.
 
-    ; Select the level-defined start room.
-    LDA #LEVEL_START_ROOM
-    STA current_room
-    JSR set_room_tilemap
-    JSR set_room_portalmap
-
       ; Sideways RAM sprite banks are loaded by PROGRAM at boot.
       ; PROGRAM also writes `chell_bank`/`obj_bank` (ROMSEL values) into ZP.
 
     ; Enable shadow screen (Master).
     ; Writes ACCCON directly to set D=1 (CRTC displays LYNNE).
     JSR enable_shadow_acccon
+
+  .restart_level
+    ; Clear the shadow screen before redrawing.
+    JSR clear_lynne_screen
+
+    ; Select the level-defined start room.
+    LDA #LEVEL_START_ROOM
+    STA current_room
+    JSR set_room_tilemap
+    JSR set_room_portalmap
 
     ; Initialize level-global object state from generated tables.
     JSR init_persistent_objects
@@ -308,6 +320,7 @@ CHELL_FALL_LEFT_BASE        = 44
     STA char_prev_vy
     STA char_grounded
     STA jump_timer
+    STA peak_timer
     STA room_dirty
     STA objects_pending
     STA exit_cooldown
@@ -437,6 +450,13 @@ CHELL_FALL_LEFT_BASE        = 44
 
          ; Sample input once per frame.
          JSR sample_keys
+
+         ; ESCAPE restarts the level.
+         LDX #&8F            ; INKEY(-113) = ESCAPE
+         JSR is_key_pressed
+         BCC no_restart
+         JMP restart_level
+       .no_restart
 
          ; Slow-motion pacing: update gameplay every other frame (50% speed).
          LDA sim_phase

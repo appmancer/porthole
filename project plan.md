@@ -33,14 +33,19 @@ The Master’s extra 128KB RAM is broadly:
   - **HAZEL/ANDY**: MOS/ROM workspace
 - **64KB sideways RAM**: four 16KB banks, paged into `&8000..&BFFF`
 
-For PORTHOLE we still keep the guiding principle:
+For PORTHOLE:
 
-- **Main RAM**: game logic, state, tables, code.
-- **Shadow screen (LYNNE)**: used for screen memory when we enable it.
-- **Sideways RAM**: a candidate for bulk assets or additional buffers if we choose.
+- **Main RAM** (`&1900..&7FFF`): game code + data. Code ceiling &7800 (runtime buffers above).
+- **Shadow screen (LYNNE)**: active. ACCCON D=1 (CRTC displays LYNNE). Screen at &5800-&77FF in LYNNE, save-under buffers at &7800+.
+- **Sideways RAM**: bank 4 = Chell sprites, bank 5 = object sprites, bank 6 = tile bitmap data, bank 7 = free.
 
-For the current working memory map and the update-then-render (PoP-style)
-bank-mapping policy, see `memory_map.md`.
+Code is split into two zones by include order:
+- **Render-safe zone** (`&1900..~&2750`): render.asm, render_state, room_runtime, debug, lookup tables, sprites, masks. Safe to execute when ACCCON X=1.
+- **Update-only zone** (`~&2750..&5040`): everything else. Only executes when ACCCON X=0.
+
+ACCCON X is toggled per-blitter (not per-frame). Each blitter function calls `shadow_screen_on` (X=1) before screen access loops, `shadow_screen_off` (X=0) after. Cost: ~12 toggles per frame, negligible.
+
+For the full address map see `memory_map.md`.
 
 ### Screen Geometry (current)
 
@@ -54,26 +59,16 @@ bank-mapping policy, see `memory_map.md`.
 
 `&7800..&7FFF` is only “scratch” by convention: it is still screen memory, but it is outside the playfield footprint in our current layout.
 
-## Memory Map (Draft)
+## Memory Map
 
-Addresses are subject to change, but we should avoid scattering.
+See `memory_map.md` for the full address map. Key points:
 
-- **Code**: assembled at `&1900`
-- **Screen playfield (visible)**: `&5800 .. &77FF`
-- **Screen scratch (below playfield)**: `&7800 .. &7FFF` (2KB, by convention)
-- **Material plane `solid` (1bpp)**: `&3000 .. &3FFF` (4KB)
-- **Portalable tile-layer (sparse, 16×16 bytes)**: stored per-room with `portalmap_ptr`
-
-## Buffer Plan (Draft)
-
-Long-term (Master-only target):
-
-- Keep pixel buffers in shadow/Aux RAM.
-- Keep gameplay logic and authoritative collision/materials in main RAM.
-
-Today’s implementation uses a 128-byte save-under buffer at `&7800` to preserve the demo while material planes occupy `&3000..&4FFF`.
-
-> If we later decide to use full 10KB MODE 5 buffers, we must revisit the `&7800..&7FFF` scratch convention.
+- **Code blob**: `&1900..&5040` (14,144B). Ceiling `&7800`. Headroom ~10KB.
+- **Screen** (LYNNE): `&5800..&77FF` (8KB). Accessed via ACCCON X=1.
+- **Save-under** (LYNNE): `&7800+` (Chell 128B, reticle 64B).
+- **Collision planes**: `solid_tile_plane` + `solid_phys_plane` (256B each, labeled allocations in persistent_objects_data.asm).
+- **Portalable tile-layer**: 256B per room, accessed via `portalmap_ptr` (ZP).
+- **SWRAM bank 6**: tile bitmap data (1,836B used, 16KB capacity).
 
 ## Rendering Pipeline
 
@@ -285,11 +280,9 @@ We render laser beams using tiles rather than blitting pixels.
 
 ## Switching Rules
 
-- No per-byte/per-scanline bank switching.
-- Any shadow/main mapping changes must happen:
-  - at init,
-  - on room transitions,
-  - or at most once per frame.
+- ACCCON X=1 is toggled per-blitter function (not per-frame or per-scanline).
+- ROMSEL bank switches use the MOS shadow at &F4 and are wrapped in PHP/SEI/PLP.
+- Code above &3000 must NEVER set ACCCON X=1 (CPU would fetch from LYNNE instead of main RAM).
 
 ## Material Planes (Collision / Interaction Truth)
 
@@ -636,14 +629,12 @@ If we want the portal blend depth to be easy to stamp quickly, prefer depths tha
 
 ## Next Implementation Steps
 
-1) Implement persistent Tiled-authored objects (cube/button/pad/exit) using stable TMX `id` values and level-global state arrays.
+See `next_steps.md` for the prioritized task list.
 
-2) Hook up signals (channel bits) so pad/button drive exit open/closed in the 2-room playground; button uses SPACE (action key).
+Current priorities: P1 gameplay interactions (pressure pads, tile swaps, signals, acid/fizzlers, lasers).
 
-3) Continue portal placement/teleportation improvements (tracked in `next_steps.md`) without duplicating object/persistence background here.
+## Resolved Questions
 
-## Open Questions
-
-- Exact method of enabling and controlling Master shadow screen in B2/MOS.
-- Whether rooms should be tile-built, pre-rendered/compressed, or hybrid.
-- Whether portal placement is allowed on all solid surfaces or walls-only (affects surface-normal logic).
+- **Shadow screen in B2**: ACCCON D+X must be written directly (&FE34). OSBYTE 114 does not work in B2. LYNNE clear must run from code below &3000 (render-safe zone).
+- **Rooms**: tile-built at runtime from tilemap data.
+- **Portal surfaces**: walls, floor, ceiling, and back-wall are all portalable (orientation-aware placement).
