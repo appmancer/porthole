@@ -1,3 +1,4 @@
+.objects_start
 ; Static object instance lists (tile-aligned stamps).
 ;
 ; Each entry is 10 bytes:

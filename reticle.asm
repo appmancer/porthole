@@ -1,3 +1,4 @@
+.reticle_start
 ; reticle.asm
 ; Reticle control + placement validity (including LOS).
 
@@ -64,7 +65,6 @@
     STA last_move_held
     LDA #0
     STA move_held
-    STA move_cooldown
 
     ; Reticle movement with simple repeat.
     ; - If a direction was newly pressed, move immediately.
@@ -296,10 +296,10 @@
      CLC
      ADC col_counter
      TAY
-     LDA SOLID_TILE_PLANE,Y
+     LDA solid_tile_plane,Y
      BNE crs_try_wall
      INY
-     LDA SOLID_TILE_PLANE,Y
+     LDA solid_tile_plane,Y
      BNE crs_try_wall
 
      LDA #1
@@ -486,7 +486,7 @@
      CLC
      ADC temp
      TAY
-     LDA SOLID_TILE_PLANE,Y
+     LDA solid_tile_plane,Y
      BNE crs_open_fail
 
      LDY reticle_cell_y
@@ -497,7 +497,7 @@
      CLC
      ADC temp
      TAY
-     LDA SOLID_TILE_PLANE,Y
+     LDA solid_tile_plane,Y
      BNE crs_open_fail
 
      SEC
@@ -547,7 +547,7 @@
 ; --- Reticle line-of-sight ---
 ;
 ; Returns C=1 if Chell can see the candidate portal target, else C=0.
-; Uses the solid-tile plane (SOLID_TILE_PLANE) only.
+; Uses the solid-tile plane (solid_tile_plane) only.
  .reticle_check_los
      ; Ray start (gun position) from Chell.
      ; Use a point near the gun muzzle, biased by facing direction.
@@ -1000,7 +1000,7 @@
     BEQ los_tile_ok
     STA los_prev_tile
 
-    LDA SOLID_TILE_PLANE,Y
+    LDA solid_tile_plane,Y
     BEQ los_tile_ok
     SEC
     RTS
@@ -1012,7 +1012,7 @@
 
  ; Raycast from (los_x0,los_y0) to (los_x1,los_y1) and find the first solid tile.
  ;
- ; Uses SOLID_TILE_PLANE only (dynamic objects never block).
+ ; Uses solid_tile_plane only (dynamic objects never block).
  ;
  ; Outputs on hit:
  ; - shot_hit_tilepos = y*16 + x
@@ -1264,7 +1264,7 @@
      STA los_prev_tile
 
      ; Solid?
-     LDA SOLID_TILE_PLANE,Y
+     LDA solid_tile_plane,Y
      BEQ sct_tile_ok
 
      ; Record hit.

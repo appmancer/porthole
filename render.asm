@@ -1,3 +1,4 @@
+.render_start
 ; render.asm
 ; Routines to render a tilemap and sprites in MODE 5
 
@@ -9,22 +10,45 @@
 ; - We do not use scrolling; we flick between screens.
 ; - We may use screen RAM *below the playfield* as scratch (not returned to BASIC).
 
+; Shadow RAM screen access helpers.
+; Call shadow_screen_on before screen memory loops, shadow_screen_off after.
+; Sets/clears ACCCON X bit (bit 2) so CPU sees LYNNE at &3000-&7FFF.
+.shadow_screen_on
+    LDA ACCCON : ORA #&04 : STA ACCCON
+    RTS
+.shadow_screen_off
+    LDA ACCCON : AND #&FB : STA ACCCON
+    RTS
+
+; Clear LYNNE screen area (&5800-&77FF) to black.
+; Must live below &3000 because it sets X=1.
+; Clobbers: A,X,Y,temp_mask_ptr
+.clear_lynne_screen
+    JSR shadow_screen_on
+    LDA #&58 : STA temp_mask_ptr+1
+    LDA #0   : STA temp_mask_ptr
+    LDX #&20                         ; 32 pages = 8KB
+.cls_lynne_page
+    LDY #0 : LDA #0
+.cls_lynne_byte
+    STA (temp_mask_ptr),Y
+    INY : BNE cls_lynne_byte
+    INC temp_mask_ptr+1
+    DEX : BNE cls_lynne_page
+    JSR shadow_screen_off
+    RTS
+
 .render_tilemap
     ; Clear playfield to cyan so tile id 0 can be skipped.
     JSR clear_playfield_cyan
 
     ; Set up initial pointers
     LDA #<(&5800)           ; Screen starts at &5800 in MODE 5
-    STA screen_ptr                 ; screen_ptr_lo 
+    STA screen_ptr
     LDA #>(&5800)
-    STA screen_ptr+1                 ; screen_ptr_hi
-    
-    LDA #<(sprite_data)     ; Set up sprite pointer 
-    STA sprite_ptr                 ; sprite_ptr_lo
-    LDA #>(sprite_data) 
-    STA sprite_ptr                 ; sprite_ptr_hi
-    
-    ; Initialize row counter  
+    STA screen_ptr+1
+
+    ; Initialize row counter
     LDA #0
     STA row_counter                 ; row_counter
 
@@ -233,6 +257,8 @@
     LDA sprite_ptr+1
     PHA
 
+    JSR shadow_screen_on
+
   .stamp_stripe
     LDY #0
   .stamp_byte
@@ -257,6 +283,8 @@
     DEC row_counter
     BNE stamp_stripe
 
+    JSR shadow_screen_off
+
     ; Restore pointers.
     PLA
     STA sprite_ptr+1
@@ -279,11 +307,9 @@
 ; - X: bytes to process per stripe (16 for 8px-wide, 32 for 16px-wide)
 ; - Y: source stride per stripe (usually 16 or 32)
  .stamp_striped_masked
-    ; Keep the blit atomic: MOS IRQ handlers may use/modify ZP.
-    ; Preserve the caller's interrupt state so nested callers that already have
-    ; IRQs disabled don't get re-enabled at the end.
     PHP
     SEI
+    JSR shadow_screen_on
     STA row_counter
     STX col_counter
     STY temp_y
@@ -349,6 +375,8 @@
     DEC row_counter
     BNE stampm_stripe
 
+    JSR shadow_screen_off
+
     ; Restore pointers.
     PLA
     STA mask_ptr+1
@@ -376,6 +404,8 @@
     LDA #>(&5800)
     STA temp_mask_ptr+1
 
+    JSR shadow_screen_on
+
     ; 0x5800..0x77FF is 0x20 pages of 256 bytes.
     LDX #&20
     LDA #&F0
@@ -388,6 +418,8 @@
     INC temp_mask_ptr+1
     DEX
     BNE clear_page
+
+    JSR shadow_screen_off
     RTS
 
 .render_cell8x16
@@ -398,25 +430,29 @@
     PHA
     LDA screen_ptr+1
     PHA
-    
+
+    ; Page in tile data bank — protect from interrupt-driven ROMSEL changes.
+    PHP
+    SEI
+    LDA &F4 : PHA             ; save MOS ROMSEL shadow
+    LDA tile_bank
+    STA &F4 : STA ROMSEL      ; update both shadow and register
+
     ; Get sprite data pointer for this tile
     LDA temp
     ASL A                   ; × 2 for 16-bit pointer
     TAX
     LDA sprite_table,X
-    STA sprite_ptr                 ; sprite_ptr_lo
+    STA sprite_ptr
     LDA sprite_table+1,X
-    STA sprite_ptr+1                 ; sprite_ptr_hi
+    STA sprite_ptr+1
 
     ; Plot first half (top 8 rows)
     JSR plot_cell_stripe8x8
-    
+
     ; Move screen pointer down 8 rows (256 bytes)
-    LDA screen_ptr+1
-    CLC
-    ADC #1
-    STA screen_ptr+1
-    
+    INC screen_ptr+1
+
     ; Move sprite pointer to bottom half (+16 bytes)
     LDA sprite_ptr
     CLC
@@ -424,11 +460,15 @@
     STA sprite_ptr
     BCC next_half
     INC sprite_ptr+1
-    
+
 .next_half
     ; Plot second half (bottom 8 rows)
     JSR plot_cell_stripe8x8
-    
+
+    ; Restore previous bank
+    PLA : STA &F4 : STA ROMSEL
+    PLP
+
     ; Restore screen pointer
     PLA
     STA screen_ptr+1
@@ -446,25 +486,29 @@
     PHA
     LDA screen_ptr+1
     PHA
-    
+
+    ; Page in tile data bank — protect from interrupt-driven ROMSEL changes.
+    PHP
+    SEI
+    LDA &F4 : PHA             ; save MOS ROMSEL shadow
+    LDA tile_bank
+    STA &F4 : STA ROMSEL      ; update both shadow and register
+
     ; Get sprite data pointer for this tile
-    LDA temp                 ; temp
+    LDA temp
     ASL A                   ; × 2 for 16-bit pointer
     TAX
     LDA sprite_table,X
-    STA sprite_ptr                 ; sprite_ptr_lo
+    STA sprite_ptr
     LDA sprite_table+1,X
-    STA sprite_ptr+1                 ; sprite_ptr_hi
+    STA sprite_ptr+1
 
     ; Plot first half (top 8 rows) with masking
     JSR plot_masked_cell_stripe8x8
-    
+
     ; Move screen pointer down 8 rows (256 bytes)
-    LDA screen_ptr+1
-    CLC
-    ADC #1
-    STA screen_ptr+1
-    
+    INC screen_ptr+1
+
     ; Move sprite pointer to bottom half (+16 bytes)
     LDA sprite_ptr
     CLC
@@ -472,11 +516,15 @@
     STA sprite_ptr
     BCC next_half_masked
     INC sprite_ptr+1
-    
+
 .next_half_masked
-    ; Plot second half (bottom 8 rows) with masking  
+    ; Plot second half (bottom 8 rows) with masking
     JSR plot_masked_cell_stripe8x8
-    
+
+    ; Restore previous bank
+    PLA : STA &F4 : STA ROMSEL
+    PLP
+
     ; Restore screen pointer
     PLA
     STA screen_ptr+1
@@ -487,19 +535,21 @@
 ; Plots one 8x8 stripe of an 8x16 cell.
 ; Stored as 16 bytes (2 bytes wide × 8 scanlines) in MODE 5 screen-byte order.
 .plot_cell_stripe8x8
-    ; Plot 16 bytes of sprite data consecutively
+    JSR shadow_screen_on
     LDY #0
 .sprite_wide_row_loop
-    LDA (sprite_ptr),Y             ; Get sprite row data from sprite_ptr
-    STA (screen_ptr),Y             ; Plot to screen at screen_ptr
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
     INY
-    CPY #16                 ; 16 bytes per row
+    CPY #16
     BNE sprite_wide_row_loop
+    JSR shadow_screen_off
     RTS
 
 ; Plots one 8x8 stripe of an 8x16 cell with masking (black pixels transparent).
 ; MODE 5 uses interleaved bits: pixel 0=bits 0+4, pixel 1=bits 1+5, pixel 2=bits 2+6, pixel 3=bits 3+7
 .plot_masked_cell_stripe8x8
+    JSR shadow_screen_on
     LDY #0
 .masked_sprite_byte_loop
     LDA (sprite_ptr),Y             ; Load sprite byte from sprite_ptr
@@ -556,8 +606,10 @@
     INY
     CPY #16                 ; 16 bytes total
     BNE masked_sprite_byte_loop
-    
-    RTS; Render character sprite with mask - uses character_sprite_table and character_mask_table
+    JSR shadow_screen_off
+    RTS
+
+; Render character sprite with mask - uses character_sprite_table and character_mask_table
 .render_character_sprite
     ; preserve A
     STA temp
@@ -687,6 +739,7 @@
     LDA sprite_ptr+1
     STA temp_sprite_ptr+1
 
+    JSR shadow_screen_on
     LDX #0
 .copy_stripe_loop
     LDY #0
@@ -712,6 +765,8 @@
     INX
     CPX #4
     BNE copy_stripe_loop
+
+    JSR shadow_screen_off
 
     ; Restore screen_ptr (advanced 4 stripes)
     LDA screen_ptr+1
@@ -740,6 +795,7 @@
     LDA mask_ptr+1
     STA temp_mask_ptr+1
 
+    JSR shadow_screen_on
     LDX #0
  .masked_stripe_loop
     LDY #0
@@ -800,6 +856,8 @@
     CPX #4
     BNE masked_stripe_loop
 
+    JSR shadow_screen_off
+
     ; Restore screen_ptr (advanced 4 stripes)
     LDA screen_ptr+1
     SEC
@@ -827,6 +885,7 @@
     LDA sprite_ptr+1
     STA temp_sprite_ptr+1
 
+    JSR shadow_screen_on
     ; Stripe 0: copy 32 bytes
     LDY #0
 .overlay_copy_bytes0
@@ -856,6 +915,8 @@
     CPY #32
     BNE overlay_copy_bytes1
 
+    JSR shadow_screen_off
+
     ; Restore screen_ptr (advanced 1 stripe)
     DEC screen_ptr+1
 
@@ -881,6 +942,7 @@
     LDA mask_ptr+1
     STA temp_mask_ptr+1
 
+    JSR shadow_screen_on
     ; Stripe 0: copy 32 bytes
     LDY #0
  .overlay_bytes0
@@ -962,6 +1024,8 @@
     CPY #32
     BNE overlay_bytes1
 
+    JSR shadow_screen_off
+
     ; Restore screen_ptr (advanced 1 stripe)
     DEC screen_ptr+1
 
@@ -987,9 +1051,7 @@
 CHELL_SAVE_UNDER_BASE     = &7800   ; 16x32 = 128 bytes
 RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
 
-; 256-byte solid-tile plane (16x16 tiles) stored in screen scratch.
-; 0 = empty, nonzero = solid.
-SOLID_TILE_PLANE          = &7A00
+; solid_tile_plane is allocated in persistent_objects_data.asm (256 bytes).
 
 ; Save-under helpers.
 ;
@@ -1001,9 +1063,9 @@ SOLID_TILE_PLANE          = &7A00
 
 ; Save 16x32 under screen_ptr into CHELL_SAVE_UNDER_BASE.
 .save_chell_under
-    ; Preserve caller IRQ state (nested callers may already be SEI).
     PHP
     SEI
+    JSR shadow_screen_on
     ; temp_mask_ptr := source screen
     LDA screen_ptr
     STA temp_mask_ptr
@@ -1042,14 +1104,15 @@ SOLID_TILE_PLANE          = &7A00
     CMP #4
     BNE save_chell_stripe
 
+    JSR shadow_screen_off
     PLP
     RTS
 
 ; Restore 16x32 from CHELL_SAVE_UNDER_BASE to chell_prev_ptr.
 .restore_chell_under
-    ; Preserve caller IRQ state (nested callers may already be SEI).
     PHP
     SEI
+    JSR shadow_screen_on
     ; temp_mask_ptr := dest screen
     LDA chell_prev_ptr
     STA temp_mask_ptr
@@ -1088,14 +1151,15 @@ SOLID_TILE_PLANE          = &7A00
     CMP #4
     BNE restore_chell_stripe
 
+    JSR shadow_screen_off
     PLP
     RTS
 
 ; Save 16x16 under screen_ptr into RETICLE_SAVE_UNDER_BASE.
 .save_reticle_under
-    ; Preserve caller IRQ state (nested callers may already be SEI).
     PHP
     SEI
+    JSR shadow_screen_on
     ; temp_mask_ptr := source screen
     LDA screen_ptr
     STA temp_mask_ptr
@@ -1134,14 +1198,15 @@ SOLID_TILE_PLANE          = &7A00
     CMP #2
     BNE save_reticle_stripe
 
+    JSR shadow_screen_off
     PLP
     RTS
 
 ; Restore 16x16 from RETICLE_SAVE_UNDER_BASE to reticle_prev_ptr.
 .restore_reticle_under
-    ; Preserve caller IRQ state (nested callers may already be SEI).
     PHP
     SEI
+    JSR shadow_screen_on
     ; temp_mask_ptr := dest screen
     LDA reticle_prev_ptr
     STA temp_mask_ptr
@@ -1180,12 +1245,13 @@ SOLID_TILE_PLANE          = &7A00
     CMP #2
     BNE restore_reticle_stripe
 
+    JSR shadow_screen_off
     PLP
     RTS
 
 ; Build a 16x16 solid-tile plane from the current room tilemap.
 ;
-; Stores 256 bytes at `SOLID_TILE_PLANE`:
+; Stores 256 bytes at `solid_tile_plane`:
 ; - 0 = empty
 ; - 1 = solid
 ;
@@ -1200,7 +1266,7 @@ SOLID_TILE_PLANE          = &7A00
     BEQ not_solid_tile
     LDA #1
 .not_solid_tile
-    STA SOLID_TILE_PLANE,Y
+    STA solid_tile_plane,Y
     INY
     BNE build_solid_tile_plane_loop
     RTS
@@ -1213,7 +1279,7 @@ SOLID_TILE_PLANE          = &7A00
 ; Must be called during update before any collision queries for the frame.
 ; Clobbers: A,X,Y
 .rebuild_solid_phys_plane
-    ; Build solid plane directly from tilemap (avoids banked SOLID_TILE_PLANE).
+    ; Build solid plane directly from tilemap (avoids banked solid_tile_plane).
     LDY #0
   .rsp_copy
     LDA (tilemap_ptr),Y
@@ -1327,7 +1393,7 @@ SOLID_TILE_PLANE          = &7A00
     ADC col_counter
     TAY
 
-    LDA SOLID_TILE_PLANE,Y
+    LDA solid_tile_plane,Y
     BEQ solid_clear
     SEC
     RTS

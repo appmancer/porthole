@@ -1,8 +1,6 @@
+.movement_start
 ; movement.asm
 ; Chell movement, collision sampling, and gravity stepping.
-
-DEBUG_FLAG_JUMP_SEEN     = 2
-DEBUG_FLAG_JUMP_BLOCKED  = 4
 
  ; Horizontal movement pipeline (replaces poll_move_keys).
  ;
@@ -23,8 +21,8 @@ DEBUG_FLAG_JUMP_BLOCKED  = 4
       STA temp                  ; redraw flag
       STA move_held             ; clear each frame; set below if key held
 
-      ; --- 1. Update grounded state (skip during jump arc) ---
-      LDA jump_active
+      ; --- 1. Update grounded state (skip during jump rise) ---
+      LDA jump_timer
       BNE ucm_ground_done
       JSR is_char_grounded
       BCC ucm_ground_clear
@@ -391,145 +389,100 @@ DEBUG_FLAG_JUMP_BLOCKED  = 4
     RTS
   
 
-; Apply vertical movement using a short jump LUT and 8px steps.
+; Vertical movement state machine.
+;
+; Three states driven by jump_timer:
+;   RISING:   jump_timer > 0 → step_up_8, dec timer, vy=-1
+;   FALLING:  jump_timer = 0, not grounded → step_down_8, vy=+1
+;   GROUNDED: jump_timer = 0, grounded → check RETURN for jump start, vy=0
+;
 ; Returns: C=1 if position changed (needs redraw).
 .apply_gravity
     ; Remember pre-step vy so portal entry can trigger on landing.
     LDA char_vy
     STA char_prev_vy
 
-    LDA #0
-    STA temp              ; moved flag
+    ; --- RISING ---
+    LDA jump_timer
+    BEQ ag_not_rising
 
-    ; Jump arc in progress?
-    LDA jump_active
-    BNE ag_jump_active
-    ; If grounded and RETURN held, start jump here.
-    LDA char_grounded
-    BNE ag_check_jump
-    JMP ag_check_ground
-  .ag_check_jump
-    LDA keys_pressed
-    AND #4
-    BNE ag_start_jump
-    JMP ag_check_ground
-
-  .ag_start_jump
-
-    LDA #1
-    STA jump_active
-    LDA debug_flags
-    ORA #DEBUG_FLAG_JUMP_SEEN
-    STA debug_flags
-    LDA #0
-    STA jump_phase
-    LDA #0
-    STA char_grounded
-    STA char_vy
-    ; vx already set by resolve_horizontal_vx; A=0=jump_phase.
-    JMP ag_jump_step
-
-  .ag_jump_active
-    ; If jump arc finished, fall normally.
-    LDA jump_phase
-    CMP #JUMP_LUT_LEN
-    BCC ag_jump_step
-    LDA #0
-    STA jump_active
-    JMP ag_check_ground
-
-  .ag_jump_step
-    TAX
-    LDA jump_lut,X
-    STA char_vy
-    INC jump_phase
-    LDA char_vy
-    BMI ag_jump_up
-    BEQ ag_jump_done
-
-    ; Step down.
-    JSR step_down_8
-    BCC ag_jump_hit_ground
-    LDA #1
-    STA temp
-    JMP ag_jump_done
-
-  .ag_jump_up
+    ; Rising: step up 8px.
+    LDA #&FF
+    STA char_vy               ; vy = -1 (rising)
     JSR step_up_8
-    BCC ag_jump_hit_ceiling
-    LDA #1
-    STA temp
-    JMP ag_jump_done
+    BCC ag_hit_ceiling
 
-  .ag_jump_hit_ground
-    LDA #0
-    STA jump_active
-    STA char_vy
-    LDA #1
-    STA char_grounded
-    LDA #1
-    STA temp
-    JMP ag_return
-
-  .ag_jump_hit_ceiling
-    LDA debug_flags
-    ORA #DEBUG_FLAG_JUMP_BLOCKED
-    STA debug_flags
-    LDA #0
-    STA jump_active
-    LDA #0
-    STA char_vy
-    JMP ag_return
-
-  .ag_jump_done
+    ; Moved up successfully.
+    DEC jump_timer
     LDA #0
     STA char_grounded
-    JMP ag_return
-
-  .ag_check_ground
-    ; If grounded, stay put.
-    JSR is_char_grounded
-    BCC ag_fall
-
-    LDA #1
-    STA char_grounded
-    LDA #0
-    STA char_vy
-    JMP ag_return
-
-  .ag_fall
-    ; Fall one stripe per update.
-    LDA #0
-    STA char_grounded
-    LDA #1
-    STA char_vy
-    JSR step_down_8
-    BCC ag_fall_hit
-    LDA #1
-    STA temp
-    JMP ag_return
-
-  .ag_fall_hit
-    LDA #1
-    STA char_grounded
-    LDA #0
-    STA char_vy
-    LDA #1
-    STA temp
-
-  .ag_return
-    LDA temp
-    BEQ grav_no_move
     SEC
     RTS
-  .grav_no_move
+
+  .ag_hit_ceiling
+    ; Blocked: cancel rise, begin falling next frame.
+    LDA #0
+    STA jump_timer
+    STA char_vy
     CLC
     RTS
 
+  .ag_not_rising
+    ; --- GROUNDED check ---
+    JSR is_char_grounded
+    BCC ag_fall
 
-; Jump arc LUT (short, fast hop). Values are stripe steps per update.
-.jump_lut
-    EQUB &FF,&FF,&FF,&FF,0,1,1,1,1,1
+    ; On ground.
+    LDA #1
+    STA char_grounded
+    LDA #0
+    STA char_vy
+
+    ; Check RETURN for jump start.
+    LDA keys_pressed
+    AND #4
+    BEQ ag_grounded_done
+
+    ; Start jump: set timer, clear grounded, step up immediately.
+    LDA #JUMP_RISE_FRAMES
+    STA jump_timer
+    LDA #0
+    STA char_grounded
+    LDA #&FF
+    STA char_vy               ; vy = -1 (rising)
+    JSR step_up_8
+    BCC ag_jump_start_blocked
+    DEC jump_timer
+    SEC
+    RTS
+
+  .ag_jump_start_blocked
+    ; Ceiling right above: cancel jump.
+    LDA #0
+    STA jump_timer
+    STA char_vy
+  .ag_grounded_done
+    CLC
+    RTS
+
+  .ag_fall
+    ; --- FALLING ---
+    LDA #0
+    STA char_grounded
+    LDA #1
+    STA char_vy               ; vy = +1 (falling)
+    JSR step_down_8
+    BCC ag_fall_landed
+    SEC
+    RTS
+
+  .ag_fall_landed
+    LDA #1
+    STA char_grounded
+    LDA #0
+    STA char_vy
+    SEC
+    RTS
 
 
 ; Return C=1 if character is standing on solid.

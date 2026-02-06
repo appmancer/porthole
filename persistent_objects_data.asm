@@ -1,3 +1,4 @@
+.persistent_data_start
 ; persistent_objects_data.asm
 ; Runtime arrays for persistent objects + signal bits.
 ;
@@ -56,8 +57,13 @@
 .sig_state
     SKIP 1
 
+; Static solid-tile plane (tilemap only, no objects).
+; Used by LOS/portal validation which should ignore dynamic objects.
+.solid_tile_plane
+    SKIP 256
+
 ; Solid-tile plane for physics (tiles + standable objects).
-; This is separate from `SOLID_TILE_PLANE` so LOS/portal logic can ignore objects.
+; Rebuilt each frame from tilemap + cube positions.
 .solid_phys_plane
     SKIP 256
 

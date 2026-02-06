@@ -1,3 +1,4 @@
+.timing_start
 ; timing.asm
 ; VSync and simple delay helpers.
 

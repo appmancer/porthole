@@ -1,7 +1,3 @@
-; Room tile sprites (8x16 cells).
-; Generated from `sprites/NewTiles - Grid.csv`.
-INCLUDE "sprites/generated_tiles.asm"
-
 ; Character sprite table - separate from room tiles.
 ; Indices are used by render_character_sprite.
 ;

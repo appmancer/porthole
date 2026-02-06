@@ -35,11 +35,7 @@ ORG &00
 .char_vx            SKIP 1    ; Signed vx in px/frame (used for portal intent + momentum)
 .char_prev_vy       SKIP 1    ; Previous vy (for floor/ceiling entry on landing)
 .char_grounded      SKIP 1    ; 0/1: standing on solid
-.gravity_cooldown   SKIP 1    ; Frames until next gravity tick
-.rise_cooldown      SKIP 1    ; Frames until next upward step
-.fall_cooldown      SKIP 1    ; Frames until next downward step
-.jump_active        SKIP 1    ; 0/1: jump arc in progress
-.jump_phase         SKIP 1    ; Jump LUT index
+.jump_timer         SKIP 1    ; Frames remaining in jump rise (0 = not jumping)
 .room_dirty         SKIP 1    ; 0/1: room background needs redraw
 .objects_pending    SKIP 1    ; 0/1: persistent objects need restamp
 .exit_cooldown      SKIP 1    ; frames to ignore exits after transition
@@ -59,6 +55,7 @@ ORG &00
 ; ROMSEL/SWRAM bank state.
 .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
 .obj_bank           SKIP 1    ; ROMSEL value for Object SWRAM bank
+.tile_bank          SKIP 1    ; ROMSEL value for tile data SWRAM bank
 .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
 
   ; Animation.
@@ -67,7 +64,6 @@ ORG &00
   .last_anim_dir           SKIP 1    ; Previous direction for redraw
   .move_held               SKIP 1    ; 0/1: left/right held this frame
   .last_move_held          SKIP 1    ; Previous move_held (for pose redraw)
-  .move_cooldown           SKIP 1    ; Frames until next move
   .anim_cooldown           SKIP 1    ; Movement counter for anim
 
   ; Horizontal step loop scratch (used by movement.asm).
@@ -170,6 +166,7 @@ ORG &00
 CRTC_ADDR = &FE00
 CRTC_DATA = &FE01
 ROMSEL    = &FE30          ; Master paged ROM/SWRAM bank select
+ACCCON    = &FE34          ; Master ACCCON register (D=display, E=VDU, X=CPU shadow)
 
 CHELL_SWRAM_BANK_DEFAULT = 4
 CHELLDATA_BUF         = &7B00  ; Temp buffer in screen scratch
@@ -177,32 +174,16 @@ CHELLDATA_BUF         = &7B00  ; Temp buffer in screen scratch
 ; Object (portal stamp) sprite+mask data lives in sideways RAM.
 OBJ_SWRAM_BANK_DEFAULT = 5
 
-; Render list storage lives in screen scratch so it survives MOS calls.
-RENDER_LIST_BASE      = &78C0
-RENDER_COUNT          = RENDER_LIST_BASE + 0
-RENDER_IDS            = RENDER_LIST_BASE + 1   ; 2 bytes
-RENDER_FLAGS          = RENDER_LIST_BASE + 3   ; 2 bytes
-RENDER_NEW_PTR_LO     = RENDER_LIST_BASE + 5   ; 2 bytes
-RENDER_NEW_PTR_HI     = RENDER_LIST_BASE + 7   ; 2 bytes
-
-; Scratch state stored in the "below playfield" screen RAM.
-; This avoids using MOS workspace zero-page addresses (e.g. &A0..) that file I/O can clobber.
-PORTAL_REQ_SNAP_POS   = &7FF0   ; (x<<4)|y
-PORTAL_REQ_SNAP_ORIENT= &7FF1
+; Tile bitmap data lives in sideways RAM bank 6.
+TILE_SWRAM_BANK_DEFAULT = 6
 
 
-GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
-GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
-GRAVITY_DOWN_PERIOD         = 2      ; gravity tick period while falling
 FALL_POSE_VY_THRESHOLD       = 1      ; switch to falling pose when vy >= this (8px steps)
+JUMP_RISE_FRAMES             = 4      ; frames of 8px upward movement per jump
 TERMINAL_VELOCITY_DOWN      = 6      ; max falling speed (8px steps)
 TERMINAL_VELOCITY_UP        = &FA    ; -6: max rising speed (8px steps)
 TERMINAL_VELOCITY_X         = 12     ; max |vx| (px/frame), also per-frame step clamp
 WALK_VELOCITY               = 1      ; |vx| while walking / air-control
-JUMP_VELOCITY               = &FE    ; -2
-RISE_STEP_PERIOD            = 2      ; move up 1 stripe every N frames
-FALL_STEP_PERIOD            = 2      ; move down 1 stripe every N frames
-JUMP_LUT_LEN                = 10
 
 PORTAL_EXIT_NUDGE           = 2
 PORTAL_COOLDOWN_FRAMES      = 8
@@ -307,8 +288,8 @@ CHELL_FALL_LEFT_BASE        = 44
       ; PROGRAM also writes `chell_bank`/`obj_bank` (ROMSEL values) into ZP.
 
     ; Enable shadow screen (Master).
-    ; We still use MODE 5 layout at &5800, but in shadow RAM.
-    JSR enable_shadow_screen
+    ; Writes ACCCON directly to set D=1 (CRTC displays LYNNE).
+    JSR enable_shadow_acccon
 
     ; Initialize level-global object state from generated tables.
     JSR init_persistent_objects
@@ -326,11 +307,7 @@ CHELL_FALL_LEFT_BASE        = 44
     STA char_vx
     STA char_prev_vy
     STA char_grounded
-    STA gravity_cooldown
-    STA rise_cooldown
-    STA fall_cooldown
-    STA jump_active
-    STA jump_phase
+    STA jump_timer
     STA room_dirty
     STA objects_pending
     STA exit_cooldown
@@ -345,7 +322,6 @@ CHELL_FALL_LEFT_BASE        = 44
     STA anim_frame
     STA move_held
     STA last_move_held
-    STA move_cooldown
     STA anim_cooldown
     STA chell_body_index
     STA chell_overlay_index
@@ -624,10 +600,6 @@ CHELL_FALL_LEFT_BASE        = 44
        STA chell_dirty
        STA reticle_dirty
 
-       ; Clear per-frame jump debug bits.
-       JSR clear_jump_debug
-
-
        ; Track previous reticle_active so we can detect hide/show transitions.
        LDA reticle_active
        STA reticle_prev_active
@@ -693,87 +665,30 @@ CHELL_FALL_LEFT_BASE        = 44
         RTS
 
 
-INCLUDE "portal_teleport.asm"
-
-INCLUDE "room_exits.asm"
-
+; === Render-safe zone: visible when X=0 or X=1 ===
+INCLUDE "render.asm"
 INCLUDE "render_state.asm"
- 
-
-
-
-
-
-INCLUDE "reticle.asm"
-
-
-  ; Poll Z/X for left/right movement (single-pixel).
-  ; (Moved to movement.asm)
-
- 
-INCLUDE "input.asm"
-
-INCLUDE "portal_place.asm"
-
-INCLUDE "frame_update.asm"
-
-
-INCLUDE "persistent_objects.asm"
-  
-INCLUDE "ui.asm"
-
-INCLUDE "debug.asm"
-
-INCLUDE "loaders.asm"
-
-INCLUDE "timing.asm"
-
 INCLUDE "room_runtime.asm"
-
-; Chell movement and physics.
-INCLUDE "movement.asm"
-
-
-; Update char_tile_pos based on anim_dir.
-; Bounces between tile_x 0..14 (sprite is 2 tiles wide).
-.step_char_tile
-    LDA char_tile_pos
-    AND #15
-    STA temp
-
-    LDA anim_dir
-    BEQ step_left
-
-.step_right
-    LDA temp
-    CMP #14
-    BNE step_right_inc
-    LDA #0
-    STA anim_dir
-    RTS
-.step_right_inc
-    INC char_tile_pos
-    RTS
-
-.step_left
-    LDA temp
-    BEQ step_left_turn
-    DEC char_tile_pos
-    RTS
-.step_left_turn
-    LDA #1
-    STA anim_dir
-    RTS
-
-
-
+INCLUDE "debug.asm"
+INCLUDE "lookup_tables.asm"
 INCLUDE "sprites.asm"
 INCLUDE "masks.asm"
+; === End render-safe zone ===
+
+; === Update-only zone: visible only when X=0 ===
+INCLUDE "portal_teleport.asm"
+INCLUDE "room_exits.asm"
+INCLUDE "reticle.asm"
+INCLUDE "input.asm"
+INCLUDE "portal_place.asm"
+INCLUDE "frame_update.asm"
+INCLUDE "persistent_objects.asm"
+INCLUDE "ui.asm"
+INCLUDE "loaders.asm"
+INCLUDE "timing.asm"
+INCLUDE "movement.asm"
 INCLUDE "tilemap.asm"
 INCLUDE "objects.asm"
-INCLUDE "render.asm"
-INCLUDE "lookup_tables.asm"
-
 INCLUDE "persistent_objects_data.asm"
 
 .end
@@ -816,6 +731,19 @@ INCLUDE "sprites/generated_chell_masks.asm"
 ORG &C000
 .chelldata_end
 SAVE "CHDATA", chelldata_start, chelldata_end
+
+; Tile bitmap data for sideways RAM bank 6.
+; Room tile sprites (8x16 cells), generated from `sprites/NewTiles - Grid.csv`.
+; Labels (sprite_table etc.) are global and resolve to &8000+offset.
+CLEAR &8000, &C000
+ORG &8000
+.tiledata_start
+INCLUDE "sprites/generated_tiles.asm"
+
+; Pad to full 16KB SWRAM bank.
+ORG &C000
+.tiledata_end
+SAVE "TILDAT", tiledata_start, tiledata_end
 
 ; Loading screen (MODE 2) file.
 ;

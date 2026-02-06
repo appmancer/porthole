@@ -1,3 +1,4 @@
+.tilemap_data_start
 ; tilemap.asm
 ;
 ; Room tilemap pointers and data.

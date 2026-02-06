@@ -1,3 +1,4 @@
+.render_state_start
 ; Render-side state + draw helpers.
 
 .run_frame_seq
@@ -9,12 +10,11 @@
     ; Preserve caller IRQ state (nested callers may already be SEI).
     PHP
     SEI
-    LDA ROMSEL
-    PHA
+    LDA &F4 : PHA             ; save MOS ROMSEL shadow
 
     ; Ensure Chell SWRAM bank is visible for reads.
     LDA chell_bank
-    STA ROMSEL
+    STA &F4 : STA ROMSEL      ; update both shadow and register
 
     ; Body
     LDA chell_body_index
@@ -25,8 +25,7 @@
     JSR render_overlay_sprite
 
     ; Restore previous ROM selection and caller IRQ state.
-    PLA
-    STA ROMSEL
+    PLA : STA &F4 : STA ROMSEL
     PLP
     RTS
 
@@ -36,17 +35,15 @@
     ; Preserve caller IRQ state (nested callers may already be SEI).
     PHP
     SEI
-    LDA ROMSEL
-    PHA
+    LDA &F4 : PHA             ; save MOS ROMSEL shadow
 
     LDA chell_bank
-    STA ROMSEL
+    STA &F4 : STA ROMSEL      ; update both shadow and register
 
     LDA reticle_state
     JSR render_reticle_sprite
 
-    PLA
-    STA ROMSEL
+    PLA : STA &F4 : STA ROMSEL
     PLP
     RTS
 

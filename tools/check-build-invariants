@@ -38,6 +38,47 @@ def require_not_in_range(labels: dict, name: str, lo: int, hi: int) -> None:
         raise SystemExit(f"bad label address: {name} in MOS ZP range &{lo:04X}..&{hi:04X} (got &{got:04X})")
 
 
+def get_label(labels: dict, name: str) -> int:
+    got = labels.get(name)
+    if got is None and not name.startswith("."):
+        got = labels.get("." + name)
+    if got is None:
+        raise SystemExit(f"missing section label: {name}")
+    return got
+
+
+# Section budget definitions: (start_label, end_label, description, max_bytes)
+SECTION_BUDGETS = [
+    # Render-safe zone (below &3000)
+    (".start",                    ".render_start",           "main.asm",              768),
+    (".render_start",             ".render_state_start",     "render",               1856),
+    (".render_state_start",       ".room_runtime_start",     "render_state",          512),
+    (".room_runtime_start",       ".debug_start",            "room_runtime",          256),
+    (".debug_start",              ".times16_table",           "debug",                 256),
+    (".times16_table",            ".character_sprite_table",   "lookup_tables",         128),
+    (".character_sprite_table",   ".character_mask_table",    "sprites",               512),
+    (".character_mask_table",     ".portal_teleport_start",   "masks",                 512),
+    # Update-only zone (above render-safe)
+    (".portal_teleport_start",    ".room_exits_start",       "portal_teleport",      1536),
+    (".room_exits_start",         ".reticle_start",          "room_exits",            768),
+    (".reticle_start",            ".input_start",            "reticle",              1792),
+    (".input_start",              ".portal_place_start",     "input",                 512),
+    (".portal_place_start",       ".frame_update_start",     "portal_place",         1280),
+    (".frame_update_start",       ".persistent_objects_start","frame_update",         1024),
+    (".persistent_objects_start", ".ui_start",               "persistent_objects",   1664),
+    (".ui_start",                 ".loaders_start",          "ui",                    256),
+    (".loaders_start",            ".timing_start",           "loaders",              1024),
+    (".timing_start",             ".movement_start",         "timing",                 64),
+    (".movement_start",           ".tilemap_data_start",     "movement",             1024),
+    (".tilemap_data_start",       ".objects_start",           "tilemap",             1280),
+    (".objects_start",            ".persistent_data_start",   "objects",              512),
+    (".persistent_data_start",    ".end",                     "persistent_obj_data",  768),
+]
+
+# Global code ceiling: runtime buffers start at &7800.
+CODE_CEILING = 0x7800
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: tools/check-build-invariants path/to/beebasm.labels", file=sys.stderr)
@@ -55,6 +96,38 @@ def main(argv: list[str]) -> int:
     mos_hi = 0x00AF
     for name in ("anim_frame", "anim_cooldown", "anim_dir", "last_anim_dir"):
         require_not_in_range(labels, name, mos_lo, mos_hi)
+
+    # Global ceiling check.
+    end_addr = get_label(labels, ".end")
+    if end_addr >= CODE_CEILING:
+        print(f"FAIL: .end (&{end_addr:04X}) >= code ceiling (&{CODE_CEILING:04X})", file=sys.stderr)
+        return 1
+
+    # Section budget checks.
+    errors = []
+    print("Section budget summary:")
+    print(f"  {'Section':<25s} {'Start':>6s} {'End':>6s} {'Used':>6s} {'Budget':>6s} {'Free':>6s}")
+    print(f"  {'-'*25} {'-'*6} {'-'*6} {'-'*6} {'-'*6} {'-'*6}")
+    for start_lbl, end_lbl, desc, budget in SECTION_BUDGETS:
+        start_addr = get_label(labels, start_lbl)
+        end_addr = get_label(labels, end_lbl)
+        used = end_addr - start_addr
+        free = budget - used
+        marker = " **OVER**" if used > budget else ""
+        print(f"  {desc:<25s} &{start_addr:04X} &{end_addr:04X} {used:6d} {budget:6d} {free:6d}{marker}")
+        if used > budget:
+            errors.append(f"{desc}: {used} bytes exceeds budget of {budget} (over by {used - budget})")
+
+    total_end = get_label(labels, ".end")
+    total_start = get_label(labels, ".start")
+    total_used = total_end - total_start
+    print(f"\n  Total: {total_used} bytes (&{total_start:04X}..&{total_end:04X}), ceiling &{CODE_CEILING:04X}, headroom {CODE_CEILING - total_end}")
+
+    if errors:
+        print("\nFAIL: Section budget exceeded:", file=sys.stderr)
+        for e in errors:
+            print(f"  {e}", file=sys.stderr)
+        return 1
 
     return 0
 

@@ -1,3 +1,4 @@
+.room_exits_start
 ; room_exits.asm
 ; Room transitions via edge exits.
 

@@ -1,3 +1,4 @@
+.input_start
 ; input.asm
 ; Keyboard sampling and small helpers.
 

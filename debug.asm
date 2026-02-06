@@ -1,3 +1,4 @@
+.debug_start
 ; debug.asm
 ; Small in-game debug helpers.
 
@@ -16,9 +17,9 @@ DEBUG_BOX_RETICLE_COL= &FF    ; logical colour 3 (yellow)
     AND #DEBUG_FLAG_BOXES
     BEQ dcb_done
 
-    ; Debug draw touches screen memory; keep it atomic like our blitters.
     PHP
     SEI
+    JSR shadow_screen_on
 
     ; temp_sprite_ptr := base screen_ptr
     LDA screen_ptr
@@ -89,6 +90,7 @@ DEBUG_BOX_RETICLE_COL= &FF    ; logical colour 3 (yellow)
     DEX
     BNE dcb_stripe_loop
 
+    JSR shadow_screen_off
     PLP
   .dcb_done
     RTS
@@ -105,6 +107,7 @@ DEBUG_BOX_RETICLE_COL= &FF    ; logical colour 3 (yellow)
 
     PHP
     SEI
+    JSR shadow_screen_on
 
     ; temp_sprite_ptr := base screen_ptr
     LDA screen_ptr
@@ -168,6 +171,7 @@ DEBUG_BOX_RETICLE_COL= &FF    ; logical colour 3 (yellow)
     DEX
     BNE drb_stripe_loop
 
+    JSR shadow_screen_off
     PLP
   .drb_done
     RTS

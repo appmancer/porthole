@@ -1,3 +1,4 @@
+.portal_teleport_start
 ; portal_teleport.asm
 ; Portal entry detection + teleportation (including momentum mapping).
 
@@ -538,11 +539,10 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         STA anim_dir
         STA last_anim_dir
 
-        ; Clear grounded state and any in-flight jump arc; preserve vertical velocity.
+        ; Clear grounded state and any in-flight jump rise; preserve vertical velocity.
         LDA #0
         STA char_grounded
-        STA jump_active
-        STA jump_phase
+        STA jump_timer
 
         ; Avoid immediate re-trigger / edge effects.
         LDA #0

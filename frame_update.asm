@@ -1,3 +1,4 @@
+.frame_update_start
 ; Per-frame update helpers.
 
 
@@ -21,14 +22,6 @@
     STA reticle_dirty
   .murm_shift_clear_done
     CLC
-    RTS
-
-
-; Clear per-frame jump debug bits (keep other debug flags intact).
-.clear_jump_debug
-    LDA debug_flags
-    AND #&F9
-    STA debug_flags
     RTS
 
 

@@ -1,3 +1,4 @@
+.room_runtime_start
 ; room_runtime.asm
 ; Runtime helpers for room pointers and screen address calculation.
 

@@ -1,261 +1,312 @@
-# PORTHOLE Memory Map (Working Draft)
+# PORTHOLE Memory Map
 
-This document defines which address ranges are safe for what, given our current
-Master-only + shadow-screen approach.
+BBC Master 128. BeebAsm. Emulator: B2.
 
-Everything in this document is negotiable. The goal is to make current
-assumptions explicit so we can change them deliberately (and update code/docs in
-one place) rather than by accident.
+This is the authoritative reference for every usable byte.
 
-Key rule: once we enable the Master shadow screen, `&3000..&7FFF` becomes a
-*banked window* (main vs shadow). Code that needs to render to the shadow
-framebuffer must have the CPU mapped to the shadow bank for that window.
-Therefore, do not store long-lived tables/assets in `&3000..&7FFF` unless you
-explicitly intend them to be volatile (screen/scratch).
+---
 
-## Invariants
+## Current State
 
-- The playfield framebuffer address is `&5800` (MODE 5 layout); rendering code
-  assumes this.
-- `&5800..&7FFF` must be treated as volatile screen bytes (visible playfield +
-  agreed scratch region).
-- Any asset/table needed *during rendering* must live either:
-  - outside `&3000..&7FFF` (main RAM below the shadow window), or
-  - in sideways RAM (SWRAM) at `&8000..&BFFF` with explicit ROMSEL banking.
+Shadow is **not active**. OSBYTE 114 does not set ACCCON shadow bits in
+B2. Everything runs in main RAM. Screen at &5800-&7FFF leaves 571 bytes
+free. LYNNE (20KB shadow RAM) is completely unused.
 
-## Frame Pipeline Mapping (PoP-style)
+## Target State
 
-We follow a strict update-then-render pipeline:
+Set ACCCON D+X manually. Screen moves to LYNNE. Main RAM &5800-&7FFF
+freed for code. Toggle X between update (X=0, main RAM) and render
+(X=1, LYNNE).
 
-- **Update phase (most of frame):** CPU maps `&3000..&7FFF` to **main** RAM.
-  - Safe to read/write level/material working data in this window.
-  - No direct writes to the displayed framebuffer.
-- **Render phase (immediately after VSYNC):** CPU maps `&3000..&7FFF` to
-  **shadow** RAM.
-  - Writes to `&5800..&7FFF` affect the displayed framebuffer.
-  - Rendering must only read render-time assets from low RAM (`< &3000`) or
-    SWRAM (`&8000..&BFFF` via ROMSEL).
-
-## Main vs Shadow (How To Think About It)
-
-The Master provides a banked RAM window at `&3000..&7FFF`:
-
-- **Main bank view**: normal RAM contents.
-- **Shadow bank view**: a second physical RAM bank.
-
-Only one view is CPU-visible at a time for this address range.
-
-When we are rendering to the shadow framebuffer (our normal gameplay mode), the
-CPU must be mapped to the **shadow** view for `&3000..&7FFF`. That means:
-
-- Reads from `&58xx` return framebuffer bytes (not “main RAM data”).
-- Writes to `&58xx` modify the framebuffer (and will be displayed).
-
-So: putting sprite/mask tables at addresses like `&58CE` is unsafe because the
-renderer can’t reliably read them while it is mapped to shadow for drawing.
-
-## Main RAM (CPU)
-
-- `&0000..&00FF`: ZP
-  - This project calls MOS routines during gameplay (e.g. `OSBYTE` for VSYNC/input),
-    so we must not trample MOS/VDU/Econet-owned ZP.
-  - **Policy:** keep all game ZP allocations in `&00..&8F`.
-    - Avoid `&90..&FF` (MOS/VDU/Econet workspace).
-    - Reserve `&70..&8F` for a small fixed pointer set relied on by hot paths.
-      - Invariants (see `main.asm` + `tools/check-build-invariants`):
-        - `screen_ptr = &0071`
-        - `tilemap_ptr = &0079`
-        - `portalmap_ptr = &007B`
-- `&0100..&01FF`: stack
-- `&1900..`: main code + stable game state
-
-### Shadow window (banked)
-
-- `&3000..&7FFF`: Master LYNNE/shadow window (banked main vs shadow)
-  - When mapped to **shadow**, the CRTC-visible framebuffer lives here.
-  - When mapped to **main**, it can be used as general RAM, but then you are
-    not drawing to the displayed shadow framebuffer.
-
-## Reserved Regions (This Project)
-
-These are the address allocations we want to keep stable as the project grows.
-
-Everything here is a *current working allocation*, not a permanent promise.
-
-### Allocation Table (Working)
-
-Main view (`&3000..&7FFF` mapped to main; used during update/load):
-
-- `&3000..&3FFF` (4KB): `solid` plane
-- `&4000..&4FFF` (4KB): `portalable`/interaction plane (future)
-- `&5000..&56FF` (~1.75KB): room working buffers
-- `&5800..&7FFF` (10KB): update/load scratch (not readable during render)
-
-Shadow view (`&3000..&7FFF` mapped to shadow; used during render):
-
-- `&5800..&77FF` (8KB): framebuffer playfield
-- `&7800..&7FFF` (2KB): render scratch
-- `&3000..&57FF`: currently unused (keep clear unless explicitly allocated)
-
-### Shadow view: framebuffer + small render scratch
-
-These are the only parts we plan to actively write during the post-VSYNC render
-phase.
-
-- `&5800..&77FF`: framebuffer playfield (8KB)
-- `&7800..&7FFF`: render scratch (2KB)
-  - save-under buffers
-  - small render lists
-  - 256-byte streaming buffer(s) (used during load, not during render)
-
-### Shadow view: `&3000..&57FF` (render-only tables)
-
-We can reserve a small portion of this window for **render-only lookup tables**
-that are read exclusively during the post-VSYNC render phase (while the CPU is
-mapped to shadow).
-
-Proposed allocation:
-
-- `&3000..&37FF`: render lookup tables (row bases, column offsets, stripe tables)
-- `&3800..&57FF`: reserve for future render-only tables
-
-Policy:
-
-- Only read these tables while mapped to **shadow** during render.
-- Never read them during update (main mapping), to avoid bank hazards.
-- Keep them small and deterministic; avoid anything that must persist through
-  MOS screen clears unless we explicitly manage it.
-
-### Main view: update-time working set
-
-This is where we want bulky per-room/per-level data that update/physics uses.
-It does not need to be readable during the render phase.
-
-Suggested initial layout (main view):
-
-- `&3000..&3FFF`: `solid` plane working set (4KB, 1bpp for 128x256)
-- `&4000..&4FFF`: `portalable` plane (future) or other interaction plane (4KB)
-- `&5000..&56FF`: level/room working buffers (tilemap cache, portal layer, room
-  scratch)
-- `&5700..&57FF`: guard/headroom
-- `&5800..&7FFF`: extra update/load buffers (main view)
-  - Important: overlaps framebuffer addresses; not readable while mapped to
-    shadow. Use only in update/load.
-
-## Framebuffer (shadow bank)
-
-- `&5800..&77FF`: playfield framebuffer (16 rows x 512 bytes/row = 8KB)
-- `&7800..&7FFF`: below-playfield scratch (2KB)
-  - Current uses:
-    - `CHELL_SAVE_UNDER_BASE = &7800` (128 bytes)
-    - `RETICLE_SAVE_UNDER_BASE = &7880` (64 bytes)
-    - `SOLID_TILE_PLANE = &7A00` (256 bytes)
-    - `CHELLDATA_BUF = &7B00` (256-byte file streaming buffer)
-
-### What can live in `&5800..&7FFF` in *main* RAM?
-
-Physically, main RAM also has bytes “under” the shadow window. However, while
-we are mapped to shadow for rendering, the CPU cannot see those main bytes.
-
-We can only use main-`&5800..&7FFF` if we temporarily switch the window back to
-the main view.
-
-Policy (given the pipeline above):
-
-- During **render phase**: treat main-`&5800..&7FFF` as unavailable.
-- During **update/room-load phase**: main-`&5800..&7FFF` is usable RAM.
-  - Great candidates: per-room level working buffers, portalability layers,
-    decompression workspaces.
-
-In other words: it can be a convenient scratchpad, but it should not contain
-tables/assets that the renderer expects to read while drawing.
-
-## Safe Resident Code/Data Placement
-
-Given our renderer only writes `&5800..&77FF` (plus specific scratch areas), the
-shadow bank region below the screen base is safe for long-lived code/data:
-
-When mapped to shadow (render phase), `&3000..&57FF` is still banked RAM, but it
-is *not* part of the framebuffer footprint we actively draw into.
-
-So `&3000..&57FF` (shadow view) is a reasonable place for resident, render-safe
-tables **only if** we never rely on them while the window is mapped to main.
-
-In practice, to keep things simple:
-
-- Keep *code* and critical always-visible tables below `&3000`.
-- Use the banked window (`&3000..&7FFF`) primarily for update-phase working
-  data (main view) and framebuffer+sandbox (shadow view).
-
-Important:
-
-- Avoid MOS screen-clear calls after init (they may touch more of screen RAM).
-- Keep our own clear/draw routines confined to the framebuffer + agreed scratch.
-
-## Sideways RAM (SWRAM)
-
-We avoid placing large/static asset tables in `&3000..&7FFF` so that rendering
-can keep the shadow mapping stable.
-
-Bank roles (current):
-
-- SWRAM bank `CHELL_SWRAM_BANK_DEFAULT = 4`:
-  - DFS file `CHDATA` loaded at runtime to `&8000..&BFFF`
-  - Chell sprites + masks + reticle sprites
-
-- SWRAM bank `OBJ_SWRAM_BANK_DEFAULT = 5`:
-  - DFS file `OBJDAT` loaded at runtime to `&8000..&BFFF`
-  - Portal/object stamp sprites + masks (all the data currently generated into
-    `sprites/generated_objects_{sprites,masks}.asm`)
-
-Render policy:
-
-- Never bank-switch mid-blit.
-- For a given render pass, group operations by `ROMSEL` bank:
-  - Page `chell_bank` once, draw Chell/reticle.
-  - Page `obj_bank` once, stamp portals/objects.
-
-## Immediate Fix Target (Done)
-
-Object stamp sprite/mask data now lives in SWRAM (DFS file `OBJDAT`) and is
-loaded at runtime into `OBJ_SWRAM_BANK_DEFAULT` at `&8000..&BFFF`.
-
-This keeps portal/object stamp sprite reads out of the banked shadow window
-(`&3000..&7FFF`) during the render phase.
-
-## Level Data Storage (Draft)
-
-Working set needed per room at runtime:
-
-- Tilemap: 16x16 bytes = 256 bytes per room
-- Portalable layer (if stored as a 16x16 byte layer): 256 bytes per room
-- Any per-room object instance table pointers
-
-Options:
-
-1) Small levels resident in RAM (current)
-   - Keep generated room tables in the main binary and point
-     `tilemap_ptr/portalmap_ptr` at them.
-   - Pros: simplest, no streaming.
-   - Cons: caps total level data size.
-
-2) Stream level data from DFS per room (recommended as we scale)
-   - Store room tilemaps/layers compressed or raw as DFS files.
-   - On room transition, stream into a buffer (e.g. `CHELLDATA_BUF` or another
-     scratch buffer), then copy/decompress into a resident working buffer.
-   - Pros: virtually unlimited content.
-   - Cons: more loader code.
-
-3) Use additional SWRAM banks for level blobs
-   - Treat SWRAM as “asset ROM”: keep big level blobs there.
-   - Pros: fast access.
-   - Cons: bank management complexity.
-
-## Practical Size Limits (Rule Of Thumb)
-
-- Anything that must be readable while drawing should not live in main RAM
-  addresses `&3000..&7FFF`.
-- The banked window starts at `&3000`. If we want to freely switch main/shadow
-  each frame, it’s simplest if the *main binary code* stays below `&3000`.
-  - That implies a practical ceiling of ~`&1900..&2FFF` for resident code/data.
-- Bulk assets belong in SWRAM banks and are paged in explicitly.
+---
+
+## ACCCON (&FE34)
+
+```
+Bit 7: IRR  — Interrupt request
+Bit 6: TST  — Test mode
+Bit 5: IFJ  — 1MHz bus / cartridge
+Bit 4: ITU  — Internal/external Tube
+Bit 3: Y    — HAZEL (&C000-&DFFF)
+Bit 2: X    — CPU accesses LYNNE at &3000-&7FFF (unconditional)
+Bit 1: E    — VDU driver conditional shadow access (opcode-address gated)
+Bit 0: D    — CRTC displays LYNNE
+```
+
+Toggle X without disturbing other bits:
+```asm
+LDA &FE34 : ORA #&04 : STA &FE34   ; X=1, CPU sees LYNNE
+LDA &FE34 : AND #&FB : STA &FE34   ; X=0, CPU sees main RAM
+```
+
+Source: BBC Master Series Service Manual, ACCCON section.
+
+---
+
+## Frame Pipeline
+
+```
+MAIN LOOP:
+  [X=0]    JSR wait_vsync
+  [X=0->1] LDA &FE34 : ORA #&04 : STA &FE34
+  [X=1]    JSR render_frame_simple    ; screen writes hit LYNNE
+  [X=1->0] LDA &FE34 : AND #&FB : STA &FE34
+  [X=0]    JSR sample_keys
+  [X=0]    JSR update_chell           ; physics, collision, game logic
+  [X=0]    JMP main_loop
+```
+
+**Constraint:** when X=1, code at &3000-&7FFF reads from LYNNE, not main
+RAM. Render-phase code must live below &3000.
+
+---
+
+## Zero Page (&00-&8F)
+
+| Range   | Used | Free | Purpose                                          |
+|---------|-----:|-----:|--------------------------------------------------|
+| &00-&6F |   96 |   16 | Game state (pos, vel, flags, animation, portals)  |
+| &70-&82 |   19 |    0 | Fixed pointers (screen_ptr@&71, tilemap_ptr@&79, portalmap_ptr@&7B) |
+| &83-&8F |    0 |   13 | Available                                         |
+| **Total** | **115** | **29** |                                           |
+| &90-&FF |    — |    — | **RESERVED: MOS/VDU/Econet**                     |
+
+Invariants enforced by `tools/check-build-invariants`:
+- `screen_ptr` = &71
+- `tilemap_ptr` = &79
+- `portalmap_ptr` = &7B
+
+---
+
+## Main RAM (CPU view when X=0)
+
+### Below &3000 — render-safe zone
+
+This code executes during both update and render phases. When shadow is
+enabled, render-phase subroutines must reside here (below &3000).
+
+| Range       | Size  | Purpose                                         |
+|-------------|------:|-------------------------------------------------|
+| &0000-&00FF |   256 | Zero page                                       |
+| &0100-&01FF |   256 | 6502 stack                                      |
+| &0200-&08FF | 1,792 | MOS workspace                                   |
+| &0900-&0DFF | 1,280 | Available (LYNNE access trampolines, buffers)    |
+| &0E00-&18FF | 2,816 | Available (boot loader, reclaimable after boot)  |
+| &1900-&2FFF | 5,888 | Code: render-safe zone (visible when X=0 or X=1)|
+
+Reorder includes so render sections assemble into &1900-&2FFF.
+
+| Section               | Current | Budget | Purpose                           |
+|-----------------------|--------:|-------:|-----------------------------------|
+| main.asm              |     567 |    768 | Init, main loop, render dispatch  |
+| render.asm (blitters) |   1,650 |  1,792 | Blit, save/restore under, tilemap render |
+| render_state.asm      |     283 |    512 | draw_character_current, draw_reticle_current |
+| room_runtime.asm      |     168 |    256 | update_screen_ptr_from_char/reticle |
+| debug.asm             |     196 |    256 | Debug box drawing (render-time)   |
+| Trampoline code       |       0 |    128 | LYNNE data access helpers         |
+| **Total**             | **2,864** | **3,712** |                              |
+| **Remaining**         |         | **2,176** | Reserve for render growth     |
+
+### Above &3000 — update-only zone
+
+Game logic, physics, data. Not accessible during render phase.
+
+| Section                    | Current | Budget | Purpose                           |
+|----------------------------|--------:|-------:|-----------------------------------|
+| portal_teleport.asm        |   1,349 |  1,536 | Portal entry detection, teleport  |
+| room_exits.asm             |     627 |    768 | Room/screen transitions           |
+| reticle.asm                |   1,565 |  1,792 | Reticle movement, LOS, validation |
+| input.asm                  |     265 |    512 | Keyboard sampling                 |
+| portal_place.asm           |   1,089 |  1,280 | Portal placement logic            |
+| frame_update.asm           |     793 |  1,024 | Per-frame update orchestration    |
+| persistent_objects.asm     |   1,448 |  1,664 | Buttons, pads, exits, cubes       |
+| ui.asm                     |      86 |    256 | Cursor disable, palette           |
+| loaders.asm                |     768 |  1,024 | Shadow enable, SWRAM file I/O     |
+| timing.asm                 |      21 |     64 | VSync wait                        |
+| movement.asm               |     789 |  1,024 | Walk, jump, collision, gravity    |
+| sprites.asm                |     294 |    512 | Sprite pointer tables             |
+| masks.asm                  |     294 |    512 | Mask pointer tables               |
+| tilemap.asm                |   1,117 |  1,280 | Room tilemaps, exits, object defs |
+| lookup_tables.asm          |      48 |    128 | times16 table                     |
+| persistent_objects_data.asm|     304 |    768 | Object arrays, solid_phys_plane, SOLID_TILE_PLANE |
+| generated_tiles.asm        |   1,836 |      — | Tile pixel data **(→ SWRAM bank 6)** |
+| **Subtotal**               |**12,693**|**14,144**|                                |
+| **After tile relocation**  |**10,857**|**14,144**| Tiles move to SWRAM bank 6    |
+
+**New feature budget (main RAM above existing code, up to &7FFF):**
+
+Update-only zone capacity with shadow: 20,480 bytes (&3000-&7FFF).
+After tile relocation and existing budgets: 20,480 − 14,144 = **6,336** free.
+
+| Feature              | Budget | Notes                                     |
+|----------------------|-------:|-------------------------------------------|
+| Laser system         |  2,560 | Beam tracing on tile grid, portal redirection, crossroads tiles, signal driving to targets |
+| Fizzler logic        |    512 | Region check: clear portals, drop cube, block LOS |
+| Acid/hazard          |    512 | Fatal surface, death + level reset trigger |
+| Sound engine         |  1,536 | Playback, channel mixing, event triggers  |
+| Cube portal physics  |    512 | Cubes falling through portals autonomously |
+| Growth reserve       |    704 | Headroom for existing sections            |
+| **Total new**        | **6,336** |                                        |
+
+### Main RAM summary
+
+```
+Render-safe zone (&1900-&2FFF):    5,888 bytes available
+  Current:   2,864    Budgeted: 3,712    Free: 2,176
+
+Update-only zone (&3000-&7FFF):   20,480 bytes available (with shadow)
+  Current:  10,857    Budgeted: 14,144   Free for new features: 6,336
+  (Before tile relocation: 12,693 current)
+
+Total main RAM (&1900-&7FFF):     26,368 bytes
+  Current:  13,721    Free: 12,647
+  (Before tile relocation: 15,557 current, 10,811 free)
+```
+
+---
+
+## LYNNE / Shadow RAM (CPU view when X=1)
+
+Visible at &3000-&7FFF when ACCCON X=1. CRTC displays this when D=1.
+
+### Screen (&5800-&77FF)
+
+| Address       | Size  | Purpose                                      |
+|---------------|------:|----------------------------------------------|
+| &5800-&77FF   | 8,192 | MODE 5 framebuffer (visible playfield)       |
+
+### Render scratch (&7800-&7FFF)
+
+| Address       | Size | Purpose                                       |
+|---------------|-----:|-----------------------------------------------|
+| &7800-&787F   |  128 | Chell save-under buffer                       |
+| &7880-&78BF   |   64 | Reticle save-under buffer                     |
+| &78C0-&79FF   |  320 | Free (render list constants are dead code)    |
+| &7A00-&7AFF   |  256 | Free (SOLID_TILE_PLANE moves to main RAM)     |
+| &7B00-&7FFF   | 1,280| Free (CHELLDATA_BUF is boot-only, portal snap is dead code) |
+| **Total scratch** | **2,048** |                                          |
+| **Used**      |  192 | Save-under buffers only                       |
+| **Free**      | 1,856| Available for render-phase scratch            |
+
+### Data area (&3000-&57FF)
+
+10,240 bytes. Accessed by setting X=1 from trampoline code below &3000.
+Written at init or room-load time. Read during render (X=1) or via
+trampoline during update.
+
+| Address       | Size  | Budget | Purpose                              |
+|---------------|------:|-------:|--------------------------------------|
+| &3000-&37FF   | 2,048 |  2,048 | Level tilemap data (rooms 0-3)       |
+| &3800-&3FFF   | 2,048 |  2,048 | Portal layers + exit tables          |
+| &4000-&47FF   | 2,048 |  2,048 | Sound effect sample data             |
+| &4800-&4FFF   | 2,048 |  2,048 | Precomputed render lookup tables     |
+| &5000-&57FF   | 2,048 |  2,048 | Future rooms / additional level data |
+| **Total**     |**10,240**|**10,240**|                                  |
+
+---
+
+## SWRAM (&8000-&BFFF, paged via ROMSEL)
+
+Only one SWRAM bank maps to &8000-&BFFF at a time. No executable code
+in SWRAM — bank switching during rendering conflicts with sprite data
+access.
+
+| Bank | Used    | Free    | Purpose                                     |
+|------|--------:|--------:|---------------------------------------------|
+| 4    | ~16,000 |    ~384 | Chell sprite+mask bitmaps (CHDATA)          |
+| 5    |   6,784 |   9,600 | Object sprite+mask bitmaps (OBJDAT)         |
+| 6    |   1,836 |  14,548 | Tileset data (tile pixel bitmaps)           |
+| 7    |       0 |  16,384 | Available                                   |
+
+### Bank 5 — object sprites
+
+| Allocation              | Size  | Notes                               |
+|-------------------------|------:|-------------------------------------|
+| Portal sprites + cube   | 6,784 | Vertical, horizontal, back portals + cube |
+| **Free**                | **9,600** | Additional object sprites (fizzler, laser, acid) |
+
+### Bank 6 — tileset data
+
+Tile pixel bitmaps. Currently 54 tiles (1,836 bytes) in main RAM — moving
+here frees 1,836 bytes of main RAM and allows growth to 16KB (up to ~480
+tiles). Paged in briefly during tilemap rendering, then paged back to
+bank 4/5 for sprite blitting.
+
+| Allocation              | Size  | Notes                               |
+|-------------------------|------:|-------------------------------------|
+| Tile bitmaps (current)  | 1,836 | 54 tiles × 34 bytes each            |
+| **Free**                |**14,548**| Room for ~428 additional tiles    |
+
+### Bank 7 — available
+
+16,384 bytes. Potential uses: additional level data, music data, level
+streaming buffers.
+
+---
+
+## Collision Planes
+
+| Plane            | Size | Location           | Rebuilt            | Used by                  |
+|------------------|-----:|--------------------|--------------------|--------------------------|
+| SOLID_TILE_PLANE |  256 | Main RAM (data section) | Init + room change | LOS, portal validation  |
+| solid_phys_plane |  256 | Main RAM (data section) | Every frame        | Movement collision      |
+
+Both are needed: portals/LOS must ignore cubes; collision must not.
+solid_phys_plane copies SOLID_TILE_PLANE then stamps cube positions.
+
+With shadow enabled, both live in main RAM (accessible during update,
+X=0). SOLID_TILE_PLANE moves from its current &7A00 address into the
+persistent_objects_data section.
+
+---
+
+## Boot Loader (PROGRAM, &0E00-&18FF)
+
+Separate binary assembled at &0E00. Loads LOADSCR, OBJDAT, CHDATA,
+PORTHLE, then jumps to game. Memory is reclaimable after boot.
+
+| Range       | Size  | Post-boot use                              |
+|-------------|------:|--------------------------------------------|
+| &0900-&0DFF | 1,280 | LYNNE access trampolines, staging buffers  |
+| &0E00-&18FF | 2,816 | General-purpose buffers, decompression workspace |
+| **Total**   | **4,096** |                                        |
+
+---
+
+## Total Budget
+
+| Region                    | Capacity | Allocated | Free    |
+|---------------------------|----------:|----------:|--------:|
+| Zero page (&00-&8F)      |       144 |       115 |      29 |
+| Main RAM (&1900-&7FFF)   |    26,368 |    13,721 |  12,647 |
+| LYNNE (&3000-&7FFF)      |    20,480 |     8,384 |  12,096 |
+| SWRAM Bank 4              |    16,384 |   ~16,000 |    ~384 |
+| SWRAM Bank 5              |    16,384 |     6,784 |   9,600 |
+| SWRAM Bank 6              |    16,384 |     1,836 |  14,548 |
+| SWRAM Bank 7              |    16,384 |         0 |  16,384 |
+| Reclaimable (&0900-&18FF) |     4,096 |         0 |   4,096 |
+| **Total**                 |**116,624**| **46,840**|**69,784**|
+
+Without shadow: main RAM free = 571 bytes.
+With shadow + tile relocation: main RAM free = 12,647 bytes. Plus 12,096
+LYNNE + 9,600 bank 5 + 14,548 bank 6 + 16,384 bank 7 = **65,275 bytes**
+of usable space.
+
+---
+
+## Implementation Steps
+
+1. **Enable shadow** — write ACCCON D=1, X=1 in init; verify CRTC
+   displays LYNNE in B2
+2. **Add X toggle** — X=1 before render, X=0 after, in main loop
+3. **Relocate render code** — reorder includes so blitters + screen-write
+   routines assemble below &3000
+4. **Move tiles to SWRAM bank 6** — update build to load tile data into
+   bank 6, add bank-switching in tilemap renderer
+5. **Move SOLID_TILE_PLANE** — from &7A00 into main RAM data section
+6. **Remove dead buffers** — render list (&78C0), portal snap (&7FF0),
+   CHELLDATA_BUF (&7B00) constants
+7. **Raise code ceiling** — build checks from &5800 to &7FFF
+8. **Per-section budgets** — add to `tools/check-build-invariants`
+9. **Test SWRAM banks 6-7** — verify writable in B2
+10. **Populate LYNNE** — move level data into &3000-&57FF

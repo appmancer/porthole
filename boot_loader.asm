@@ -69,6 +69,9 @@ ORG &0E00
     JSR loader_load_chdata_bank
     LDA #3
     STA LOADER_STAGE_ADDR
+    JSR loader_load_tildat_bank
+    LDA #6
+    STA LOADER_STAGE_ADDR
 
     ; Hide screen corruption during final game load.
     ; MODE 7 uses minimal screen RAM.
@@ -88,6 +91,8 @@ ORG &0E00
     STA obj_bank
     LDA loader_chell_bank_sel
     STA chell_bank
+    LDA loader_tile_bank_sel
+    STA tile_bank
 
     LDA #5
     STA LOADER_STAGE_ADDR
@@ -402,6 +407,15 @@ ORG &0E00
     STA loader_chell_bank_sel
     RTS
 
+.loader_load_tildat_bank
+    LDA #TILE_SWRAM_BANK_DEFAULT
+    LDX #<loader_fname_tildat
+    LDY #>loader_fname_tildat
+    JSR loader_load_file_to_swr
+    LDA loader_active_bank
+    STA loader_tile_bank_sel
+    RTS
+
 
 ; --- Data ---
 
@@ -414,6 +428,8 @@ ORG &0E00
     EQUS "OBJDAT",13
 .loader_fname_chdata
     EQUS "CHDATA",13
+.loader_fname_tildat
+    EQUS "TILDAT",13
 .loader_fname_game
     EQUS "PORTHLE",13
 
@@ -448,6 +464,9 @@ ORG &0E00
     EQUB 0
 
 .loader_chell_bank_sel
+    EQUB 0
+
+.loader_tile_bank_sel
     EQUB 0
 
 .loader_cksum_file

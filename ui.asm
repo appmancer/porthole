@@ -1,3 +1,4 @@
+.ui_start
 ; ui.asm
 ; Small UI/OS-facing helpers (cursor/palette/input).
 

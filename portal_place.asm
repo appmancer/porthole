@@ -1,3 +1,4 @@
+.portal_place_start
 ; Portal placement, erase/redraw, and stamping.
 
 ; Place a portal by updating the current room's static-object entry.

@@ -1,3 +1,4 @@
+.loaders_start
 ; loaders.asm
 ; Shadow-screen and sideways-RAM loader utilities.
 ; (VSync/delay helpers live in timing.asm.)
@@ -9,14 +10,23 @@
 ;
 ; Kept in its own file so `main.asm` stays navigable.
 
-; Enable Master shadow screen.
-; Master MOS supports selecting screen memory in shadow RAM.
-; OSBYTE 114 is used by the MOS for shadow screen selection.
-.enable_shadow_screen
-    LDA #114
-    LDX #1
-    LDY #0
-    JSR OSBYTE
+; Enable Master shadow screen via direct ACCCON register writes.
+;
+; OSBYTE 114 does not set the ACCCON D+X bits in B2, so we write
+; ACCCON (&FE34) directly:
+;   D (bit 0) = 1: CRTC displays from LYNNE (shadow &3000-&7FFF)
+;   X (bit 2) = 1: CPU reads/writes LYNNE at &3000-&7FFF
+;
+; We clear LYNNE to black before setting D=1 so there is no garbage flash.
+; After init, X is cleared back to 0 (CPU sees main RAM).
+.enable_shadow_acccon
+    ; Clear LYNNE screen to black before switching display.
+    ; clear_lynne_screen lives in the render-safe zone (below &3000)
+    ; because it sets ACCCON X=1 — code above &3000 cannot do that safely.
+    JSR clear_lynne_screen
+
+    ; Set D=1 — CRTC now displays LYNNE.
+    LDA ACCCON : ORA #&01 : STA ACCCON
     RTS
 
 

@@ -1,3 +1,4 @@
+.persistent_objects_start
 ; persistent_objects.asm
 ; Persistent level-global objects + signals.
 ;
@@ -1415,12 +1416,12 @@ IF 0
     TAX
 
     ; Blocked by solid world tile?
-    LDA SOLID_TILE_PLANE,X
+    LDA solid_tile_plane,X
     BEQ ucg_tile0_ok
     JMP ucg_next
   .ucg_tile0_ok
     INX
-    LDA SOLID_TILE_PLANE,X
+    LDA solid_tile_plane,X
     BEQ ucg_tile1_ok
     JMP ucg_next
   .ucg_tile1_ok
@@ -2605,12 +2606,12 @@ ENDIF
     CLC
     ADC temp_y
     TAX
-    LDA SOLID_TILE_PLANE,X
+    LDA solid_tile_plane,X
     BEQ tpc_tile0_ok
     JMP tpc_fail
   .tpc_tile0_ok
     INX
-    LDA SOLID_TILE_PLANE,X
+    LDA solid_tile_plane,X
     BEQ tpc_tile1_ok
     JMP tpc_fail
   .tpc_tile1_ok
