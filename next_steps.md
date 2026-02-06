@@ -2,10 +2,135 @@
 
 This file tracks concrete, prioritized actions.
 Detailed background/design context lives in `project plan.md`.
+Architecture reference auto-loaded from `MEMORY.md`.
+Full overhaul rationale in `.claude/plans/serene-herding-kahan.md`.
 
-## P0: Bugs
+---
 
-None.
+## P0: Movement Overhaul (3 tasks, do in order)
+
+### Task 1: Fix direction-change early return + collision asymmetry
+
+Two small edits that fix the "can't jump left" bug and collision asymmetry.
+
+**Edit A — Remove early return on direction change**
+
+File: `movement.asm`, lines 70-72. Current code:
+
+```asm
+      ; Jump started: return early so apply_gravity sees jump_active.
+      SEC
+      RTS
+```
+
+Delete these 2 lines (the `SEC` and `RTS`). The direction-change block at lines
+62-69 should fall through to `.pmk_dir_ok` and continue to velocity + movement
+code. This removes a 1-update-frame delay on direction changes and fixes the
+missing horizontal drift when pressing LEFT+JUMP while facing right.
+
+**Edit B — Remove redundant collision early exit**
+
+File: `movement.asm`, line 322. Current code:
+
+```asm
+.will_collide_left
+    JSR calc_char_x
+    BEQ collide_left          ; ← delete this line
+```
+
+Delete the `BEQ collide_left` line. `step_left_pixel` (lines 241-246) already
+prevents calling `will_collide_left` when x=0, so this is dead code. Removing it
+makes the function symmetric with `will_collide_right` which has no such early exit.
+
+**Test:**
+- `./build.sh` succeeds, `.end < &5800`
+- Boot in B2: walk left/right into walls (symmetric stopping distance)
+- Face right, press LEFT+JUMP: Chell jumps leftward (was broken before)
+- Face left, press LEFT+JUMP: still works
+- Jump straight up (RETURN only): no horizontal drift
+- Change direction while walking: no hesitation/pause frame
+
+---
+
+### Task 2: Restructure poll_move_keys into clean pipeline
+
+Replace the tangled `poll_move_keys` (movement.asm:18-162) with a clean
+`update_chell_movement` that separates concerns and has a single vx writer.
+
+**New pipeline (inside update_chell_movement):**
+
+```
+1. update_grounded_state     ; ground probe (skip during jump arc)
+2. update_facing_and_intent  ; keys → anim_dir, move_held, redraw flag
+3. resolve_horizontal_vx     ; THE single vx writer (replaces 2 competing writers)
+4. apply_horizontal_velocity ; pixel stepping with collision (KEEP AS-IS)
+5. update_run_animation      ; anim_cooldown + frame advance
+6. sync last_anim_dir
+```
+
+**resolve_horizontal_vx rules (single vx writer):**
+- Grounded + key held: `vx = ±WALK_VELOCITY`
+- Grounded + no key: `vx = 0`
+- Airborne + key held + `|vx| <= WALK_VELOCITY`: `vx = ±WALK_VELOCITY`
+- Airborne + `|vx| > WALK_VELOCITY`: preserve vx (portal fling)
+- Airborne + no key: preserve vx (momentum)
+
+**Also: remove vx-setting from ag_start_jump** (movement.asm:440-458).
+Delete `ag_jump_set_vx_left`, `ag_jump_set_vx_right`, and the no-key `STA char_vx`.
+Jump start only sets: `jump_active=1, jump_phase=0, char_grounded=0, char_vy=0`.
+The vx is already correct from `resolve_horizontal_vx` which ran earlier.
+
+**Update caller in frame_update.asm:128:**
+Replace `JSR poll_move_keys` with `JSR update_chell_movement`.
+
+**Keep these functions unchanged:**
+- `apply_horizontal_velocity` (movement.asm:177-235) — well-structured step loop
+- `step_left_pixel` / `step_right_pixel` — correct pixel stepping
+- `apply_gravity` (movement.asm:406-555) — just remove the vx writes from jump start
+- `step_up_8` / `step_down_8` — correct stripe stepping
+- All collision probes (`will_collide_*`, `is_char_grounded`)
+- `calc_char_x` / `calc_char_y`
+
+**Test:**
+- All Task 1 tests still pass
+- Portal fling: emerge from portal with high vx, air control does NOT override it
+- Walk off ledge: falls correctly, can steer in air
+- Jump with no direction key: straight up (vx=0)
+- `./build.sh` succeeds, `.end < &5800`
+
+---
+
+### Task 3: Remove dead ZP, constants, and dead code
+
+Cleanup pass after the restructure is working.
+
+**Remove dead ZP variables (main.asm):**
+- `gravity_cooldown` (line ~38) — never read
+- `rise_cooldown` (line ~39) — never read
+- `fall_cooldown` (line ~40) — never read
+- `move_cooldown` (line ~70) — never read (only written in reticle.asm)
+
+**Remove dead write in reticle.asm:**
+- Find `STA move_cooldown` and delete it (variable is never read)
+
+**Remove dead constants (main.asm):**
+- `GRAVITY_ACCEL`, `GRAVITY_UP_PERIOD`, `GRAVITY_DOWN_PERIOD`
+- `JUMP_VELOCITY`, `RISE_STEP_PERIOD`, `FALL_STEP_PERIOD`
+- (Keep `TERMINAL_VELOCITY_DOWN/UP` — used by portal_teleport.asm)
+
+**Remove dead code (main.asm):**
+- Check if `step_char_tile` (~lines 739-766) is called anywhere. If not, delete it.
+
+**Remove init writes for deleted variables (main.asm init section):**
+- Delete any `STA gravity_cooldown`, `STA rise_cooldown`, `STA fall_cooldown`,
+  `STA move_cooldown` in the init block.
+
+**Test:**
+- `./build.sh` succeeds
+- `.end` address should be a few bytes lower than before
+- Full play-test: everything still works
+
+---
 
 ## P1: Gameplay Interactions
 
@@ -49,56 +174,7 @@ None.
 ## P2: Follow-ups
 
 1) Cubes: gravity + portals
-   
+
    - Cubes should interact with portals.
      - If a portal opens beneath a cube, the cube should fall through.
-      - Cubes should be flung by portals (preserve momentum mapping like Chell).
-
-## P0: Plan — Simplified Movement + Size Recovery (Option A)
-
-Goal: get the build running again with a short, fast hop movement model, while
-shrinking code size enough to stay below the framebuffer boundary.
-
-### Movement rewrite (short hop)
-
-- Replace current vertical physics with a small LUT-driven state machine.
-- LUT (Option A): 10-frame hop, stripes per update:
-  `-1,-1,-1,-1,0,+1,+1,+1,+1,+1`
-- State variables:
-  - `jump_active` (0/1)
-  - `jump_phase` (0..JUMP_LUT_LEN)
-  - `char_grounded` remains authoritative for standing
-  - `char_vy` becomes informational (portal intent)
-- Flow per update:
-  - If `jump_active` and `jump_phase < JUMP_LUT_LEN`, apply LUT step.
-  - If blocked (ceiling/ground), end jump immediately.
-  - If LUT ends, transition to fall: 1 stripe down per update until grounded.
-- Keep horizontal movement simple (no acceleration changes yet).
-
-### Size recovery (build must run)
-
-- Remove the heavy cube portal/physics code from the mainline branch.
-- Keep that work on a reference branch (`heavy-physics-baseline`).
-- Verify `.end < &5800` after each change.
-
-### Current breakage context (why build is "broken")
-
-- When code grows past `&5800`, render writes overwrite code and crash ("Bad program").
-- This already happened once (`.end` > `&5800`), and we backed it out by reverting
-  heavy cube-physics changes to keep a reference branch.
-- Even after restoring code size, the runtime is still broken (tiles incorrect;
-  no Chell or objects), so we should treat the build as broken until we can
-  boot and see the expected room + sprites.
-
-### Memory map alignment
-
-- Keep code + update-time data below `&3000`.
-- Shadow view `&3000..&57FF` reserved for render-only lookup tables.
-- No render-time reads from main banked window.
-
-### Micro-task order
-
-1) Remove heavy cube physics from mainline (done by reverting to baseline files).
-2) Finish movement rewrite using LUT (Option A).
-3) Build + boot test (verify tiles, Chell, objects render).
-4) Play-test feel; tune only LUT values if needed.
+     - Cubes should be flung by portals (preserve momentum mapping like Chell).

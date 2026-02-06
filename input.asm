@@ -119,10 +119,19 @@
   .sample_no_portal_b
   
 
+      ; Edge-triggered keys (accumulate until update consumes).
+      LDA keys_held
+      STA temp
+      LDA keys_prev
+      EOR #&FF
+      AND temp
+      ORA keys_pressed
+      STA keys_pressed
+      LDA temp
+      STA keys_prev
+
        ; --- Action button (SPACE) ---
       ; Keep separate from keys_held (we've run out of bits).
-      LDA action_held
-      STA action_prev
       LDA #0
       STA action_held
 
@@ -133,6 +142,15 @@
       LDA #1
       STA action_held
  .sample_no_action
+
+      ; Edge-triggered action (accumulate until update consumes).
+      LDA action_prev
+      EOR #&FF
+      AND action_held
+      ORA action_pressed
+      STA action_pressed
+      LDA action_held
+      STA action_prev
 
        ; --- Aim sampling ---
      ; aim_held: 0=none, 1=up, 2=down

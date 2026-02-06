@@ -4,162 +4,153 @@
 DEBUG_FLAG_JUMP_SEEN     = 2
 DEBUG_FLAG_JUMP_BLOCKED  = 4
 
- ; Poll Z/X for left/right movement (single-pixel).
+ ; Horizontal movement pipeline (replaces poll_move_keys).
  ;
- ; Uses OSBYTE 129 (INKEY) "scan for a particular key":
- ;   On entry:  Y=&FF, X=&80..&FF (negative INKEY number)
- ;   On exit:   XY=&FFFF if pressed, else XY=&0000
- ; Horizontal position is represented as:
- ;   char_tile_pos      = 8px steps (cell_x)
- ;   char_byte_offset   = 0 or 8 (4px step within a cell, MODE5 column stride)
- ;   char_pixel_offset  = 0..3 (1px subpixel via pre-shifted sprites)
+ ; Pipeline:
+ ;   1. update_grounded_state    — ground probe (skip during jump arc)
+ ;   2. update_facing_and_intent — keys → anim_dir, move_held, redraw flag
+ ;   3. resolve_horizontal_vx    — single vx writer
+ ;   4. apply_horizontal_velocity — pixel stepping with collision (unchanged)
+ ;   5. update_run_animation     — anim_cooldown + frame advance
+ ;   6. sync last_anim_dir
  ;
  ; Output: C=1 if sprite needs redraw.
-.poll_move_keys
-      ; Track move key transitions so we can redraw into idle.
+.update_chell_movement
       LDA move_held
       STA last_move_held
 
       LDA #0
       STA temp                  ; redraw flag
-      STA move_held             ; clear each frame; set when key held
+      STA move_held             ; clear each frame; set below if key held
 
-      ; Refresh grounded state before jump check (when not already jumping).
+      ; --- 1. Update grounded state (skip during jump arc) ---
       LDA jump_active
-      BNE pmk_ground_done
+      BNE ucm_ground_done
       JSR is_char_grounded
-      BCC pmk_ground_clear
+      BCC ucm_ground_clear
       LDA #1
       STA char_grounded
-      JMP pmk_ground_done
-    .pmk_ground_clear
+      JMP ucm_ground_done
+    .ucm_ground_clear
       LDA #0
       STA char_grounded
-    .pmk_ground_done
+    .ucm_ground_done
 
- .after_jump
+      ; --- 2. Update facing and intent ---
+      LDA keys_held
+      AND #1
+      BEQ ucm_check_right
+      LDA #0
+      STA anim_dir
+      JMP ucm_have_dir
 
-    ; Determine intended facing from keys (prefer left if both held).
-    LDA keys_held
-    AND #1
-    BEQ pmk_check_right
-    LDA #0
-    STA anim_dir
-    JMP pmk_have_dir
+    .ucm_check_right
+      LDA keys_held
+      AND #2
+      BEQ ucm_no_dir
+      LDA #1
+      STA anim_dir
 
- .pmk_check_right
-    LDA keys_held
-    AND #2
-    BEQ pmk_no_dir
-    LDA #1
-    STA anim_dir
-
- .pmk_have_dir
-      ; Mark movement intent.
+    .ucm_have_dir
       LDA #1
       STA move_held
 
       ; If direction changed, force a redraw so we flip immediately.
       LDA anim_dir
       CMP last_anim_dir
-      BEQ pmk_dir_ok
-      STA last_anim_dir
+      BEQ ucm_dir_ok
+      LDA #1
+      STA temp
+    .ucm_dir_ok
+      JMP ucm_resolve_vx
+
+    .ucm_no_dir
+      ; No key held this frame.
+      ; If we just released movement keys while grounded, redraw to idle.
+      LDA last_move_held
+      BEQ ucm_resolve_vx
+      LDA char_grounded
+      BEQ ucm_resolve_vx
       LDA #1
       STA temp
 
-      ; Jump started: return early so apply_gravity sees jump_active.
-      SEC
-      RTS
- .pmk_dir_ok
+      ; --- 3. Resolve horizontal velocity (single vx writer) ---
+    .ucm_resolve_vx
+      LDA move_held
+      BNE ucm_vx_key_held
 
-      ; Input only sets vx while grounded, or if airborne and already slow.
+      ; No key held: grounded → kill vx; airborne → preserve momentum.
       LDA char_grounded
-      BNE pmk_set_walk_vx
+      BEQ ucm_vx_done
+      LDA #0
+      STA char_vx
+      JMP ucm_vx_done
 
-      ; Airborne: keep fling momentum. Allow light air control only if |vx| <= WALK_VELOCITY.
+    .ucm_vx_key_held
+      ; Key held + grounded: always set walk vx.
+      LDA char_grounded
+      BNE ucm_set_walk_vx
+
+      ; Key held + airborne: only override if |vx| <= WALK_VELOCITY.
+      ; Preserve fling momentum when |vx| > WALK_VELOCITY.
       LDA char_vx
-      BEQ pmk_set_walk_vx
-      BMI pmk_air_abs_neg
+      BEQ ucm_set_walk_vx
+      BMI ucm_air_abs_neg
       CMP #(WALK_VELOCITY+1)
-      BCC pmk_set_walk_vx
-      JMP pmk_after_vx
- .pmk_air_abs_neg
+      BCC ucm_set_walk_vx
+      JMP ucm_vx_done
+    .ucm_air_abs_neg
       EOR #&FF
       CLC
       ADC #1
       CMP #(WALK_VELOCITY+1)
-      BCC pmk_set_walk_vx
-      JMP pmk_after_vx
+      BCC ucm_set_walk_vx
+      JMP ucm_vx_done
 
- .pmk_set_walk_vx
+    .ucm_set_walk_vx
       LDA anim_dir
-      BEQ pmk_set_vx_left
+      BEQ ucm_set_vx_left
       LDA #WALK_VELOCITY
       STA char_vx
-      JMP pmk_after_vx
- .pmk_set_vx_left
+      JMP ucm_vx_done
+    .ucm_set_vx_left
       LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
       STA char_vx
-      JMP pmk_after_vx
+    .ucm_vx_done
 
- .pmk_no_dir
-      ; No key held: stop movement intent, but keep animation phase.
-      LDA #0
-      STA move_held
-
-      ; If grounded, kill horizontal velocity.
-      LDA char_grounded
-      BEQ pmk_no_key_air
-      LDA #0
-      STA char_vx
- .pmk_no_key_air
-
-      ; If we just released movement keys while grounded, redraw to idle.
-      LDA last_move_held
-      BEQ pmk_after_vx
-      LDA char_grounded
-      BEQ pmk_after_vx
-      LDA #1
-      STA temp
-
- .pmk_after_vx
-      ; Apply horizontal velocity (vx magnitude matters).
+      ; --- 4. Apply horizontal velocity ---
       JSR apply_horizontal_velocity
       STA temp_y               ; moved pixels this frame
-      BEQ pmk_after_move
+      BEQ ucm_after_move
 
       LDA #1
       STA temp
 
-      ; Advance animation every 4 pixels moved, but at most once per frame.
-      ; (High vx can move many pixels; don't spin the run cycle too fast.)
-      ; Keep anim_cooldown bounded (older code treated it as small).
+      ; --- 5. Update run animation ---
       LDA anim_cooldown
       AND #3
-      STA anim_cooldown
-      LDA anim_cooldown
       CLC
       ADC temp_y
       STA anim_cooldown
       CMP #4
-      BCC pmk_after_move
+      BCC ucm_after_move
       SEC
       SBC #4
       STA anim_cooldown
       JSR step_anim
 
- .pmk_after_move
-      ; Keep facing, but sync last_anim_dir.
+    .ucm_after_move
+      ; --- 6. Sync last_anim_dir ---
       LDA anim_dir
       STA last_anim_dir
 
-     LDA temp
-     BEQ no_redraw
-     SEC
-     RTS
-  .no_redraw
-     CLC
-     RTS
+      LDA temp
+      BEQ ucm_no_redraw
+      SEC
+      RTS
+    .ucm_no_redraw
+      CLC
+      RTS
  
  .step_anim
     INC anim_frame
@@ -319,7 +310,6 @@ DEBUG_FLAG_JUMP_BLOCKED  = 4
 ; Output: C=1 if collision.
 .will_collide_left
     JSR calc_char_x
-    BEQ collide_left
 
     ; Centerline walls: allow 4px overlap into solid tiles.
     ; Instead of testing the pixel just outside the left edge (x-1), test
@@ -419,7 +409,7 @@ DEBUG_FLAG_JUMP_BLOCKED  = 4
     BNE ag_check_jump
     JMP ag_check_ground
   .ag_check_jump
-    LDA keys_held
+    LDA keys_pressed
     AND #4
     BNE ag_start_jump
     JMP ag_check_ground
@@ -436,25 +426,7 @@ DEBUG_FLAG_JUMP_BLOCKED  = 4
     LDA #0
     STA char_grounded
     STA char_vy
-
-    ; Set horizontal jump velocity only if a move key is held.
-    ; (If no direction is held, jump straight up.)
-    LDA keys_held
-    AND #1
-    BNE ag_jump_set_vx_left
-    LDA keys_held
-    AND #2
-    BNE ag_jump_set_vx_right
-    LDA #0
-    STA char_vx
-    JMP ag_jump_step
-  .ag_jump_set_vx_right
-    LDA #WALK_VELOCITY
-    STA char_vx
-    JMP ag_jump_step
-  .ag_jump_set_vx_left
-    LDA #&FF                 ; -WALK_VELOCITY (WALK_VELOCITY=1)
-    STA char_vx
+    ; vx already set by resolve_horizontal_vx; A=0=jump_phase.
     JMP ag_jump_step
 
   .ag_jump_active
@@ -466,7 +438,7 @@ DEBUG_FLAG_JUMP_BLOCKED  = 4
     STA jump_active
     JMP ag_check_ground
 
-.ag_jump_step
+  .ag_jump_step
     TAX
     LDA jump_lut,X
     STA char_vy

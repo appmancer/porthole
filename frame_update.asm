@@ -125,7 +125,7 @@
  .unm_skip_hide
 
     ; Normal mode: input -> update horizontal movement/anim.
-    JSR poll_move_keys
+    JSR update_chell_movement
     BCC unm_skip_dirty_move
     LDA #1
     STA chell_dirty

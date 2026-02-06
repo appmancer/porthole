@@ -190,6 +190,7 @@ RENDER_NEW_PTR_HI     = RENDER_LIST_BASE + 7   ; 2 bytes
 PORTAL_REQ_SNAP_POS   = &7FF0   ; (x<<4)|y
 PORTAL_REQ_SNAP_ORIENT= &7FF1
 
+
 GRAVITY_ACCEL              = 1      ; vy += 1 per gravity tick (8px steps)
 GRAVITY_UP_PERIOD           = 3      ; gravity tick period while rising
 GRAVITY_DOWN_PERIOD         = 2      ; gravity tick period while falling
@@ -402,10 +403,10 @@ CHELL_FALL_LEFT_BASE        = 44
       STA teleport_last_exit_kind
       STA carried_cube_idx
 
-     ; Clear debug/temporary state.
-      LDA #0
-      STA debug_flags
-      STA sim_phase
+      ; Clear debug/temporary state.
+       LDA #0
+       STA debug_flags
+       STA sim_phase
 
     ; Default: face right.
     LDA #1
@@ -618,22 +619,6 @@ CHELL_FALL_LEFT_BASE        = 44
 ; Updates Chell state from input and physics.
 ; Sets dirty_flag if redraw is needed.
   .update_chell
-       ; Compute edge-triggered keys at update rate.
-       LDA keys_prev
-       EOR #&FF
-       AND keys_held
-       STA keys_pressed
-       LDA keys_held
-       STA keys_prev
-
-       ; action_pressed = action_held & ~action_prev
-       LDA action_prev
-       EOR #&FF
-       AND action_held
-       STA action_pressed
-       LDA action_held
-       STA action_prev
-
        ; Reset per-object dirty flags.
        LDA #0
        STA chell_dirty
@@ -692,6 +677,11 @@ CHELL_FALL_LEFT_BASE        = 44
  .aim_change_done
         LDA aim_held
         STA last_aim_held
+
+        ; Clear latched edge inputs now that update consumed them.
+        LDA #0
+        STA keys_pressed
+        STA action_pressed
 
         ; Precompute Chell render decisions for next frame.
         LDA chell_dirty
