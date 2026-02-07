@@ -1885,6 +1885,9 @@ ENDIF
     CPY #OBJ_COUNT
     BNE usos_driver_loop
 
+    ; Beam targets as signal drivers (laser → target → channel).
+    JSR update_beam_targets
+
     ; Pass 2: consumers (exit)
     LDY #0
   .usos_cons_loop

@@ -174,6 +174,29 @@ def _parse_room_id(dst: str, *, path: Path) -> str:
 
 _DIR_MAP: dict[str, int] = {"left": 0, "right": 1, "up": 2, "down": 3}
 
+_EMITTER_TILE_IDS = frozenset(range(19, 27))
+# Step vector opposite to beam travel direction (used to walk from wall to emitter).
+_OPPOSITE_STEP: dict[int, tuple[int, int]] = {0: (1, 0), 1: (-1, 0), 2: (0, 1), 3: (0, -1)}
+
+
+def _find_emitter(
+    tiles: list[int], wall_x: int, wall_y: int, dir_val: int, room_name: str
+) -> tuple[int, int]:
+    """Walk from wall-hit tile opposite to beam direction to find emitter tile."""
+    dx, dy = _OPPOSITE_STEP[dir_val]
+    x, y = wall_x + dx, wall_y + dy
+    while 0 <= x <= 15 and 0 <= y <= 15:
+        tile = tiles[y * 16 + x]
+        if tile in _EMITTER_TILE_IDS:
+            return (x, y)
+        if tile >= 32:  # solid wall
+            break
+        x += dx
+        y += dy
+    raise ValueError(
+        f"{room_name}: no emitter tile (19-26) found for laser at wall ({wall_x},{wall_y})"
+    )
+
 
 def _parse_exits_and_objects_from_tmx(
     root: ET.Element,
@@ -885,12 +908,14 @@ def main() -> None:
     # -----------------------------------------------------------------
     # Laser emitters and targets (level-global)
     #
-    # laser_defs entry format (LASER_DEF_SIZE = 5 bytes):
+    # laser_defs entry format (LASER_DEF_SIZE = 7 bytes):
     #   0: room_index
     #   1: wall_tile_x (tile where beam terminates)
     #   2: wall_tile_y
     #   3: dir (0=left, 1=right, 2=up, 3=down — beam travel direction)
     #   4: channel (0..7)
+    #   5: emitter_x (tile x of emitter, found by walking tilemap)
+    #   6: emitter_y (tile y of emitter)
     #
     # target_defs entry format (TARGET_DEF_SIZE = 4 bytes):
     #   0: room_index
@@ -898,24 +923,25 @@ def main() -> None:
     #   2: tile_y
     #   3: channel (0..7)
 
-    all_lasers: list[tuple[int, int, int, int, int]] = []   # (room, tx, ty, dir, chan)
+    all_lasers: list[tuple[int, int, int, int, int, int, int]] = []  # (room, tx, ty, dir, chan, emitter_x, emitter_y)
     all_targets: list[tuple[int, int, int, int]] = []        # (room, tx, ty, chan)
     for r in rooms:
         for tx, ty, d, c, _id in r.lasers:
-            all_lasers.append((r.index, tx, ty, d, c))
+            ex, ey = _find_emitter(r.tiles, tx, ty, d, r.name)
+            all_lasers.append((r.index, tx, ty, d, c, ex, ey))
         for tx, ty, c, _id in r.targets:
             all_targets.append((r.index, tx, ty, c))
 
     lines.append(f"LASER_COUNT = {len(all_lasers)}")
-    lines.append(f"LASER_DEF_SIZE = 5")
+    lines.append(f"LASER_DEF_SIZE = 7")
     lines.append("")
     lines.append(".laser_defs")
     if not all_lasers:
         lines.append("    ; (no lasers)")
     else:
         flat_l: list[int] = []
-        for room_idx, tx, ty, d, c in all_lasers:
-            flat_l.extend([room_idx, tx, ty, d, c])
+        for room_idx, tx, ty, d, c, ex, ey in all_lasers:
+            flat_l.extend([room_idx, tx, ty, d, c, ex, ey])
         lines.append(format_eqbytes(flat_l, per_line=16))
     lines.append("")
 
