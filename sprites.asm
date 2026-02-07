@@ -63,6 +63,9 @@ EQUW chell_fall_l_x0
 EQUW chell_fall_l_x0
 EQUW chell_fall_l_x0
 
+; Dead pose (single frame, no subpixel or direction variants).
+EQUW chell_dead_x0
+
 EQUW test_sprite16x32       ; Debug 16x32 sprite (screen byte order)
 
 ; Overlay sprite table (16x16, two stripes). Drawn at Chell Y+16.

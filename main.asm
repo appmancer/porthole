@@ -160,7 +160,9 @@ ORG &00
   ; Debug flags.
   ; bit0: show debug boxes for sprite footprints.
   .debug_flags          SKIP 1
- 
+
+  .char_dead            SKIP 1    ; 0=alive, 1=dead (waiting for keypress)
+
  ORG &1900
 
 
@@ -234,6 +236,9 @@ OBJ_TYPE_BUTTON              = 2
 OBJ_TYPE_PAD                 = 3
 OBJ_TYPE_EXIT                = 4
 
+; Hazard tile IDs. Touching any of these kills Chell.
+TILE_ACID                    = 11
+
 CHELL_W_PX                   = 16
 CHELL_H_PX                   = 32
 
@@ -249,6 +254,9 @@ CHELL_JUMP_RIGHT_BASE       = 32
 CHELL_JUMP_LEFT_BASE        = 36
 CHELL_FALL_RIGHT_BASE       = 40
 CHELL_FALL_LEFT_BASE        = 44
+
+; Dead Chell sprite (single frame, no subpixel or direction variants).
+CHELL_DEAD_BASE              = 48
 
 .start
     ; PROGRAM sets MODE 5, but reassert it here for safety.
@@ -396,6 +404,7 @@ CHELL_FALL_LEFT_BASE        = 44
        LDA #0
        STA debug_flags
        STA sim_phase
+       STA char_dead
 
     ; Default: face right.
     LDA #1
@@ -623,10 +632,31 @@ CHELL_FALL_LEFT_BASE        = 44
        LDA reticle_active
        STA reticle_prev_active
 
+       ; Death state: freeze gameplay, wait for any new keypress to restart.
+       LDA char_dead
+       BEQ uc_alive
+
+       ; Any new keypress or action press restarts the level.
+       LDA keys_pressed
+       ORA action_pressed
+       BEQ uc_dead_wait
+       JMP restart_level
+     .uc_dead_wait
+       ; Clear consumed inputs and compute dirty flag.
+       LDA #0
+       STA keys_pressed
+       STA action_pressed
+       JSR compute_dirty_flag
+       RTS
+
+     .uc_alive
        ; Reticle mode vs normal mode.
        JSR maybe_update_reticle_mode
        BCS update_finish
        JSR update_normal_mode
+
+       ; Hazard check: acid/goo kills Chell on contact.
+       JSR check_acid_death
 
   .update_finish
         ; While reticle mode is active, gameplay time is frozen.

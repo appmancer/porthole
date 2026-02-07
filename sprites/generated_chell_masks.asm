@@ -539,6 +539,15 @@
     EQUB &FF,&FF,&EE,&CC,&88,&88,&CC,&EE,&FF,&FF,&77,&33,&33,&33,&11,&11
     EQUB &00,&00,&00,&00,&00,&00,&00,&DD,&00,&00,&00,&00,&00,&00,&CC,&DD
     EQUB &11,&00,&00,&00,&00,&00,&11,&FF,&00,&00,&00,&00,&11,&33,&FF,&FF
+.chell_dead_x0_mask
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF
+    EQUB &FF,&00,&00,&77,&77,&77,&FF,&FF,&FF,&00,&00,&EE,&EE,&DD,&FF,&FF
+    EQUB &FF,&00,&DD,&DD,&DD,&BB,&FF,&FF,&99,&00,&00,&00,&22,&00,&99,&FF
 .reticle_x0_mask
     EQUB &FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&CC,&88,&88,&11,&11,&33,&33
     EQUB &FF,&33,&11,&11,&88,&88,&CC,&CC,&FF,&FF,&FF,&FF,&FF,&FF,&FF,&FF

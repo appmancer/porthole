@@ -24,10 +24,9 @@ Architecture reference auto-loaded from `MEMORY.md`.
      - `laser_target` as signal driver when lit.
      - `spawner` as signal consumer (rising edge spawns a cube).
 
-4) Acid + fizzler regions
+4) ~~Acid~~ ✓ + fizzler regions
 
-   - Parse `acid` and `fizzler` rectangles from TMX meta.
-   - Acid: kill Chell on contact, reset on next key press.
+   - ~~Acid: kill Chell on contact, reset on next key press.~~ DONE
    - Fizzler: always active; clears portals and drops carried cube.
    - Block portal LOS through fizzlers.
 
@@ -50,3 +49,13 @@ Architecture reference auto-loaded from `MEMORY.md`.
    - Cubes should interact with portals.
      - If a portal opens beneath a cube, the cube should fall through.
      - Cubes should be flung by portals (preserve momentum mapping like Chell).
+
+2) Falling + flinging (high-speed portal traversal)
+
+   - At some point jumping becomes falling; Chell accelerates and moves faster.
+   - Quick-shot straight-down already works while falling.
+   - Velocity must be preserved through portals — enter a floor portal fast,
+     exit a wall portal fast (horizontal fling across gaps).
+   - Requires: higher terminal velocity, velocity mapping through portal
+     orientations (vt/vn decomposition already in portal_teleport.asm),
+     possibly swept collision detection to avoid tunnelling at high speeds.

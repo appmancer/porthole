@@ -52,6 +52,9 @@
     EQUW chell_fall_l_x0_mask
     EQUW chell_fall_l_x0_mask
 
+    ; Dead pose (single frame).
+    EQUW chell_dead_x0_mask
+
     EQUW test_sprite16x32_mask
 
 .overlay_mask_table

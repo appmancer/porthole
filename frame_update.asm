@@ -218,6 +218,79 @@
      RTS
 
 
+; Check if Chell overlaps an acid/goo tile. If so, restart the level.
+;
+; char_tile_pos encodes (cell_y << 4 | cell_x), which is also the tilemap
+; index for Chell's top-left tile. Chell is 2x2 tiles. If char_y_offset != 0
+; she straddles a third row, so we check that too.
+;
+; Clobbers: A,Y
+.check_acid_death
+    ; Top-left tile
+    LDY char_tile_pos
+    LDA (tilemap_ptr),Y
+    CMP #TILE_ACID
+    BEQ acid_death
+
+    ; Top-right tile (x+1)
+    INY
+    LDA (tilemap_ptr),Y
+    CMP #TILE_ACID
+    BEQ acid_death
+
+    ; Bottom-left tile (y+1): index + 15 = (x+1) + 15 = next row, same x
+    TYA
+    CLC
+    ADC #15
+    TAY
+    LDA (tilemap_ptr),Y
+    CMP #TILE_ACID
+    BEQ acid_death
+
+    ; Bottom-right tile (y+1, x+1)
+    INY
+    LDA (tilemap_ptr),Y
+    CMP #TILE_ACID
+    BEQ acid_death
+
+    ; If y_offset != 0, Chell straddles a third row.
+    LDA char_y_offset
+    BEQ cad_safe
+
+    ; Third row left
+    TYA
+    CLC
+    ADC #15
+    TAY
+    ; Guard: don't read past tilemap (y+2 row could be off-screen)
+    CPY #0
+    BEQ cad_safe         ; wrapped past 255
+    LDA (tilemap_ptr),Y
+    CMP #TILE_ACID
+    BEQ acid_death
+
+    ; Third row right
+    INY
+    BEQ cad_safe         ; wrapped past 255
+    LDA (tilemap_ptr),Y
+    CMP #TILE_ACID
+    BEQ acid_death
+
+  .cad_safe
+    RTS
+
+  .acid_death
+    LDA #1
+    STA char_dead
+    STA chell_dirty
+    ; Snapshot current held keys so they don't immediately trigger restart.
+    LDA keys_held
+    STA keys_prev
+    LDA action_held
+    STA action_prev
+    RTS
+
+
  ; Quick-shot portal placement (outside reticle mode).
  ;
  ; - On A/S key-down, fire a projected shot (tiles only) and place portal A/B.

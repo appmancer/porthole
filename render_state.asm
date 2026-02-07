@@ -20,9 +20,14 @@
     LDA chell_body_index
     JSR render_character_sprite
 
+    ; Skip overlay when dead.
+    LDA char_dead
+    BNE dcc_no_overlay
+
     ; Overlay
     LDA chell_overlay_index
     JSR render_overlay_sprite
+  .dcc_no_overlay
 
     ; Restore previous ROM selection and caller IRQ state.
     PLA : STA &F4 : STA ROMSEL
@@ -60,6 +65,16 @@
     STA chell_new_ptr
     LDA screen_ptr+1
     STA chell_new_ptr+1
+
+    ; Dead: show dead sprite, no overlay.
+    LDA char_dead
+    BEQ cs_alive
+    LDA #CHELL_DEAD_BASE
+    STA chell_body_index
+    LDA #0
+    STA chell_overlay_index
+    RTS
+  .cs_alive
 
     ; --- Body sprite index ---
     ; Default to idle pose; overwritten below.
