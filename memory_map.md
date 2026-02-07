@@ -8,15 +8,14 @@ This is the authoritative reference for every usable byte.
 
 ## Current State
 
-Shadow is **not active**. OSBYTE 114 does not set ACCCON shadow bits in
-B2. Everything runs in main RAM. Screen at &5800-&7FFF leaves 571 bytes
-free. LYNNE (20KB shadow RAM) is completely unused.
+Shadow is **active**. ACCCON D=1 (CRTC displays LYNNE). X is toggled
+per-blitter: each screen-writing function sets X=1 around its inner loops
+and restores X=0 before returning. All orchestration code runs with X=0.
 
-## Target State
+Tiles are in SWRAM bank 6. Both collision planes (`solid_tile_plane`,
+`solid_phys_plane`) are labeled allocations in `persistent_objects_data.asm`.
 
-Set ACCCON D+X manually. Screen moves to LYNNE. Main RAM &5800-&7FFF
-freed for code. Toggle X between update (X=0, main RAM) and render
-(X=1, LYNNE).
+Code blob: &1900..&507A (14,202 bytes). Ceiling &7800. Headroom 10,118 bytes.
 
 ---
 
@@ -47,17 +46,20 @@ Source: BBC Master Series Service Manual, ACCCON section.
 
 ```
 MAIN LOOP:
-  [X=0]    JSR wait_vsync
-  [X=0->1] LDA &FE34 : ORA #&04 : STA &FE34
-  [X=1]    JSR render_frame_simple    ; screen writes hit LYNNE
-  [X=1->0] LDA &FE34 : AND #&FB : STA &FE34
-  [X=0]    JSR sample_keys
-  [X=0]    JSR update_chell           ; physics, collision, game logic
-  [X=0]    JMP main_loop
+  [X=0]  JSR wait_vsync
+  [X=0]  JSR render_frame_simple    ; blitters toggle X=1 internally
+  [X=0]  JSR sample_keys
+  [X=0]  JSR update_chell           ; physics, collision, game logic
+  [X=0]  JMP main_loop
 ```
 
+X toggling is **per-blitter**, not main-loop level. Each blitter function
+in render.asm sets X=1 before screen access loops and clears X=0 before
+returning. This avoids needing all render-phase orchestration code below
+&3000 — only the blitter inner loops themselves need to be there.
+
 **Constraint:** when X=1, code at &3000-&7FFF reads from LYNNE, not main
-RAM. Render-phase code must live below &3000.
+RAM. Blitter code (which runs with X=1) must live below &3000.
 
 ---
 
@@ -82,61 +84,56 @@ Invariants enforced by `tools/check-build-invariants`:
 
 ### Below &3000 — render-safe zone
 
-This code executes during both update and render phases. When shadow is
-enabled, render-phase subroutines must reside here (below &3000).
+Blitter code that runs with X=1 must reside here. Other code in this zone
+also works fine — it just isn't required to be here.
 
 | Range       | Size  | Purpose                                         |
 |-------------|------:|-------------------------------------------------|
 | &0000-&00FF |   256 | Zero page                                       |
 | &0100-&01FF |   256 | 6502 stack                                      |
 | &0200-&08FF | 1,792 | MOS workspace                                   |
-| &0900-&0DFF | 1,280 | Available (LYNNE access trampolines, buffers)    |
+| &0900-&0DFF | 1,280 | Available (trampolines, buffers)                |
 | &0E00-&18FF | 2,816 | Available (boot loader, reclaimable after boot)  |
 | &1900-&2FFF | 5,888 | Code: render-safe zone (visible when X=0 or X=1)|
 
-Reorder includes so render sections assemble into &1900-&2FFF.
+| Section               | Start  | End    | Used  | Budget | Purpose                           |
+|-----------------------|--------|--------|------:|-------:|-----------------------------------|
+| main.asm              | &1900  | &1B4F  |   591 |    768 | Init, main loop, render dispatch  |
+| render.asm            | &1B4F  | &2254  | 1,797 |  1,856 | Blit, save/restore, tilemap render |
+| render_state.asm      | &2254  | &2375  |   289 |    512 | draw_character_current, draw_reticle_current |
+| room_runtime.asm      | &2375  | &241D  |   168 |    256 | update_screen_ptr_from_char/reticle |
+| debug.asm             | &241D  | &24EB  |   206 |    256 | Debug box drawing                 |
+| lookup_tables.asm     | &24EB  | &251B  |    48 |    128 | times16_table                     |
+| sprites.asm           | &251B  | &2641  |   294 |    512 | Sprite pointer tables             |
+| masks.asm             | &2641  | &2767  |   294 |    512 | Mask pointer tables               |
+| **Total**             |        |        |**3,687**|**4,800**|                                |
+| **Remaining**         |        |        |       |**2,201**| Reserve for render growth       |
 
-| Section               | Current | Budget | Purpose                           |
-|-----------------------|--------:|-------:|-----------------------------------|
-| main.asm              |     567 |    768 | Init, main loop, render dispatch  |
-| render.asm (blitters) |   1,650 |  1,792 | Blit, save/restore under, tilemap render |
-| render_state.asm      |     283 |    512 | draw_character_current, draw_reticle_current |
-| room_runtime.asm      |     168 |    256 | update_screen_ptr_from_char/reticle |
-| debug.asm             |     196 |    256 | Debug box drawing (render-time)   |
-| Trampoline code       |       0 |    128 | LYNNE data access helpers         |
-| **Total**             | **2,864** | **3,712** |                              |
-| **Remaining**         |         | **2,176** | Reserve for render growth     |
+### Above render-safe zone — update-only code
 
-### Above &3000 — update-only zone
+Game logic, physics, data. Runs only with X=0. Can extend up to &7800.
 
-Game logic, physics, data. Not accessible during render phase.
+| Section                    | Start  | End    | Used  | Budget | Purpose                           |
+|----------------------------|--------|--------|------:|-------:|-----------------------------------|
+| portal_teleport.asm        | &2767  | &2CAE  | 1,351 |  1,536 | Portal entry detection, teleport  |
+| room_exits.asm             | &2CAE  | &2F21  |   627 |    768 | Room/screen transitions           |
+| reticle.asm                | &2F21  | &353C  | 1,563 |  1,792 | Reticle movement, LOS, validation |
+| input.asm                  | &353C  | &3645  |   265 |    512 | Keyboard sampling                 |
+| portal_place.asm           | &3645  | &3A86  | 1,089 |  1,280 | Portal placement logic            |
+| frame_update.asm           | &3A86  | &3D9F  |   793 |  1,024 | Per-frame update orchestration    |
+| persistent_objects.asm     | &3D9F  | &4347  | 1,448 |  1,664 | Buttons, pads, exits, cubes       |
+| ui.asm                     | &4347  | &439D  |    86 |    256 | Cursor disable, palette           |
+| loaders.asm                | &439D  | &46A1  |   772 |  1,024 | Shadow enable, SWRAM file I/O     |
+| timing.asm                 | &46A1  | &46B6  |    21 |     64 | VSync wait                        |
+| movement.asm               | &46B6  | &49ED  |   823 |  1,024 | Walk, jump, collision, gravity    |
+| tilemap.asm                | &49ED  | &4E2E  | 1,089 |  1,280 | Room tilemaps, exits, object defs |
+| objects.asm                | &4E2E  | &4E4A  |    28 |    512 | Static object tables              |
+| persistent_objects_data.asm| &4E4A  | &507A  |   560 |    768 | Object arrays, collision planes   |
+| **Total**                  |        |        |**10,515**|**13,504**|                              |
 
-| Section                    | Current | Budget | Purpose                           |
-|----------------------------|--------:|-------:|-----------------------------------|
-| portal_teleport.asm        |   1,349 |  1,536 | Portal entry detection, teleport  |
-| room_exits.asm             |     627 |    768 | Room/screen transitions           |
-| reticle.asm                |   1,565 |  1,792 | Reticle movement, LOS, validation |
-| input.asm                  |     265 |    512 | Keyboard sampling                 |
-| portal_place.asm           |   1,089 |  1,280 | Portal placement logic            |
-| frame_update.asm           |     793 |  1,024 | Per-frame update orchestration    |
-| persistent_objects.asm     |   1,448 |  1,664 | Buttons, pads, exits, cubes       |
-| ui.asm                     |      86 |    256 | Cursor disable, palette           |
-| loaders.asm                |     768 |  1,024 | Shadow enable, SWRAM file I/O     |
-| timing.asm                 |      21 |     64 | VSync wait                        |
-| movement.asm               |     789 |  1,024 | Walk, jump, collision, gravity    |
-| sprites.asm                |     294 |    512 | Sprite pointer tables             |
-| masks.asm                  |     294 |    512 | Mask pointer tables               |
-| tilemap.asm                |   1,117 |  1,280 | Room tilemaps, exits, object defs |
-| lookup_tables.asm          |      48 |    128 | times16 table                     |
-| persistent_objects_data.asm|     304 |    768 | Object arrays, solid_phys_plane, SOLID_TILE_PLANE |
-| generated_tiles.asm        |   1,836 |      — | Tile pixel data **(→ SWRAM bank 6)** |
-| **Subtotal**               |**12,693**|**14,144**|                                |
-| **After tile relocation**  |**10,857**|**14,144**| Tiles move to SWRAM bank 6    |
+**Free space above code (up to &7800 ceiling):** 10,118 bytes.
 
-**New feature budget (main RAM above existing code, up to &7FFF):**
-
-Update-only zone capacity with shadow: 20,480 bytes (&3000-&7FFF).
-After tile relocation and existing budgets: 20,480 − 14,144 = **6,336** free.
+### New feature budget
 
 | Feature              | Budget | Notes                                     |
 |----------------------|-------:|-------------------------------------------|
@@ -145,22 +142,21 @@ After tile relocation and existing budgets: 20,480 − 14,144 = **6,336** free.
 | Acid/hazard          |    512 | Fatal surface, death + level reset trigger |
 | Sound engine         |  1,536 | Playback, channel mixing, event triggers  |
 | Cube portal physics  |    512 | Cubes falling through portals autonomously |
-| Growth reserve       |    704 | Headroom for existing sections            |
-| **Total new**        | **6,336** |                                        |
+| Growth reserve       |  4,486 | Headroom for existing sections            |
+| **Total available**  |**10,118**|                                         |
 
 ### Main RAM summary
 
 ```
-Render-safe zone (&1900-&2FFF):    5,888 bytes available
-  Current:   2,864    Budgeted: 3,712    Free: 2,176
+Render-safe zone (&1900-&2767):   3,687 bytes used of 5,888 available
+  Free: 2,201
 
-Update-only zone (&3000-&7FFF):   20,480 bytes available (with shadow)
-  Current:  10,857    Budgeted: 14,144   Free for new features: 6,336
-  (Before tile relocation: 12,693 current)
+Update-only zone (&2767-&507A):  10,515 bytes used
+  Ceiling: &7800    Free to ceiling: 10,118
 
-Total main RAM (&1900-&7FFF):     26,368 bytes
-  Current:  13,721    Free: 12,647
-  (Before tile relocation: 15,557 current, 10,811 free)
+Total code blob (&1900-&507A):   14,202 bytes
+Total main RAM (&1900-&7800):    24,320 bytes capacity
+  Free: 10,118
 ```
 
 ---
@@ -181,27 +177,27 @@ Visible at &3000-&7FFF when ACCCON X=1. CRTC displays this when D=1.
 |---------------|-----:|-----------------------------------------------|
 | &7800-&787F   |  128 | Chell save-under buffer                       |
 | &7880-&78BF   |   64 | Reticle save-under buffer                     |
-| &78C0-&79FF   |  320 | Free (render list constants are dead code)    |
-| &7A00-&7AFF   |  256 | Free (SOLID_TILE_PLANE moves to main RAM)     |
-| &7B00-&7FFF   | 1,280| Free (CHELLDATA_BUF is boot-only, portal snap is dead code) |
-| **Total scratch** | **2,048** |                                          |
+| &78C0-&7FFF   | 1,856| Free render-phase scratch                     |
+| **Total**     | **2,048** |                                          |
 | **Used**      |  192 | Save-under buffers only                       |
 | **Free**      | 1,856| Available for render-phase scratch            |
 
+Note: &7B00 (`CHELLDATA_BUF`) is used during boot as a SWRAM streaming
+buffer. After boot it is free.
+
 ### Data area (&3000-&57FF)
 
-10,240 bytes. Accessed by setting X=1 from trampoline code below &3000.
-Written at init or room-load time. Read during render (X=1) or via
-trampoline during update.
+10,240 bytes. Currently unused. Accessed by setting X=1 from code below
+&3000. Written at init or room-load time.
 
-| Address       | Size  | Budget | Purpose                              |
-|---------------|------:|-------:|--------------------------------------|
-| &3000-&37FF   | 2,048 |  2,048 | Level tilemap data (rooms 0-3)       |
-| &3800-&3FFF   | 2,048 |  2,048 | Portal layers + exit tables          |
-| &4000-&47FF   | 2,048 |  2,048 | Sound effect sample data             |
-| &4800-&4FFF   | 2,048 |  2,048 | Precomputed render lookup tables     |
-| &5000-&57FF   | 2,048 |  2,048 | Future rooms / additional level data |
-| **Total**     |**10,240**|**10,240**|                                  |
+| Address       | Size  | Purpose (planned)                            |
+|---------------|------:|----------------------------------------------|
+| &3000-&37FF   | 2,048 | Level tilemap data (rooms 0-3)               |
+| &3800-&3FFF   | 2,048 | Portal layers + exit tables                  |
+| &4000-&47FF   | 2,048 | Sound effect sample data                     |
+| &4800-&4FFF   | 2,048 | Precomputed render lookup tables             |
+| &5000-&57FF   | 2,048 | Future rooms / additional level data         |
+| **Total**     |**10,240**|                                            |
 
 ---
 
@@ -209,14 +205,14 @@ trampoline during update.
 
 Only one SWRAM bank maps to &8000-&BFFF at a time. No executable code
 in SWRAM — bank switching during rendering conflicts with sprite data
-access.
+access. Always write &F4 before &FE30; use SEI around bank switches.
 
 | Bank | Used    | Free    | Purpose                                     |
 |------|--------:|--------:|---------------------------------------------|
 | 4    | ~16,000 |    ~384 | Chell sprite+mask bitmaps (CHDATA)          |
 | 5    |   6,784 |   9,600 | Object sprite+mask bitmaps (OBJDAT)         |
 | 6    |   1,836 |  14,548 | Tileset data (tile pixel bitmaps)           |
-| 7    |       0 |  16,384 | Available                                   |
+| 7    |       0 |  16,384 | Available (untested)                        |
 
 ### Bank 5 — object sprites
 
@@ -227,47 +223,42 @@ access.
 
 ### Bank 6 — tileset data
 
-Tile pixel bitmaps. Currently 54 tiles (1,836 bytes) in main RAM — moving
-here frees 1,836 bytes of main RAM and allows growth to 16KB (up to ~480
-tiles). Paged in briefly during tilemap rendering, then paged back to
-bank 4/5 for sprite blitting.
+Tile pixel bitmaps. 54 tiles (1,836 bytes). Paged in during tilemap
+rendering (`render_cell8x16`), then paged back for sprite blitting.
+Capacity for ~480 tiles (16KB).
 
 | Allocation              | Size  | Notes                               |
 |-------------------------|------:|-------------------------------------|
-| Tile bitmaps (current)  | 1,836 | 54 tiles × 34 bytes each            |
+| Tile bitmaps            | 1,836 | 54 tiles x 34 bytes each            |
 | **Free**                |**14,548**| Room for ~428 additional tiles    |
 
 ### Bank 7 — available
 
 16,384 bytes. Potential uses: additional level data, music data, level
-streaming buffers.
+streaming buffers. Not yet tested in B2.
 
 ---
 
 ## Collision Planes
 
-| Plane            | Size | Location           | Rebuilt            | Used by                  |
-|------------------|-----:|--------------------|--------------------|--------------------------|
-| SOLID_TILE_PLANE |  256 | Main RAM (data section) | Init + room change | LOS, portal validation  |
-| solid_phys_plane |  256 | Main RAM (data section) | Every frame        | Movement collision      |
+| Plane            | Size | Location                       | Rebuilt            | Used by                  |
+|------------------|-----:|--------------------------------|--------------------|--------------------------|
+| solid_tile_plane |  256 | persistent_objects_data.asm     | Init + room change | LOS, portal validation  |
+| solid_phys_plane |  256 | persistent_objects_data.asm     | Every frame        | Movement collision      |
 
 Both are needed: portals/LOS must ignore cubes; collision must not.
-solid_phys_plane copies SOLID_TILE_PLANE then stamps cube positions.
-
-With shadow enabled, both live in main RAM (accessible during update,
-X=0). SOLID_TILE_PLANE moves from its current &7A00 address into the
-persistent_objects_data section.
+`solid_phys_plane` copies `solid_tile_plane` then stamps cube positions.
 
 ---
 
 ## Boot Loader (PROGRAM, &0E00-&18FF)
 
 Separate binary assembled at &0E00. Loads LOADSCR, OBJDAT, CHDATA,
-PORTHLE, then jumps to game. Memory is reclaimable after boot.
+TILDAT, PORTHLE, then jumps to game. Memory is reclaimable after boot.
 
 | Range       | Size  | Post-boot use                              |
 |-------------|------:|--------------------------------------------|
-| &0900-&0DFF | 1,280 | LYNNE access trampolines, staging buffers  |
+| &0900-&0DFF | 1,280 | Trampolines, staging buffers               |
 | &0E00-&18FF | 2,816 | General-purpose buffers, decompression workspace |
 | **Total**   | **4,096** |                                        |
 
@@ -275,38 +266,17 @@ PORTHLE, then jumps to game. Memory is reclaimable after boot.
 
 ## Total Budget
 
-| Region                    | Capacity | Allocated | Free    |
-|---------------------------|----------:|----------:|--------:|
-| Zero page (&00-&8F)      |       144 |       115 |      29 |
-| Main RAM (&1900-&7FFF)   |    26,368 |    13,721 |  12,647 |
-| LYNNE (&3000-&7FFF)      |    20,480 |     8,384 |  12,096 |
-| SWRAM Bank 4              |    16,384 |   ~16,000 |    ~384 |
-| SWRAM Bank 5              |    16,384 |     6,784 |   9,600 |
-| SWRAM Bank 6              |    16,384 |     1,836 |  14,548 |
-| SWRAM Bank 7              |    16,384 |         0 |  16,384 |
-| Reclaimable (&0900-&18FF) |     4,096 |         0 |   4,096 |
-| **Total**                 |**116,624**| **46,840**|**69,784**|
+| Region                    | Capacity | Used    | Free    |
+|---------------------------|----------:|--------:|--------:|
+| Zero page (&00-&8F)      |       144 |     115 |      29 |
+| Main RAM (&1900-&7800)   |    24,320 |  14,202 |  10,118 |
+| LYNNE (&3000-&7FFF)      |    20,480 |   8,384 |  12,096 |
+| SWRAM Bank 4              |    16,384 | ~16,000 |    ~384 |
+| SWRAM Bank 5              |    16,384 |   6,784 |   9,600 |
+| SWRAM Bank 6              |    16,384 |   1,836 |  14,548 |
+| SWRAM Bank 7              |    16,384 |       0 |  16,384 |
+| Reclaimable (&0900-&18FF) |     4,096 |       0 |   4,096 |
+| **Total**                 |**114,576**|**47,321**|**67,255**|
 
-Without shadow: main RAM free = 571 bytes.
-With shadow + tile relocation: main RAM free = 12,647 bytes. Plus 12,096
-LYNNE + 9,600 bank 5 + 14,548 bank 6 + 16,384 bank 7 = **65,275 bytes**
-of usable space.
-
----
-
-## Implementation Steps
-
-1. **Enable shadow** — write ACCCON D=1, X=1 in init; verify CRTC
-   displays LYNNE in B2
-2. **Add X toggle** — X=1 before render, X=0 after, in main loop
-3. **Relocate render code** — reorder includes so blitters + screen-write
-   routines assemble below &3000
-4. **Move tiles to SWRAM bank 6** — update build to load tile data into
-   bank 6, add bank-switching in tilemap renderer
-5. **Move SOLID_TILE_PLANE** — from &7A00 into main RAM data section
-6. **Remove dead buffers** — render list (&78C0), portal snap (&7FF0),
-   CHELLDATA_BUF (&7B00) constants
-7. **Raise code ceiling** — build checks from &5800 to &7FFF
-8. **Per-section budgets** — add to `tools/check-build-invariants`
-9. **Test SWRAM banks 6-7** — verify writable in B2
-10. **Populate LYNNE** — move level data into &3000-&57FF
+Main RAM free: 10,118 bytes. Plus 12,096 LYNNE + 9,600 bank 5 +
+14,548 bank 6 + 16,384 bank 7 = **62,746 bytes** of usable space.

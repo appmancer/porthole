@@ -239,6 +239,20 @@ OBJ_TYPE_EXIT                = 4
 ; Hazard tile IDs. Touching any of these kills Chell.
 TILE_ACID                    = 11
 
+; Beam direction constants (beam travel direction).
+BEAM_DIR_LEFT                = 0
+BEAM_DIR_RIGHT               = 1
+BEAM_DIR_UP                  = 2
+BEAM_DIR_DOWN                = 3
+
+; Laser beam tile IDs (from tileset).
+TILE_BEAM_V                  = 15
+TILE_BEAM_H                  = 16
+TILE_BEAM_V_BACK             = 17
+TILE_BEAM_H_BACK             = 18
+TILE_CROSSROADS              = 27
+TILE_CROSSROADS_BACK         = 28
+
 CHELL_W_PX                   = 16
 CHELL_H_PX                   = 32
 
@@ -313,6 +327,7 @@ CHELL_DEAD_BASE              = 48
 
     ; Initialize level-global object state from generated tables.
     JSR init_persistent_objects
+    JSR init_beams
 
     ; Place Chell at the level-defined start tile.
     LDA #LEVEL_START_TILE_POS
@@ -736,6 +751,7 @@ INCLUDE "ui.asm"
 INCLUDE "loaders.asm"
 INCLUDE "timing.asm"
 INCLUDE "movement.asm"
+INCLUDE "laser.asm"
 INCLUDE "tilemap.asm"
 INCLUDE "objects.asm"
 INCLUDE "persistent_objects_data.asm"

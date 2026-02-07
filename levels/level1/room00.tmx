@@ -35,6 +35,7 @@
   <object id="12" name="laser" type="laser" x="0" y="32" width="16" height="16">
    <properties>
     <property name="channel" value="1"/>
+    <property name="dir" value="left"/>
     <property name="id" value="laser_0"/>
    </properties>
   </object>
