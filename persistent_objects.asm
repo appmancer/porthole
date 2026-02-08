@@ -29,6 +29,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 1                 ; button (8x16)
     EQUB 2                 ; pad    (16x16)
     EQUB 2                 ; exit   (16x32)
+    EQUB 0                 ; spawner (tile-based, no sprite)
 
 .obj_redraw_h_tiles
     EQUB 0                 ; type 0 (unused)
@@ -36,6 +37,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 1                 ; button
     EQUB 1                 ; pad
     EQUB 2                 ; exit
+    EQUB 0                 ; spawner (tile-based, no sprite)
 
 ; Initialize per-object runtime arrays from generated obj_defs.
 ; Clobbers: A,X,Y,temp,temp_y
@@ -1888,12 +1890,12 @@ ENDIF
     ; Beam targets as signal drivers (laser → target → channel).
     JSR update_beam_targets
 
-    ; Pass 2: consumers (exit)
+    ; Pass 2: consumers (exit, spawner)
     LDY #0
   .usos_cons_loop
     LDA obj_type,Y
     CMP #OBJ_TYPE_EXIT
-    BNE usos_cons_next
+    BNE usos_chk_spawner
 
     ; open = (sig_state & (1<<channel)) != 0
     LDX obj_channel,Y
@@ -1930,6 +1932,37 @@ ENDIF
     LDA #1
     STA objects_pending
     STA obj_dirty,Y
+    JMP usos_cons_next
+
+  .usos_chk_spawner
+    CMP #OBJ_TYPE_SPAWNER
+    BNE usos_cons_next
+
+    ; Check if spawner's channel is active.
+    LDX obj_channel,Y
+    LDA bit_table,X
+    AND sig_state
+    BEQ usos_cons_next         ; signal not active
+
+    ; Get linked cube index from obj_state.
+    LDX obj_state,Y
+    ; Check if cube is despawned (room == &FF).
+    LDA obj_room,X
+    CMP #&FF
+    BNE usos_cons_next         ; cube already exists
+
+    ; Spawn cube at spawner position.
+    LDA obj_room,Y
+    STA obj_room,X
+    LDA obj_x,Y
+    STA obj_x,X
+    LDA obj_y,Y
+    STA obj_y,X
+
+    ; Mark cube dirty so it gets stamped this frame.
+    LDA #1
+    STA obj_dirty,X
+    STA objects_pending
 
   .usos_cons_next
     INY

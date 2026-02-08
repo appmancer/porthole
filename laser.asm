@@ -223,30 +223,49 @@ MAX_BEAM_STEPS = 32
     LDA portal_a_room
     CMP trace_room
     BNE cwp_check_b
-    LDA portal_a_x
-    CMP trace_wall_x
-    BNE cwp_check_b
-    LDA portal_a_y
-    CMP trace_wall_y
-    BNE cwp_check_b
-    ; Portal A is at wall-hit tile. Check orient is not BACK.
     LDY portal_a_orient
     CPY #PORTAL_ORIENT_BACK
     BEQ cwp_check_b
-    ; Check entry direction matches beam direction.
     LDA entry_dir_table,Y
     CMP trace_dir
     BNE cwp_check_b
+    ; Position check: WALL(1×2) or FLOOR/CEIL(2×1) footprint.
+    LDA trace_wall_x
+    SEC
+    SBC portal_a_x
+    BEQ cwp_a_x_ok
+    CMP #1
+    BNE cwp_check_b
+    CPY #2
+    BCC cwp_check_b            ; WALL: X must be exact
+  .cwp_a_x_ok
+    STA portal_tile_offset     ; save X diff (0 or 1)
+    LDA trace_wall_y
+    SEC
+    SBC portal_a_y
+    BEQ cwp_a_y_ok
+    CMP #1
+    BNE cwp_check_b
+    CPY #2
+    BCS cwp_check_b            ; FLOOR/CEIL: Y must be exact
+  .cwp_a_y_ok
+    ORA portal_tile_offset
+    STA portal_tile_offset     ; combined tile offset (0 or 1)
     ; Portal A matches! Exit from portal B.
     LDA portal_b_enabled
-    BEQ cwp_fail
+    BEQ cwp_fail_tramp
     LDY portal_b_orient
     CPY #PORTAL_ORIENT_BACK
-    BEQ cwp_fail
+    BEQ cwp_fail_tramp
+    JMP cwp_a_exit_ok
+  .cwp_fail_tramp
+    JMP cwp_fail
+  .cwp_a_exit_ok
     LDA portal_b_x
     STA trace_x
     LDA portal_b_y
     STA trace_y
+    JSR apply_tile_offset
     LDA portal_b_room
     STA trace_room
     LDA exit_dir_table,Y
@@ -261,18 +280,34 @@ MAX_BEAM_STEPS = 32
     LDA portal_b_room
     CMP trace_room
     BNE cwp_fail
-    LDA portal_b_x
-    CMP trace_wall_x
-    BNE cwp_fail
-    LDA portal_b_y
-    CMP trace_wall_y
-    BNE cwp_fail
     LDY portal_b_orient
     CPY #PORTAL_ORIENT_BACK
     BEQ cwp_fail
     LDA entry_dir_table,Y
     CMP trace_dir
     BNE cwp_fail
+    ; Position check: WALL(1×2) or FLOOR/CEIL(2×1) footprint.
+    LDA trace_wall_x
+    SEC
+    SBC portal_b_x
+    BEQ cwp_b_x_ok
+    CMP #1
+    BNE cwp_fail
+    CPY #2
+    BCC cwp_fail
+  .cwp_b_x_ok
+    STA portal_tile_offset
+    LDA trace_wall_y
+    SEC
+    SBC portal_b_y
+    BEQ cwp_b_y_ok
+    CMP #1
+    BNE cwp_fail
+    CPY #2
+    BCS cwp_fail
+  .cwp_b_y_ok
+    ORA portal_tile_offset
+    STA portal_tile_offset
     ; Portal B matches! Exit from portal A.
     LDA portal_a_enabled
     BEQ cwp_fail
@@ -283,6 +318,7 @@ MAX_BEAM_STEPS = 32
     STA trace_x
     LDA portal_a_y
     STA trace_y
+    JSR apply_tile_offset
     LDA portal_a_room
     STA trace_room
     LDA exit_dir_table,Y
@@ -389,7 +425,7 @@ MAX_BEAM_STEPS = 32
     STA beam_tile_pos,X
     INC beam_tile_count
     LDA beam_do_redraw
-    BEQ tdb_done
+    BEQ tdb_exit
     LDA trace_x
     TAX
     LDA trace_y
@@ -415,8 +451,11 @@ MAX_BEAM_STEPS = 32
     STA beam_tile_orig,X
     TYA
     STA beam_tile_pos,X
-    ; Choose beam tile: H or V based on direction.
-    ; If original is perpendicular beam, use crossroads instead.
+    ; Choose beam tile based on direction and original tile.
+    ; Back wall → back beam variant. Perpendicular beam → crossroads.
+    LDA beam_tile_orig,X
+    CMP #TILE_PORTALABLE_BACK
+    BEQ tdb_back_wall
     LDA trace_dir
     AND #2
     BNE tdb_stamp_v
@@ -433,6 +472,15 @@ MAX_BEAM_STEPS = 32
     JMP tdb_stamp
   .tdb_stamp_cross
     LDA #TILE_CROSSROADS
+    JMP tdb_stamp
+  .tdb_back_wall
+    LDA trace_dir
+    AND #2
+    BNE tdb_stamp_v_back
+    LDA #TILE_BEAM_H_BACK
+    JMP tdb_stamp
+  .tdb_stamp_v_back
+    LDA #TILE_BEAM_V_BACK
   .tdb_stamp
     LDY trace_tile_off
     STA (tilemap_ptr),Y
@@ -512,28 +560,49 @@ MAX_BEAM_STEPS = 32
     LDA portal_a_room
     CMP trace_room
     BNE ctp_check_b
-    LDA portal_a_x
-    CMP trace_x
-    BNE ctp_check_b
-    LDA portal_a_y
-    CMP trace_y
-    BNE ctp_check_b
     LDY portal_a_orient
     CPY #PORTAL_ORIENT_BACK
     BEQ ctp_check_b
     LDA entry_dir_table,Y
     CMP trace_dir
     BNE ctp_check_b
+    ; Position check: WALL(1×2) or FLOOR/CEIL(2×1) footprint.
+    LDA trace_x
+    SEC
+    SBC portal_a_x
+    BEQ ctp_a_x_ok
+    CMP #1
+    BNE ctp_check_b
+    CPY #2
+    BCC ctp_check_b
+  .ctp_a_x_ok
+    STA portal_tile_offset
+    LDA trace_y
+    SEC
+    SBC portal_a_y
+    BEQ ctp_a_y_ok
+    CMP #1
+    BNE ctp_check_b
+    CPY #2
+    BCS ctp_check_b
+  .ctp_a_y_ok
+    ORA portal_tile_offset
+    STA portal_tile_offset
     ; Redirect through portal B.
     LDA portal_b_enabled
-    BEQ ctp_miss
+    BEQ ctp_miss_tramp
     LDY portal_b_orient
     CPY #PORTAL_ORIENT_BACK
-    BEQ ctp_miss
+    BEQ ctp_miss_tramp
+    JMP ctp_a_exit_ok
+  .ctp_miss_tramp
+    JMP ctp_miss
+  .ctp_a_exit_ok
     LDA portal_b_x
     STA trace_x
     LDA portal_b_y
     STA trace_y
+    JSR apply_tile_offset
     LDA portal_b_room
     STA trace_room
     LDA exit_dir_table,Y
@@ -548,18 +617,34 @@ MAX_BEAM_STEPS = 32
     LDA portal_b_room
     CMP trace_room
     BNE ctp_miss
-    LDA portal_b_x
-    CMP trace_x
-    BNE ctp_miss
-    LDA portal_b_y
-    CMP trace_y
-    BNE ctp_miss
     LDY portal_b_orient
     CPY #PORTAL_ORIENT_BACK
     BEQ ctp_miss
     LDA entry_dir_table,Y
     CMP trace_dir
     BNE ctp_miss
+    ; Position check: WALL(1×2) or FLOOR/CEIL(2×1) footprint.
+    LDA trace_x
+    SEC
+    SBC portal_b_x
+    BEQ ctp_b_x_ok
+    CMP #1
+    BNE ctp_miss
+    CPY #2
+    BCC ctp_miss
+  .ctp_b_x_ok
+    STA portal_tile_offset
+    LDA trace_y
+    SEC
+    SBC portal_b_y
+    BEQ ctp_b_y_ok
+    CMP #1
+    BNE ctp_miss
+    CPY #2
+    BCS ctp_miss
+  .ctp_b_y_ok
+    ORA portal_tile_offset
+    STA portal_tile_offset
     ; Redirect through portal A.
     LDA portal_a_enabled
     BEQ ctp_miss
@@ -570,6 +655,7 @@ MAX_BEAM_STEPS = 32
     STA trace_x
     LDA portal_a_y
     STA trace_y
+    JSR apply_tile_offset
     LDA portal_a_room
     STA trace_room
     LDA exit_dir_table,Y
@@ -645,6 +731,27 @@ MAX_BEAM_STEPS = 32
     RTS
 
 
+; Apply portal_tile_offset to exit portal position.
+; Adds offset to trace_y for WALL exits (Y<2), trace_x for FLOOR/CEIL (Y>=2).
+; Y = exit portal orient (preserved).
+; Clobbers: A
+.apply_tile_offset
+    LDA portal_tile_offset
+    BEQ ato_done
+    CPY #2
+    BCS ato_x
+    CLC
+    ADC trace_y
+    STA trace_y
+    RTS
+  .ato_x
+    CLC
+    ADC trace_x
+    STA trace_x
+  .ato_done
+    RTS
+
+
 ; --- Local storage (not ZP) ---
 .trace_room        SKIP 1
 .trace_x           SKIP 1
@@ -660,3 +767,4 @@ MAX_BEAM_STEPS = 32
 .rab_laser_off     SKIP 1
 .usbt_save_x       SKIP 1
 .ctt_save_x        SKIP 1
+.portal_tile_offset SKIP 1

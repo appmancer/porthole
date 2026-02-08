@@ -70,7 +70,7 @@ SECTION_BUDGETS = [
     (".loaders_start",            ".timing_start",           "loaders",              1024),
     (".timing_start",             ".movement_start",         "timing",                 64),
     (".movement_start",           ".laser_start",            "movement",             1024),
-    (".laser_start",              ".tilemap_data_start",     "laser",                1024),
+    (".laser_start",              ".tilemap_data_start",     "laser",                1280),
     (".tilemap_data_start",       ".objects_start",           "tilemap",             1280),
     (".objects_start",            ".persistent_data_start",   "objects",              512),
     (".persistent_data_start",    ".end",                     "persistent_obj_data",  768),

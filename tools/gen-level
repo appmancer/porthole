@@ -59,6 +59,7 @@ OBJECT_TYPE_TO_ID: dict[str, int] = {
     "button": 2,
     "pad": 3,
     "exit": 4,
+    "spawner": 5,
 }
 
 
@@ -863,8 +864,31 @@ def main() -> None:
                 )
             )
 
-    # Deterministic global ordering.
-    objs.sort(key=lambda o: (o.obj_id.startswith("__meta__:"), o.obj_id))
+    # Auto-create linked cube objects for each spawner.
+    spawner_to_cube: dict[str, str] = {}
+    for o in list(objs):
+        if o.type_id == OBJECT_TYPE_TO_ID["spawner"]:
+            cube_id = f"__spawner_cube__:{o.obj_id}"
+            objs.append(
+                Obj(
+                    obj_id=cube_id,
+                    type_id=OBJECT_TYPE_TO_ID["cube"],
+                    channel=0,
+                    home_room=0xFF,  # despawned until spawner activates
+                    home_x=o.home_x,
+                    home_y=o.home_y,
+                )
+            )
+            spawner_to_cube[o.obj_id] = cube_id
+
+    # Deterministic global ordering (auto-generated cubes sort after regular objs).
+    def _obj_sort_key(o: Obj) -> tuple:
+        if o.obj_id.startswith("__spawner_cube__:"):
+            return (1, o.obj_id)
+        if o.obj_id.startswith("__meta__:"):
+            return (2, o.obj_id)
+        return (0, o.obj_id)
+    objs.sort(key=_obj_sort_key)
     obj_id_to_index = {o.obj_id: i for i, o in enumerate(objs)}
 
     lines.append(f"OBJ_COUNT = {len(objs)}")
@@ -877,7 +901,10 @@ def main() -> None:
     else:
         flat: list[int] = []
         for o in objs:
-            init_flags = 0
+            if o.type_id == OBJECT_TYPE_TO_ID["spawner"]:
+                init_flags = obj_id_to_index[spawner_to_cube[o.obj_id]]
+            else:
+                init_flags = 0
             flat.extend([o.type_id, o.channel, init_flags, o.home_room, o.home_x, o.home_y])
         lines.append(format_eqbytes(flat, per_line=16))
     lines.append("")
@@ -885,7 +912,8 @@ def main() -> None:
     # Per-room lists of obj_index values (authored presence, not dynamic position).
     room_indices: list[list[int]] = [[] for _ in rooms]
     for o in objs:
-        room_indices[o.home_room].append(obj_id_to_index[o.obj_id])
+        if 0 <= o.home_room < len(rooms):
+            room_indices[o.home_room].append(obj_id_to_index[o.obj_id])
 
     lines.append(".obj_room_counts")
     for idxs in room_indices:

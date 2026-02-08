@@ -235,6 +235,7 @@ OBJ_TYPE_CUBE                = 1
 OBJ_TYPE_BUTTON              = 2
 OBJ_TYPE_PAD                 = 3
 OBJ_TYPE_EXIT                = 4
+OBJ_TYPE_SPAWNER             = 5
 
 ; Hazard tile IDs. Touching any of these kills Chell.
 TILE_ACID                    = 11
@@ -252,6 +253,7 @@ TILE_BEAM_V_BACK             = 17
 TILE_BEAM_H_BACK             = 18
 TILE_CROSSROADS              = 27
 TILE_CROSSROADS_BACK         = 28
+TILE_PORTALABLE_BACK         = 29
 
 CHELL_W_PX                   = 16
 CHELL_H_PX                   = 32
