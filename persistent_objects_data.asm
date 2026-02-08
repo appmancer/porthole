@@ -67,6 +67,16 @@
 .solid_phys_plane
     SKIP 256
 
+; --- Laser beam runtime state ---
+; Dynamic beam tiles stamped into tilemap (portal-redirected segments only).
+MAX_BEAM_TILES = 30
+.beam_tile_count   SKIP 1                ; number of dynamic beam tiles stamped
+.beam_tile_pos     SKIP MAX_BEAM_TILES   ; tilemap offset (y*16+x) per tile
+.beam_tile_orig    SKIP MAX_BEAM_TILES   ; original tile at that position
+
+; Per-target lit flag, set by retrace_all_beams, read by update_beam_targets.
+.target_lit        SKIP TARGET_COUNT
+
 ; Bit masks for channels 0..7
 .bit_table
     EQUB 1,2,4,8,16,32,64,128

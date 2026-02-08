@@ -436,6 +436,9 @@
          JSR stamp_portal_xy
 
   .apu_done
+     LDA #1
+     STA beam_do_redraw
+     JSR retrace_all_beams
      LDA #0
      STA portal_pending
      RTS

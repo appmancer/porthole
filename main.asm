@@ -315,7 +315,17 @@ CHELL_DEAD_BASE              = 48
     ; Writes ACCCON directly to set D=1 (CRTC displays LYNNE).
     JSR enable_shadow_acccon
 
+    ; First-time init: ensure beam list is empty before first restart.
+    LDA #0
+    STA beam_tile_count
+
   .restart_level
+    ; Restore any dynamic beam tiles to old room's tilemap before switching.
+    ; (tilemap_ptr still points to previous room; beam_do_redraw=0 since screen
+    ; will be fully redrawn.)
+    LDA #0
+    STA beam_do_redraw
+    JSR unstamp_beam_tiles
     ; Clear the shadow screen before redrawing.
     JSR clear_lynne_screen
 
@@ -506,6 +516,9 @@ CHELL_DEAD_BASE              = 48
         BEQ render_no_room_redraw
         JSR set_room_tilemap
         JSR set_room_portalmap
+        LDA #0
+        STA beam_do_redraw
+        JSR retrace_all_beams
         JSR render_tilemap
         JSR render_static_objects
         JSR stamp_portals_for_current_room

@@ -293,6 +293,11 @@
 ; - temp_y = preserved top Y (pixel)
 ; Preserves velocity; snaps X to the new edge.
 .transition_enter_from_left
+    PHA
+    LDA #0
+    STA beam_do_redraw
+    JSR unstamp_beam_tiles
+    PLA
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
@@ -330,6 +335,11 @@
 
 
 .transition_enter_from_right
+    PHA
+    LDA #0
+    STA beam_do_redraw
+    JSR unstamp_beam_tiles
+    PLA
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
@@ -373,6 +383,11 @@
 ; - A = destination room index
 ; Preserves X (clamped) and horizontal subpixel offsets; snaps Y to the new edge.
 .transition_enter_from_up
+    PHA
+    LDA #0
+    STA beam_do_redraw
+    JSR unstamp_beam_tiles
+    PLA
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
@@ -434,6 +449,11 @@
 
 
 .transition_enter_from_down
+    PHA
+    LDA #0
+    STA beam_do_redraw
+    JSR unstamp_beam_tiles
+    PLA
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
