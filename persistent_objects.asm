@@ -104,6 +104,14 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     INX
     CPX #OBJ_COUNT
     BNE ipo_next
+
+    ; Sync tilemap tiles to reset obj_state (undo any activated pad/button/exit tiles).
+    LDY #0
+  .ipo_sync_tiles
+    JSR update_object_tiles_for_state
+    INY
+    CPY #OBJ_COUNT
+    BNE ipo_sync_tiles
     RTS
 
 

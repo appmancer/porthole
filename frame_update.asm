@@ -478,19 +478,13 @@
       BEQ hqs_not_falling
 
       ; Ray target: straight down to bottom of playfield.
-      ; Use Chell center X (ignore facing/gun offset).
-      JSR calc_char_x
+      ; Use center of Chell's registered tile X (avoids subpixel boundary drift).
+      LDA char_tile_pos
+      AND #15
+      ASL A : ASL A : ASL A   ; cell_x * 8 = left pixel of tile
       CLC
-      ADC #8
+      ADC #4                   ; center of tile (never on 8px boundary)
       STA los_x0
-      ; Avoid 8px boundary bias by nudging right.
-      AND #7
-      BNE hqs_fall_x_ok
-      LDA los_x0
-      CMP #127
-      BEQ hqs_fall_x_ok
-      INC los_x0
-   .hqs_fall_x_ok
 
       LDA los_x0
       STA los_x1
