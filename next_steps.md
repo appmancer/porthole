@@ -44,3 +44,34 @@ Architecture reference auto-loaded from `MEMORY.md`.
 
    - Cubes currently only support floor portal entry (gravity drop-through).
    - Full momentum mapping (like Chell) for cube-through-portal fling is a stretch goal.
+
+3) Portable laser emitter (turret)
+
+   - A carryable object (like a cube) that emits a laser beam in the direction it faces.
+   - **Puzzle tool, not weapon** — beam is a signal source, not damage.
+   - Pickup/drop like cubes. Falls under gravity like cubes.
+   - Cubes block all beams (universal rule).
+   - Knocked over / dropped = disabled (on its back). Placed upright = active.
+   - Creates resource tension: limited cubes serve as pad weights AND beam blockers.
+   - Puzzle patterns: position emitter to hit receiver; combine with portal redirect;
+     block a turret beam with a cube (but that cube was on a pad...).
+
+   Object system (small):
+   - New OBJ_TYPE (6), 16x16 sprites (left/right/disabled), facing state in obj_state bits.
+   - Widen existing type checks in pickup/drop, gravity, pad detection, floor portal.
+   - ~50-80 bytes new code + sprite data in SWRAM bank 5.
+
+   Laser system (large — biggest piece of work):
+   - Current laser architecture assumes build-time-known emitter positions. `laser_defs`
+     has pre-computed emitter+wall endpoints; `check_static_targets` traces between them;
+     `trace_dynamic_beam` only handles the portal-redirected segment after the static part.
+   - A turret breaks this: emitter position is runtime-variable, no pre-computed wall
+     endpoint. The **entire beam** must be traced dynamically from the turret's tile
+     position, not just the portal-redirected tail.
+   - Needs a second trace mode: full dynamic trace from arbitrary (x, y, dir). Every tile
+     checks tilemap solidity, targets, portals, AND cube positions (new).
+   - Beam invalidation: retrace when turret moves, cube enters/leaves path, or portal
+     changes. Current retrace trigger (portal placement only) must be extended.
+   - Fixed emitters + turret emitters must coexist in the same retrace loop.
+   - Estimate ~200-300 bytes for the dynamic trace path + cube collision checks.
+   - Total turret feature: ~300-400 bytes code + sprite data. ~8KB headroom available.
