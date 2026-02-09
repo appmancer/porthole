@@ -155,6 +155,21 @@
     RTS
 
 
+; Set room_fizzler_count and room_fizzler_ptr from current_room.
+.set_room_fizzlers
+    LDA current_room
+    ASL A
+    TAX
+    LDA fizzler_room_ptrs,X
+    STA room_fizzler_ptr
+    LDA fizzler_room_ptrs+1,X
+    STA room_fizzler_ptr+1
+    LDX current_room
+    LDA fizzler_room_counts,X
+    STA room_fizzler_count
+    RTS
+
+
 ; Get cell value from cellmap at specified cell position.
 ; Input: Y = cell position (cell_y * 16 + cell_x)
 ; Output: A = cell value

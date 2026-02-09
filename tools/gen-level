@@ -215,12 +215,14 @@ def _parse_exits_and_objects_from_tmx(
     bool,
     list[tuple[int, int, int, int, str]],
     list[tuple[int, int, int, str]],
+    list[tuple[int, int, int, int]],
 ]:
     exits = {"left": [], "right": [], "up": [], "down": []}
     objects: list[tuple[str, int, int, str, int]] = []
     start: tuple[int, int] | None = None
     lasers: list[tuple[int, int, int, int, str]] = []    # (tile_x, tile_y, dir, channel, id)
     targets: list[tuple[int, int, int, str]] = []         # (tile_x, tile_y, channel, id)
+    fizzlers: list[tuple[int, int, int, int]] = []        # (game_x0, game_y0, game_x1, game_y1)
 
     has_exit_group = False
     has_objects_group = False
@@ -395,6 +397,30 @@ def _parse_exits_and_objects_from_tmx(
                 targets.append((cx, cy, channel, obj_id))
                 continue
 
+            # --- Fizzler rectangles (meta group) ---
+            if is_exit_group(og_name) and obj_type.lower() == "fizzler":
+                x = _parse_float_int(obj.get("x"), path=path, what="object x")
+                y = _parse_float_int(obj.get("y"), path=path, what="object y")
+                w = _parse_float_int(obj.get("width") or "0", path=path, what="object width")
+                h = _parse_float_int(obj.get("height") or "0", path=path, what="object height")
+                if w <= 0 or h <= 0:
+                    raise ValueError(f"{path}: fizzler must have width and height")
+
+                # Convert Tiled pixel coords to game pixel coords.
+                # Tiled uses tilewidth pixels; game X is half (8px per tile vs 16px).
+                game_x0 = x // 2
+                game_y0 = y
+                game_x1 = (x + w) // 2
+                game_y1 = y + h
+
+                if game_x0 < 0 or game_x1 > 128 or game_y0 < 0 or game_y1 > 256:
+                    raise ValueError(
+                        f"{path}: fizzler out of bounds: game ({game_x0},{game_y0})-({game_x1},{game_y1})"
+                    )
+
+                fizzlers.append((game_x0, game_y0, game_x1, game_y1))
+                continue
+
             # --- Gameplay objects (planned/optional) ---
             if is_objects_group(og_name) and obj_type:
                 t = obj_type.strip().lower()
@@ -431,7 +457,7 @@ def _parse_exits_and_objects_from_tmx(
 
                 objects.append((t, cx, cy, obj_id, channel))
 
-    return exits, objects, start, has_exit_group, has_objects_group, lasers, targets
+    return exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers
 
 
 def parse_room_tmx(
@@ -445,6 +471,7 @@ def parse_room_tmx(
     bool,
     list[tuple[int, int, int, int, str]],
     list[tuple[int, int, int, str]],
+    list[tuple[int, int, int, int]],
 ]:
     root = ET.fromstring(path.read_text(encoding="utf-8"))
     if root.tag != "map":
@@ -509,7 +536,7 @@ def parse_room_tmx(
     if len(gids) != 256:
         raise ValueError(f"{path}: expected 256 gids in layer data, got {len(gids)}")
     tiles = [gid_to_tile_id(g) for g in gids]
-    exits, objects, start, has_exit_group, has_objects_group, lasers, targets = _parse_exits_and_objects_from_tmx(
+    exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers = _parse_exits_and_objects_from_tmx(
         root,
         path=path,
         map_w=width,
@@ -517,7 +544,7 @@ def parse_room_tmx(
         tile_w=tilewidth,
         tile_h=tileheight,
     )
-    return tiles, exits, objects, start, has_exit_group, has_objects_group, lasers, targets
+    return tiles, exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers
 
 
 @dataclass(frozen=True)
@@ -533,6 +560,7 @@ class Room:
     start: tuple[int, int] | None
     lasers: list[tuple[int, int, int, int, str]]    # (tile_x, tile_y, dir, channel, id)
     targets: list[tuple[int, int, int, str]]         # (tile_x, tile_y, channel, id)
+    fizzlers: list[tuple[int, int, int, int]]        # (game_x0, game_y0, game_x1, game_y1)
 
 
 def parse_meta(
@@ -630,8 +658,9 @@ def parse_room(path: Path) -> Room:
     tmx_has_objects_group = False
     tmx_lasers: list[tuple[int, int, int, int, str]] = []
     tmx_targets: list[tuple[int, int, int, str]] = []
+    tmx_fizzlers: list[tuple[int, int, int, int]] = []
     if path.suffix.lower() == ".tmx":
-        tiles, tmx_exits, tmx_objects, tmx_start, tmx_has_exit_group, tmx_has_objects_group, tmx_lasers, tmx_targets = parse_room_tmx(path)
+        tiles, tmx_exits, tmx_objects, tmx_start, tmx_has_exit_group, tmx_has_objects_group, tmx_lasers, tmx_targets, tmx_fizzlers = parse_room_tmx(path)
     elif path.suffix.lower() == ".txt":
         tiles = parse_room_txt(path)
     else:
@@ -654,9 +683,10 @@ def parse_room(path: Path) -> Room:
     if tmx_objects is not None and tmx_has_objects_group:
         objects = tmx_objects
 
-    # Lasers and targets only come from TMX meta (no .meta fallback).
+    # Lasers, targets, and fizzlers only come from TMX meta (no .meta fallback).
     lasers = tmx_lasers if tmx_has_exit_group else []
     targets = tmx_targets if tmx_has_exit_group else []
+    fizzlers = tmx_fizzlers if tmx_has_exit_group else []
 
     start = meta_start
     if tmx_start is not None and tmx_has_exit_group:
@@ -673,6 +703,7 @@ def parse_room(path: Path) -> Room:
         start=start,
         lasers=lasers,
         targets=targets,
+        fizzlers=fizzlers,
     )
 
 
@@ -985,6 +1016,45 @@ def main() -> None:
             flat_t.extend([room_idx, tx, ty, c])
         lines.append(format_eqbytes(flat_t, per_line=16))
     lines.append("")
+
+    # -----------------------------------------------------------------
+    # Fizzler regions (per-room)
+    #
+    # fizzler_defs entry format (FIZZLER_DEF_SIZE = 4 bytes):
+    #   0: game_x0 (pixels, inclusive)
+    #   1: game_y0 (pixels, inclusive)
+    #   2: game_x1 (pixels, exclusive)
+    #   3: game_y1 (pixels, exclusive)
+
+    fizzler_counts: list[int] = []
+    fizzler_data: list[list[int]] = []
+    for r in rooms:
+        fizzler_counts.append(len(r.fizzlers))
+        flat_f: list[int] = []
+        for x0, y0, x1, y1 in r.fizzlers:
+            flat_f.extend([x0, y0, x1, y1])
+        fizzler_data.append(flat_f)
+
+    lines.append(f"FIZZLER_DEF_SIZE = 4")
+    lines.append("")
+
+    lines.append(".fizzler_room_counts")
+    for c in fizzler_counts:
+        lines.append(f"    EQUB {c}")
+    lines.append("")
+
+    lines.append(".fizzler_room_ptrs")
+    for i in range(len(rooms)):
+        lines.append(f"    EQUW {level_name}_room{i:02d}_fizzlers")
+    lines.append("")
+
+    for i, fd in enumerate(fizzler_data):
+        lines.append(f".{level_name}_room{i:02d}_fizzlers")
+        if not fd:
+            lines.append("    ; (no fizzlers)")
+        else:
+            lines.append(format_eqbytes(fd, per_line=16))
+        lines.append("")
 
     for r in rooms:
         lines.append(f".{level_name}_{r.name}")

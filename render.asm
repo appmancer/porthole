@@ -1269,6 +1269,74 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
     STA solid_tile_plane,Y
     INY
     BNE build_solid_tile_plane_loop
+    ; Fall through to mark fizzler tiles in solid_tile_plane.
+
+; Mark fizzler region tiles as solid in solid_tile_plane.
+; This blocks LOS (reticle and quick-shot) but NOT physics movement.
+; Laser beams check the tilemap directly (AND #&20), so they pass through.
+; Runs once per room entry (not per frame).
+; Clobbers: A,X,Y,col_counter,row_counter,temp_y,temp,hstep_rem,hstep_moved
+.mark_fizzler_tiles
+    LDA room_fizzler_count
+    BEQ mft_done
+    LDY #0                    ; data offset into (room_fizzler_ptr)
+    LDX room_fizzler_count
+.mft_outer
+    ; Load pixel bounds, convert to tile coords.
+    LDA (room_fizzler_ptr),Y : INY   ; x0 px
+    LSR A : LSR A : LSR A            ; /8 → tile_x0
+    STA col_counter
+    LDA (room_fizzler_ptr),Y : INY   ; y0 px
+    LSR A : LSR A : LSR A : LSR A    ; /16 → tile_y0
+    STA row_counter
+    LDA (room_fizzler_ptr),Y : INY   ; x1 px (exclusive)
+    LSR A : LSR A : LSR A            ; /8 → tile_x1 (exclusive in tiles)
+    STA temp_y
+    LDA (room_fizzler_ptr),Y : INY   ; y1 px (exclusive)
+    LSR A : LSR A : LSR A : LSR A    ; /16 → tile_y1 (exclusive in tiles)
+    STA temp
+    STY hstep_rem                    ; save data offset
+    STX hstep_moved                  ; save outer counter
+
+    ; Nested loop: rows [row_counter..temp), cols [col_counter..temp_y)
+    ; col_counter holds col_start, restored each row iteration.
+.mft_row_loop
+    LDA row_counter
+    CMP temp
+    BCS mft_row_done
+
+    ; Compute tile_index = row_counter * 16 + col_counter
+    LDA row_counter
+    ASL A : ASL A : ASL A : ASL A    ; *16
+    CLC
+    ADC col_counter
+    TAX                               ; X = starting tile index for this row
+    LDA col_counter
+    PHA                               ; save col_start
+
+.mft_col_loop
+    LDA col_counter
+    CMP temp_y
+    BCS mft_col_done
+
+    LDA #1
+    STA solid_tile_plane,X
+    INX
+    INC col_counter
+    JMP mft_col_loop
+
+.mft_col_done
+    PLA
+    STA col_counter                   ; restore col_start
+    INC row_counter
+    JMP mft_row_loop
+
+.mft_row_done
+    LDY hstep_rem
+    LDX hstep_moved
+    DEX
+    BNE mft_outer
+.mft_done
     RTS
 
 

@@ -444,6 +444,122 @@
      RTS
 
 
+; Erase both portals' screen footprints and clear portal state.
+; Does NOT do a full room redraw — surgically redraws only the affected tiles.
+; Retraces laser beams incrementally after clearing portals.
+; Clobbers: A,X,Y,temp,temp_y,row_counter,screen_ptr,los_x1,los_y1,los_dx
+.fizzle_clear_portals
+    ; Erase portal A footprint if visible in current room.
+    LDA portal_a_enabled
+    BEQ fcp_try_b
+    LDA portal_a_room
+    CMP current_room
+    BNE fcp_try_b
+    LDA portal_a_x     : STA los_x1
+    LDA portal_a_y     : STA los_y1
+    LDA portal_a_orient : STA los_dx
+    JSR erase_portal_footprint
+
+.fcp_try_b
+    ; Erase portal B footprint if visible in current room.
+    LDA portal_b_enabled
+    BEQ fcp_clear
+    LDA portal_b_room
+    CMP current_room
+    BNE fcp_clear
+    LDA portal_b_x     : STA los_x1
+    LDA portal_b_y     : STA los_y1
+    LDA portal_b_orient : STA los_dx
+    JSR erase_portal_footprint
+
+.fcp_clear
+    LDA #0
+    STA portal_a_enabled
+    STA portal_b_enabled
+
+    ; Retrace beams incrementally (unstamps old dynamic beam tiles on screen).
+    LDA #1
+    STA beam_do_redraw
+    JSR retrace_all_beams
+
+    LDA #1
+    STA chell_dirty
+    RTS
+
+
+; Erase a portal's screen footprint by redrawing underlying tilemap tiles.
+; Input: los_x1 = tile_x, los_y1 = tile_y (collision rect), los_dx = orient
+; Clobbers: A,X,Y,temp,temp_y,row_counter,screen_ptr (los_y1 modified for fc/back)
+.erase_portal_footprint
+    LDA los_dx
+    CMP #PORTAL_ORIENT_BACK
+    BEQ epf_back
+    CMP #PORTAL_ORIENT_FLOOR
+    BCS epf_fc
+
+    ; Wall (L or R): 1x2 at (x,y) and (x,y+1)
+    LDX los_x1
+    LDA los_y1
+    JSR redraw_tile_xy
+    LDA los_y1
+    CMP #15
+    BEQ epf_done
+    CLC : ADC #1
+    LDX los_x1
+    JMP redraw_tile_xy          ; tail call
+
+.epf_fc
+    ; Floor/ceiling: adjust Y to surface tile, then 2x1
+    LDY los_y1
+    LDA los_dx
+    CMP #PORTAL_ORIENT_FLOOR
+    BNE epf_fc_ceil
+    INY
+    JMP epf_fc_go
+.epf_fc_ceil
+    DEY
+.epf_fc_go
+    STY los_y1
+    LDX los_x1
+    TYA
+    JSR redraw_tile_xy
+    LDX los_x1
+    CPX #15
+    BEQ epf_done
+    INX
+    LDA los_y1
+    JMP redraw_tile_xy          ; tail call
+
+.epf_back
+    ; Back wall: 2x2 block
+    LDX los_x1
+    LDA los_y1
+    JSR redraw_tile_xy
+    LDX los_x1
+    CPX #15
+    BEQ epf_back_bot
+    INX
+    LDA los_y1
+    JSR redraw_tile_xy
+.epf_back_bot
+    LDA los_y1
+    CMP #15
+    BEQ epf_done
+    CLC : ADC #1
+    STA los_y1
+    LDX los_x1
+    JSR redraw_tile_xy
+    LDX los_x1
+    CPX #15
+    BEQ epf_done
+    INX
+    LDA los_y1
+    JMP redraw_tile_xy          ; tail call
+
+.epf_done
+    RTS
+
+
 ; Redraw a single 8x16 tile from the tilemap.
 ; Inputs:
 ; - A = tile_y (0..15)

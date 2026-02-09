@@ -301,7 +301,10 @@
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
+    JSR set_room_fizzlers
+    LDA temp_y : PHA             ; save spawn Y across plane rebuild
     JSR build_material_planes_from_tilemap
+    PLA : STA temp_y             ; restore spawn Y
 
     ; Spawn at the left edge (entrance).
     LDA temp_y
@@ -343,7 +346,10 @@
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
+    JSR set_room_fizzlers
+    LDA temp_y : PHA             ; save spawn Y across plane rebuild
     JSR build_material_planes_from_tilemap
+    PLA : STA temp_y             ; restore spawn Y
 
     ; Spawn at the right edge (entrance).
     ; x=112 => tile_x=14, byte/pixel offset 0.
@@ -391,6 +397,7 @@
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
+    JSR set_room_fizzlers
     JSR build_material_planes_from_tilemap
 
     ; Keep X, but clamp left tile_x to 0..14 (Chell is 2 tiles wide).
@@ -457,6 +464,7 @@
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
+    JSR set_room_fizzlers
     JSR build_material_planes_from_tilemap
 
     ; Keep X, but clamp left tile_x to 0..14 (Chell is 2 tiles wide).

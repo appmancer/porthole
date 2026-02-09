@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#40ffff" nextlayerid="4" nextobjectid="10">
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#40ffff" nextlayerid="4" nextobjectid="11">
  <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
  <layer id="1" name="tiles" width="16" height="16">
   <data encoding="csv">
@@ -17,7 +17,7 @@
 54,1,1,1,1,1,1,1,45,46,47,1,1,1,1,54,
 54,1,1,1,1,45,46,47,1,15,1,1,1,1,1,54,
 54,1,1,1,1,1,13,1,1,1,1,1,1,1,1,54,
-54,1,1,1,1,1,14,1,1,1,1,1,1,1,1,54,
+54,1,1,1,1,1,14,1,1,1,1,1,1,2,1,54,
 54,33,33,33,33,33,33,33,33,33,33,33,33,33,33,54
 </data>
  </layer>
@@ -37,6 +37,12 @@
    <properties>
     <property name="channel" value="2"/>
     <property name="id" value="2"/>
+   </properties>
+  </object>
+  <object id="10" name="button" type="button" x="208" y="224" width="16" height="16">
+   <properties>
+    <property name="channel" value="2"/>
+    <property name="id" value="button"/>
    </properties>
   </object>
  </objectgroup>

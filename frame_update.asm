@@ -288,6 +288,102 @@
     RTS
 
 
+; Check if Chell overlaps any fizzler region in the current room.
+; On contact: clear both portals, destroy carried cube.
+; Skips entirely if there's nothing to fizzle (no portals, no cube).
+;
+; Uses LOS scratch ZP (safe — LOS not active during normal update).
+; Clobbers: A,X,Y,los_x0,los_y0,los_x1,los_y1,los_dx,los_dy,los_err
+.check_fizzler_contact
+    LDA room_fizzler_count
+    BEQ cfz_none
+
+    ; Early exit: anything to fizzle?
+    LDA portal_a_enabled
+    ORA portal_b_enabled
+    BNE cfz_has_work
+    LDA carried_cube_idx
+    CMP #&FF
+    BEQ cfz_none              ; nothing to clear → skip
+.cfz_has_work
+
+    ; Compute Chell pixel position.
+    JSR calc_char_x           ; A = pixel_x (0..115)
+    STA los_x0                ; chell_left_x
+    JSR calc_char_y           ; A = pixel_y (0..248)
+    STA los_y0                ; chell_top_y
+
+    LDY #0
+    LDX room_fizzler_count
+.cfz_loop
+    ; Load fizzler bounds from (room_fizzler_ptr),Y
+    LDA (room_fizzler_ptr),Y : INY : STA los_x1   ; fiz_x0
+    LDA (room_fizzler_ptr),Y : INY : STA los_y1   ; fiz_y0
+    LDA (room_fizzler_ptr),Y : INY : STA los_dx   ; fiz_x1
+    LDA (room_fizzler_ptr),Y : INY : STA los_dy   ; fiz_y1
+    STY los_err                                     ; save Y
+
+    ; AABB: Chell (x, y, x+15, y+31) vs fizzler (x0, y0, x1, y1)
+    ; x1/y1 are exclusive, so test: chell_right >= fiz_x0 AND chell_left < fiz_x1
+    ;                                chell_bottom >= fiz_y0 AND chell_top < fiz_y1
+
+    ; Test 1: chell_right (x+15) >= fiz_x0
+    LDA los_x0
+    CLC
+    ADC #15
+    CMP los_x1
+    BCC cfz_next
+
+    ; Test 2: chell_left < fiz_x1
+    LDA los_x0
+    CMP los_dx
+    BCS cfz_next
+
+    ; Test 3: chell_bottom (y+31) >= fiz_y0
+    LDA los_y0
+    CLC
+    ADC #31
+    CMP los_y1
+    BCC cfz_next
+
+    ; Test 4: chell_top < fiz_y1
+    LDA los_y0
+    CMP los_dy
+    BCS cfz_next
+
+    ; --- OVERLAP: trigger fizzler ---
+    JMP cfz_trigger
+
+.cfz_next
+    LDY los_err
+    DEX
+    BNE cfz_loop
+.cfz_none
+    RTS
+
+.cfz_trigger
+    ; Surgically erase portal visuals, clear state, retrace beams.
+    JSR fizzle_clear_portals
+
+    ; Destroy carried cube (fizzle it out of existence).
+    LDA carried_cube_idx
+    CMP #&FF
+    BEQ cfz_no_cube
+
+    TAY
+    LDA #0
+    STA obj_state,Y           ; clear all state flags
+    LDA #&FF
+    STA obj_room,Y            ; despawn: no room
+    STA carried_cube_idx      ; no longer carrying
+
+    LDA #1
+    STA objects_pending
+
+.cfz_no_cube
+    RTS
+
+
  ; Quick-shot portal placement (outside reticle mode).
  ;
  ; - On A/S key-down, fire a projected shot (tiles only) and place portal A/B.

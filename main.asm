@@ -163,6 +163,10 @@ ORG &00
 
   .char_dead            SKIP 1    ; 0=alive, 1=dead (waiting for keypress)
 
+  ; Fizzler region state (per-room).
+  .room_fizzler_count   SKIP 1    ; fizzlers in current room (0..4)
+  .room_fizzler_ptr     SKIP 2    ; pointer to current room's fizzler_defs data
+
  ORG &1900
 
 
@@ -346,6 +350,7 @@ CHELL_DEAD_BASE              = 48
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
+    JSR set_room_fizzlers
 
     ; Initialize level-global object state from generated tables.
     JSR init_persistent_objects
@@ -528,6 +533,7 @@ CHELL_DEAD_BASE              = 48
         BEQ render_no_room_redraw
         JSR set_room_tilemap
         JSR set_room_portalmap
+        JSR set_room_fizzlers
         LDA #0
         STA beam_do_redraw
         JSR retrace_all_beams
@@ -697,6 +703,9 @@ CHELL_DEAD_BASE              = 48
 
        ; Hazard check: acid/goo kills Chell on contact.
        JSR check_acid_death
+
+       ; Fizzler contact: clears portals and drops carried cube.
+       JSR check_fizzler_contact
 
   .update_finish
         ; While reticle mode is active, gameplay time is frozen.
