@@ -473,6 +473,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
 
   .usos_do_button
     JSR compute_button_pressed
+    ; Latch: once pressed, stay pressed (OR with existing state bit 0).
+    ORA obj_state,Y
+    AND #1
 
   .usos_apply_driver
     ; A = pressed (0/1)
