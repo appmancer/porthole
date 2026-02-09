@@ -421,6 +421,35 @@ def _parse_exits_and_objects_from_tmx(
                 fizzlers.append((game_x0, game_y0, game_x1, game_y1))
                 continue
 
+            # --- Buttons in meta group ---
+            if is_exit_group(og_name) and obj_type.lower() == "button":
+                obj_id = (props.get("id") or "").strip()
+                if not obj_id:
+                    raise ValueError(f"{path}: button missing required property 'id'")
+
+                chan_text = (props.get("channel") or "").strip()
+                if not chan_text:
+                    channel = 0
+                else:
+                    try:
+                        channel = int(chan_text)
+                    except ValueError:
+                        raise ValueError(f"{path}: button has non-integer channel={chan_text!r}")
+                    if not (0 <= channel <= 7):
+                        raise ValueError(f"{path}: button channel out of range (0..7), got {channel}")
+
+                x = _parse_float_int(obj.get("x"), path=path, what="object x")
+                y = _parse_float_int(obj.get("y"), path=path, what="object y")
+                if x % tile_w != 0 or y % tile_h != 0:
+                    raise ValueError(f"{path}: button must be placed on tile grid")
+                cx = x // tile_w
+                cy = y // tile_h
+                if not (0 <= cx <= 15 and 0 <= cy <= 15):
+                    raise ValueError(f"{path}: button out of bounds at {cx},{cy}")
+
+                objects.append(("button", cx, cy, obj_id, channel))
+                continue
+
             # --- Gameplay objects (planned/optional) ---
             if is_objects_group(og_name) and obj_type:
                 t = obj_type.strip().lower()
