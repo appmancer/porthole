@@ -37,6 +37,7 @@ ORG &00
 .char_grounded      SKIP 1    ; 0/1: standing on solid
 .jump_timer         SKIP 1    ; Frames remaining in jump rise (0 = not jumping)
 .peak_timer         SKIP 1    ; Frames remaining at jump apex (0 = not at peak)
+.fall_distance      SKIP 1    ; 8px steps fallen (0 while grounded/rising)
 .room_dirty         SKIP 1    ; 0/1: room background needs redraw
 .objects_pending    SKIP 1    ; 0/1: persistent objects need restamp
 .exit_cooldown      SKIP 1    ; frames to ignore exits after transition
@@ -188,6 +189,7 @@ TILE_SWRAM_BANK_DEFAULT = 6
 FALL_POSE_VY_THRESHOLD       = 2      ; switch to falling pose after 2+ fall steps (not immediately)
 JUMP_RISE_FRAMES             = 5      ; frames of 8px upward movement per jump (40px rise)
 JUMP_PEAK_FRAMES             = 2      ; frames of hang time at apex before falling
+FALL_FAST_THRESHOLD          = 12     ; 8px steps before fast-fall kicks in (6 tiles)
 TERMINAL_VELOCITY_DOWN      = 6      ; max falling speed (8px steps)
 TERMINAL_VELOCITY_UP        = &FA    ; -6: max rising speed (8px steps)
 TERMINAL_VELOCITY_X         = 12     ; max |vx| (px/frame), also per-frame step clamp
@@ -371,6 +373,7 @@ CHELL_DEAD_BASE              = 48
     STA char_grounded
     STA jump_timer
     STA peak_timer
+    STA fall_distance
     STA room_dirty
     STA objects_pending
     STA exit_cooldown

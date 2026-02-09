@@ -36,12 +36,15 @@ MAX_BEAM_STEPS = 32
 ; beam_tile_count is already 0 (unstamp called earlier in restart).
 ; Clobbers: A,X
 .init_beams
+    LDX #0
     LDA #0
-    LDX #TARGET_COUNT-1
   .ib_clear
+    CPX #TARGET_COUNT
+    BCS ib_done
     STA target_lit,X
-    DEX
-    BPL ib_clear
+    INX
+    BNE ib_clear
+  .ib_done
     RTS
 
 
@@ -90,12 +93,15 @@ MAX_BEAM_STEPS = 32
     JSR unstamp_beam_tiles
 
     ; Clear target_lit flags.
-    LDX #TARGET_COUNT-1
+    LDX #0
     LDA #0
   .rab_clear_tgt
+    CPX #TARGET_COUNT
+    BCS rab_tgt_done
     STA target_lit,X
-    DEX
-    BPL rab_clear_tgt
+    INX
+    BNE rab_clear_tgt
+  .rab_tgt_done
 
     ; Process each laser.
     LDX #0

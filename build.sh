@@ -75,8 +75,8 @@ mkdir -p .tmp
   --out "sprites/generated_tiles.asm"
 
 ./tools/gen-level \
-  --level "levels/level1" \
-  --out "levels/generated_level1.asm"
+  --level "levels/level2" \
+  --out "levels/generated_level2.asm"
 
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)
 if [[ "${LOADSCR_WH}" == "160 256" ]]; then

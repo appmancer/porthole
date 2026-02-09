@@ -79,6 +79,10 @@
 
       ; --- 3. Resolve horizontal velocity (single vx writer) ---
     .ucm_resolve_vx
+      ; Fast-falling → no lateral movement.
+      LDA fall_distance
+      CMP #FALL_FAST_THRESHOLD
+      BCS ucm_vx_done
       LDA move_held
       BNE ucm_vx_key_held
 
@@ -453,6 +457,11 @@
 
   .ag_not_peak
     ; --- GROUNDED check ---
+    ; If already fast-falling, skip grounded check to avoid spurious
+    ; landing after room transitions. step_down_8 handles real collisions.
+    LDA fall_distance
+    CMP #FALL_FAST_THRESHOLD
+    BCS ag_fall
     JSR is_char_grounded
     BCC ag_fall
 
@@ -461,6 +470,7 @@
     STA char_grounded
     LDA #0
     STA char_vy
+    STA fall_distance
 
     ; Check RETURN for jump start.
     LDA keys_pressed
@@ -493,12 +503,33 @@
 
   .ag_fall
     ; --- FALLING ---
+    ; fall_distance drives speed: < threshold = 1 step, >= threshold = 2 steps.
+    ; char_vy is set for portal/pose systems but not used as input here.
     LDA #0
     STA char_grounded
-    LDA #1
-    STA char_vy               ; vy = +1 (falling)
+
+    ; Always one step down.
     JSR step_down_8
     BCC ag_fall_landed
+    INC fall_distance
+
+    ; Past threshold → fast fall: second step + kill lateral.
+    LDA fall_distance
+    CMP #FALL_FAST_THRESHOLD
+    BCC ag_fall_normal
+
+    LDA #0
+    STA char_vx
+    LDA #TERMINAL_VELOCITY_DOWN
+    STA char_vy
+    JSR step_down_8
+    BCC ag_fall_landed
+    SEC
+    RTS
+
+  .ag_fall_normal
+    LDA #1
+    STA char_vy
     SEC
     RTS
 
@@ -507,6 +538,7 @@
     STA char_grounded
     LDA #0
     STA char_vy
+    STA fall_distance
     SEC
     RTS
 

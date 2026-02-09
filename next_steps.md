@@ -18,15 +18,10 @@ Architecture reference auto-loaded from `MEMORY.md`.
 - **Signals extension** — laser_target as signal driver, spawner as rising-edge consumer both functional
 - **Acid death** — Chell dies on contact, press-to-restart
 - **Cube physics** — gravity (fall 1 tile/frame), pad triggering (cube on pad activates signal), floor portal entry (cube falls through floor portal to paired exit)
+- **Fizzler regions** — parsed from TMX metadata, clear portals and destroy carried cube on contact, block portal LOS, surgical per-tile erase (no full room redraw), laser beams pass through
+- **Pedestal button latching** — buttons latch on first SPACE press (permanent activation), pads remain momentary. Buttons parsed from meta objectgroup.
 
 ---
-
-## P1: Gameplay Interactions (remaining)
-
-1) Fizzler regions
-
-   - Fizzler: always active; clears portals and drops carried cube on contact.
-   - Block portal LOS through fizzlers.
 
 ## P2: Follow-ups
 

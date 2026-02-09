@@ -446,6 +446,16 @@
     LDA #8
     STA exit_cooldown
 
+    ; If we were fast-falling, restore fall_distance so fast-fall
+    ; continues in the new room. (The screen-bottom overflow in
+    ; will_collide_down_8 falsely resets it before the exit fires.)
+    LDA char_prev_vy
+    CMP #2
+    BCC tefu_no_fast_fall
+    LDA #FALL_FAST_THRESHOLD
+    STA fall_distance
+  .tefu_no_fast_fall
+
     ; Cancel reticle.
     LDA #0
     STA reticle_active

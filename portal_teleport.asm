@@ -367,6 +367,18 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         JSR clamp_char_vx
         JSR clamp_char_vy
 
+        ; Reset fall_distance so wall/ceiling exits don't inherit fast-fall.
+        LDA #0
+        STA fall_distance
+
+        ; If exiting downward (vy >= 2), engage fast-fall immediately.
+        LDA char_vy
+        CMP #2
+        BCC mt_no_fast_fall
+        LDA #FALL_FAST_THRESHOLD
+        STA fall_distance
+  .mt_no_fast_fall
+
  .mt_place_from_orient
         ; Exit placement from orientation.
         LDA row_counter
