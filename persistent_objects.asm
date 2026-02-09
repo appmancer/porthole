@@ -14,6 +14,7 @@ OBJ_STATE_CARRIED = &80
 
 ; Cube physics tuning (tile-aligned).
 ; vx is in 8px tiles, vy is in 16px rows.
+CUBE_FLING_SPEED = 2           ; tiles/frame exit velocity for wall portals
 CUBE_TERMINAL_VX = 4
 CUBE_TERMINAL_VY = 4
 
@@ -136,12 +137,21 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     SBC #1
     STA obj_portal_cd,Y
   .ucp_no_cd
-    ; 2. Check floor portal entry.
+    ; 2. If cube has velocity, use velocity-based movement.
+    LDA obj_vx,Y
+    ORA obj_vy,Y
+    BNE ucp_velocity
+
+    ; 3. Check floor portal entry (stationary cubes).
     JSR cube_check_floor_portal
     BCS ucp_next               ; teleported — skip gravity
 
-    ; 3. Apply gravity (fall 1 tile/frame).
+    ; 4. Apply gravity (fall 1 tile/frame).
     JSR cube_try_fall
+    JMP ucp_next
+
+  .ucp_velocity
+    JSR cube_velocity_move
 
   .ucp_next
     INY
@@ -243,7 +253,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     RTS
 
 
-; Check if cube Y is directly above a floor portal.
+; Check if cube Y is at a floor portal (same tile position).
 ; If matched and paired portal exists, teleport the cube.
 ; Returns: C=1 teleported, C=0 no portal.
 ; Clobbers: A,X,temp,temp_y,row_counter,col_counter
@@ -252,11 +262,8 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA obj_portal_cd,Y
     BNE ccfp_miss
 
-    ; below_y = obj_y + 1
     LDA obj_y,Y
-    CLC
-    ADC #1
-    STA temp                   ; below_y
+    STA temp                   ; cube_y
 
     ; --- Check portal A ---
     LDA portal_a_enabled
@@ -268,7 +275,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     CMP #PORTAL_ORIENT_FLOOR
     BNE ccfp_try_b
     LDA portal_a_y
-    CMP temp                   ; below_y == portal_y?
+    CMP temp                   ; cube_y == portal_y?
     BNE ccfp_try_b
     ; X overlap (2-wide cube vs 2-wide portal): |dx| < 2
     LDA obj_x,Y
@@ -364,6 +371,8 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA row_counter
     SEC : SBC #1
     STA obj_y,Y
+    LDA #0
+    STA obj_vx,Y : STA obj_vy,Y
     JMP cdpe_finish
 
   .cdpe_wall_l
@@ -372,6 +381,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     CLC : ADC #1
     STA obj_x,Y
     LDA row_counter  : STA obj_y,Y
+    LDA #CUBE_FLING_SPEED
+    STA obj_vx,Y
+    LDA #0 : STA obj_vy,Y
     JMP cdpe_finish
 
   .cdpe_wall_r
@@ -380,6 +392,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     SEC : SBC #2
     STA obj_x,Y
     LDA row_counter  : STA obj_y,Y
+    LDA #(256-CUBE_FLING_SPEED)  ; two's complement negative
+    STA obj_vx,Y
+    LDA #0 : STA obj_vy,Y
     JMP cdpe_finish
 
   .cdpe_ceil
@@ -388,6 +403,8 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA row_counter
     CLC : ADC #1
     STA obj_y,Y
+    LDA #0 : STA obj_vx,Y
+    LDA #1 : STA obj_vy,Y
 
   .cdpe_finish
     ; Clamp x to 0..14 (2-wide cube).
@@ -420,7 +437,242 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     RTS
 
 
-; (Old velocity-based cube physics removed — preserved in git history.)
+; Velocity-based cube movement (fling through portals).
+;
+; Each frame: check landing, apply gravity, step horizontal, step vertical.
+; Input: Y = obj_index (preserved).
+; Clobbers: A,X,temp,temp_y,row_counter,col_counter
+.cube_velocity_move
+    ; --- (a) Landing check ---
+    ; If supported below AND vy >= 0: zero velocity, done.
+    LDA obj_vy,Y
+    BMI cvm_no_land             ; vy < 0 → rising, skip land check
+
+    ; Check support below: solid_tile_plane at (x, y+1) and (x+1, y+1).
+    LDA obj_y,Y
+    CMP #15
+    BCS cvm_land                ; at bottom of room → land
+    CLC
+    ADC #1
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX
+    LDA solid_tile_plane,X
+    BNE cvm_land
+    INX
+    LDA solid_tile_plane,X
+    BNE cvm_land
+
+    ; Check other cubes below.
+    JSR cube_check_cubes_below
+    BCC cvm_no_land
+
+  .cvm_land
+    LDA #0
+    STA obj_vx,Y
+    STA obj_vy,Y
+    LDA #1
+    STA obj_dirty,Y
+    STA objects_pending
+    RTS
+
+  .cvm_no_land
+    ; --- (b) Gravity: vy = min(vy + 1, CUBE_TERMINAL_VY) ---
+    LDA obj_vy,Y
+    CLC
+    ADC #1
+    CMP #CUBE_TERMINAL_VY+1
+    BCC cvm_vy_ok
+    LDA #CUBE_TERMINAL_VY
+  .cvm_vy_ok
+    STA obj_vy,Y
+
+    ; --- (c) Horizontal steps: loop |vx| times ---
+    LDA obj_vx,Y
+    BEQ cvm_vert                ; no horizontal velocity
+    BPL cvm_h_right
+
+    ; vx < 0 → moving left. Loop count = -vx (negate).
+    EOR #&FF
+    CLC
+    ADC #1
+    STA temp                    ; |vx| loop count
+  .cvm_h_left_loop
+    LDA temp
+    BEQ cvm_vert
+
+    ; Check left edge: x == 0 → wall.
+    LDA obj_x,Y
+    BEQ cvm_h_stop
+
+    ; Check solid_tile_plane at (x-1, y).
+    LDA obj_y,Y
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    SEC
+    SBC #1                      ; tile at (x-1, y)
+    TAX
+    LDA solid_tile_plane,X
+    BNE cvm_h_stop
+
+    ; Move left.
+    LDA obj_x,Y
+    SEC
+    SBC #1
+    STA obj_x,Y
+    DEC temp
+    JMP cvm_h_left_loop
+
+  .cvm_h_right
+    STA temp                    ; vx (positive) = loop count
+  .cvm_h_right_loop
+    LDA temp
+    BEQ cvm_vert
+
+    ; Check right edge: x+2 >= 16 → wall (cube is 2 wide).
+    LDA obj_x,Y
+    CLC
+    ADC #2
+    CMP #16
+    BCS cvm_h_stop
+
+    ; Check solid_tile_plane at (x+2, y).
+    LDA obj_y,Y
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    CLC
+    ADC #2                      ; tile at (x+2, y)
+    TAX
+    LDA solid_tile_plane,X
+    BNE cvm_h_stop
+
+    ; Move right.
+    LDA obj_x,Y
+    CLC
+    ADC #1
+    STA obj_x,Y
+    DEC temp
+    JMP cvm_h_right_loop
+
+  .cvm_h_stop
+    LDA #0
+    STA obj_vx,Y
+
+  .cvm_vert
+    ; --- (d) Vertical steps: loop |vy| times ---
+    LDA obj_vy,Y
+    BNE cvm_vert_go
+    JMP cvm_done_dirty
+  .cvm_vert_go
+    BPL cvm_v_down
+
+    ; vy < 0 → moving up. Loop count = -vy.
+    EOR #&FF
+    CLC
+    ADC #1
+    STA temp                    ; |vy| loop count
+  .cvm_v_up_loop
+    LDA temp
+    BNE cvm_v_up_step
+    JMP cvm_done_dirty
+  .cvm_v_up_step
+
+    ; Check top edge: y == 0 → ceiling.
+    LDA obj_y,Y
+    BEQ cvm_v_up_stop
+
+    ; Check solid_tile_plane at (x, y-1) and (x+1, y-1).
+    LDA obj_y,Y
+    SEC
+    SBC #1
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX
+    LDA solid_tile_plane,X
+    BNE cvm_v_up_stop
+    INX
+    LDA solid_tile_plane,X
+    BNE cvm_v_up_stop
+
+    ; Move up.
+    LDA obj_y,Y
+    SEC
+    SBC #1
+    STA obj_y,Y
+    DEC temp
+    JMP cvm_v_up_loop
+
+  .cvm_v_up_stop
+    ; Zero vy only (keep horizontal momentum).
+    LDA #0
+    STA obj_vy,Y
+    JMP cvm_done_dirty
+
+  .cvm_v_down
+    STA temp                    ; vy (positive) = loop count
+  .cvm_v_down_loop
+    LDA temp
+    BNE cvm_v_down_step
+    JMP cvm_done_dirty
+  .cvm_v_down_step
+
+    ; Check bottom edge: y >= 15 → floor.
+    LDA obj_y,Y
+    CMP #15
+    BCS cvm_v_down_stop
+
+    ; Check solid_tile_plane at (x, y+1) and (x+1, y+1).
+    LDA obj_y,Y
+    CLC
+    ADC #1
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX
+    LDA solid_tile_plane,X
+    BNE cvm_v_down_stop
+    INX
+    LDA solid_tile_plane,X
+    BNE cvm_v_down_stop
+
+    ; Check other cubes below.
+    JSR cube_check_cubes_below
+    BCS cvm_v_down_stop
+
+    ; Move down one row.
+    LDA obj_y,Y
+    CLC
+    ADC #1
+    STA obj_y,Y
+
+    ; Per-step portal check (prevents tunnelling past portals at high vy).
+    JSR cube_check_floor_portal
+    BCS cvm_teleported          ; teleported — exit immediately (portal sets new velocity)
+
+    DEC temp
+    JMP cvm_v_down_loop
+
+  .cvm_v_down_stop
+    ; Landed: zero both vx and vy.
+    LDA #0
+    STA obj_vx,Y
+    STA obj_vy,Y
+
+  .cvm_done_dirty
+    LDA #1
+    STA obj_dirty,Y
+    STA objects_pending
+  .cvm_teleported
+    RTS
 
 
 ; Update `sig_state` from drivers, and update per-object visual state bits.
