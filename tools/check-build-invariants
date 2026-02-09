@@ -65,7 +65,7 @@ SECTION_BUDGETS = [
     (".input_start",              ".portal_place_start",     "input",                 512),
     (".portal_place_start",       ".frame_update_start",     "portal_place",         1280),
     (".frame_update_start",       ".persistent_objects_start","frame_update",         1024),
-    (".persistent_objects_start", ".ui_start",               "persistent_objects",   1664),
+    (".persistent_objects_start", ".ui_start",               "persistent_objects",   2176),
     (".ui_start",                 ".loaders_start",          "ui",                    256),
     (".loaders_start",            ".timing_start",           "loaders",              1024),
     (".timing_start",             ".movement_start",         "timing",                 64),

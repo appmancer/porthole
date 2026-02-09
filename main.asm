@@ -275,14 +275,24 @@ CHELL_FALL_LEFT_BASE        = 44
 CHELL_DEAD_BASE              = 48
 
 .start
-    ; PROGRAM sets MODE 5, but reassert it here for safety.
-    LDA #22
-    JSR OSWRCH
-    LDA #5
-    JSR OSWRCH
+    ; NOTE: MODE 5 is set by the boot loader (PROGRAM) before loading the
+    ; game binary.  We must NOT call MODE 5 here because the VDU screen
+    ; clear would destroy code/data in MAIN RAM at &5800+ (our code blob
+    ; extends past the MODE 5 screen start at &5800).
 
     ; Disable the blinking text cursor (it writes into screen RAM).
     JSR disable_cursor
+
+    ; Rebuild bit_table in case MOS screen operations (cursor flash, VDU
+    ; output during boot) corrupted MAIN RAM in the &5800+ screen region.
+    LDX #0
+    LDA #1
+.rebuild_bit_table
+    STA bit_table,X
+    ASL A
+    INX
+    CPX #8
+    BNE rebuild_bit_table
 
     ; Remap logical colours to physical palette:
     ; 0=black, 1=red, 2=cyan, 3=yellow
@@ -707,11 +717,13 @@ CHELL_DEAD_BASE              = 48
   .update_finish_no_gameplay
 
          ; Update persistent objects + channel signals (pads/buttons -> exits).
-         ; While reticle mode is active we freeze gameplay, so skip this work.
-         LDA reticle_active
-         BNE update_skip_objects
+         ; Signals must run every frame so spawners fire immediately when
+         ; a beam hits a target (even while reticle mode is still active).
          JSR update_signals_and_object_states
-  .update_skip_objects
+
+         ; Cube physics runs in the shared path so cubes fall even while
+         ; reticle mode is active (update_normal_mode is skipped then).
+         JSR update_cubes_physics
 
         ; While in reticle mode we ignore aim-based redraws.
         LDA reticle_active

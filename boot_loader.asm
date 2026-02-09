@@ -73,12 +73,24 @@ ORG &0E00
     LDA #6
     STA LOADER_STAGE_ADDR
 
-    ; Hide screen corruption during final game load.
-    ; MODE 7 uses minimal screen RAM.
+    ; Switch to MODE 5 BEFORE loading the game binary.
+    ; The VDU MODE call clears screen RAM at &5800-&7FFF in MAIN RAM.
+    ; This must happen before OSFILE loads the game blob (which extends
+    ; past &5800) so that the loaded data isn't destroyed.
     LDA #22
     JSR OSWRCH
-    LDA #7
+    LDA #5
     JSR OSWRCH
+
+    ; Disable cursor immediately — the MOS cursor flash interrupt writes
+    ; to screen RAM (&5800+) and would corrupt code/data loaded there.
+    LDX #0
+.loader_cur2_loop
+    LDA loader_cursor_vdu, X
+    JSR OSWRCH
+    INX
+    CPX #10
+    BNE loader_cur2_loop
 
     ; Load and run the game.
     JSR loader_osfile_load_game

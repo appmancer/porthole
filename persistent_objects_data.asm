@@ -57,6 +57,16 @@
 .sig_state
     SKIP 1
 
+; Per-target lit flag, set by retrace_all_beams, read by update_beam_targets.
+; Placed here (before the large 256-byte planes) so it stays below &5800
+; in MAIN RAM — safe from any stray writes to the screen region.
+.target_lit        SKIP TARGET_COUNT
+
+; Bit masks for channels 0..7.
+; Also kept below &5800 for the same reason.
+.bit_table
+    EQUB 1,2,4,8,16,32,64,128
+
 ; Static solid-tile plane (tilemap only, no objects).
 ; Used by LOS/portal validation which should ignore dynamic objects.
 .solid_tile_plane
@@ -73,10 +83,3 @@ MAX_BEAM_TILES = 30
 .beam_tile_count   SKIP 1                ; number of dynamic beam tiles stamped
 .beam_tile_pos     SKIP MAX_BEAM_TILES   ; tilemap offset (y*16+x) per tile
 .beam_tile_orig    SKIP MAX_BEAM_TILES   ; original tile at that position
-
-; Per-target lit flag, set by retrace_all_beams, read by update_beam_targets.
-.target_lit        SKIP TARGET_COUNT
-
-; Bit masks for channels 0..7
-.bit_table
-    EQUB 1,2,4,8,16,32,64,128

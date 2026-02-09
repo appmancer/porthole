@@ -97,9 +97,6 @@
     ; Cube pickup/drop (SPACE edge).
     JSR handle_cube_pickup_drop
 
-    ; Cubes: simple physics + portal interactions.
-    JSR update_cubes_physics
-
     ; Keep the physics solidity plane up to date (tiles + standable objects).
     ; This lets Chell stand on cubes.
     JSR rebuild_solid_phys_plane

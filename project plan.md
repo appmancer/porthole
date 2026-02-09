@@ -631,7 +631,7 @@ If we want the portal blend depth to be easy to stamp quickly, prefer depths tha
 
 See `next_steps.md` for the prioritized task list.
 
-Current priorities: P1 gameplay interactions (pressure pads, tile swaps, signals, acid/fizzlers, lasers).
+Current priorities: P1 remaining (fizzlers), then P2 (Chell fling, cube fling).
 
 ## Resolved Questions
 
