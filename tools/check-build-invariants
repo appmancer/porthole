@@ -50,7 +50,7 @@ def get_label(labels: dict, name: str) -> int:
 # Section budget definitions: (start_label, end_label, description, max_bytes)
 SECTION_BUDGETS = [
     # Render-safe zone (below &3000)
-    (".start",                    ".render_start",           "main.asm",              768),
+    (".entry",                    ".render_start",           "main.asm",              780),
     (".render_start",             ".render_state_start",     "render",               1920),
     (".render_state_start",       ".room_runtime_start",     "render_state",          512),
     (".room_runtime_start",       ".debug_start",            "room_runtime",          256),
@@ -66,7 +66,8 @@ SECTION_BUDGETS = [
     (".portal_place_start",       ".frame_update_start",     "portal_place",         1280),
     (".frame_update_start",       ".persistent_objects_start","frame_update",         1024),
     (".persistent_objects_start", ".ui_start",               "persistent_objects",   2560),
-    (".ui_start",                 ".loaders_start",          "ui",                    256),
+    (".ui_start",                 ".screens_start",          "ui",                    256),
+    (".screens_start",            ".loaders_start",          "screens",               896),
     (".loaders_start",            ".timing_start",           "loaders",              1024),
     (".timing_start",             ".movement_start",         "timing",                 64),
     (".movement_start",           ".laser_start",            "movement",             1024),
@@ -120,7 +121,7 @@ def main(argv: list[str]) -> int:
             errors.append(f"{desc}: {used} bytes exceeds budget of {budget} (over by {used - budget})")
 
     total_end = get_label(labels, ".end")
-    total_start = get_label(labels, ".start")
+    total_start = get_label(labels, ".entry")
     total_used = total_end - total_start
     print(f"\n  Total: {total_used} bytes (&{total_start:04X}..&{total_end:04X}), ceiling &{CODE_CEILING:04X}, headroom {CODE_CEILING - total_end}")
 

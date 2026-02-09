@@ -6,4 +6,6 @@
 ; The build pipeline generates these from room authoring files under
 ; `levels/level1/` (TMX preferred; glyph `.txt` supported).
 
+LEVEL_NUMBER = 2
+
 INCLUDE "levels/generated_level2.asm"

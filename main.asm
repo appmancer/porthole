@@ -280,11 +280,24 @@ CHELL_FALL_LEFT_BASE        = 44
 ; Dead Chell sprite (single frame, no subpixel or direction variants).
 CHELL_DEAD_BASE              = 48
 
+.entry
+    ; One-time MODE 7 screens (before any MODE 5 setup).
+    ; The boot loader sets MODE 5 before jumping here, but that's fine —
+    ; enter_mode7 switches to MODE 7 (only clears &7C00-&7FFF), and
+    ; restore_mode5 writes Video ULA + CRTC directly (no VDU 22,5).
+    JSR show_instructions
+    JSR show_level_card
+
+    ; Fall through to .start which handles full MODE 5 hardware init.
+
 .start
     ; NOTE: MODE 5 is set by the boot loader (PROGRAM) before loading the
     ; game binary.  We must NOT call MODE 5 here because the VDU screen
     ; clear would destroy code/data in MAIN RAM at &5800+ (our code blob
     ; extends past the MODE 5 screen start at &5800).
+    ;
+    ; restore_mode5 (called by screen routines above) sets Video ULA +
+    ; CRTC screen start. The code below completes the MODE 5 setup.
 
     ; Disable the blinking text cursor (it writes into screen RAM).
     JSR disable_cursor
@@ -787,6 +800,7 @@ INCLUDE "portal_place.asm"
 INCLUDE "frame_update.asm"
 INCLUDE "persistent_objects.asm"
 INCLUDE "ui.asm"
+INCLUDE "screens.asm"
 INCLUDE "loaders.asm"
 INCLUDE "timing.asm"
 INCLUDE "movement.asm"
@@ -797,7 +811,7 @@ INCLUDE "persistent_objects_data.asm"
 
 .end
 
-SAVE "PORTHLE", start, end
+SAVE "PORTHLE", entry, end
 
 ; Boot loader (PROGRAM) is a small machine-code binary.
 ; !Boot runs: *BASIC then *RUN PROGRAM.
