@@ -28,7 +28,7 @@
 
 ; --- show_level_card ---
 ; Display "Test Chamber XX" title card. Blocks until SPACE pressed.
-; Input: level number is hard-coded from LEVEL_NUMBER constant.
+; Input: current_level (0-indexed) in ZP.
 .show_level_card
     JSR enter_mode7
 
@@ -39,7 +39,10 @@
 
     ; Overwrite the level number placeholder bytes with actual digits.
     ; The number appears twice (double-height top + bottom row).
-    LDA #LEVEL_NUMBER
+    ; current_level is 0-indexed; display as 1-indexed.
+    LDA current_level
+    CLC
+    ADC #1
     LDX #0
 .slc_tens
     CMP #10
@@ -64,6 +67,20 @@
     ADC #ASC("0")
     STA &7C00 + 12*40 + 15     ; row 12, col 15
     STA &7C00 + 13*40 + 15     ; row 13, col 15
+
+    JSR wait_space
+    JSR restore_mode5
+    RTS
+
+
+; --- show_complete_screen ---
+; Display "TESTING COMPLETE" screen. Blocks until SPACE pressed.
+.show_complete_screen
+    JSR enter_mode7
+
+    LDX #<str_complete
+    LDY #>str_complete
+    JSR write_mode7_screen
 
     JSR wait_space
     JSR restore_mode5
@@ -369,5 +386,36 @@
     EQUB 20, 4, 25
     EQUB 136, 135
     EQUS "Press SPACE to continue"
+
+    EQUB &FF            ; end sentinel
+
+
+; Completion screen: double-height "TESTING COMPLETE".
+.str_complete
+    ; Top half of "TESTING COMPLETE"
+    EQUB 8, 4, 18
+    EQUB 141, 135
+    EQUS "TESTING COMPLETE"
+
+    ; Bottom half of "TESTING COMPLETE"
+    EQUB 9, 4, 18
+    EQUB 141, 135
+    EQUS "TESTING COMPLETE"
+
+    ; Sub-text in cyan.
+    EQUB 12, 3, 28
+    EQUB 134
+    EQUS "Thank you for participating"
+    EQUB 13, 3, 28
+    EQUB 134
+    EQUS "in this Enrichment Center"
+    EQUB 14, 3, 18
+    EQUB 134
+    EQUS "activity.  Bye!"
+
+    ; Flashing prompt.
+    EQUB 20, 4, 26
+    EQUB 136, 135
+    EQUS "Press SPACE to restart"
 
     EQUB &FF            ; end sentinel

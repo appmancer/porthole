@@ -840,3 +840,96 @@
  .hqs_try_fc_fail
      CLC
      RTS
+
+
+; Check if Chell entered an open exit object in the current room.
+; Conditions: alive, grounded, SPACE pressed, overlapping an open exit.
+; Returns: C=1 if entered (caller should advance level), C=0 otherwise.
+; Clobbers: A,X,Y,temp,temp_y
+.check_exit_entered
+    ; Must be alive.
+    LDA char_dead
+    BNE cee_no
+
+    ; Must have pressed SPACE this frame.
+    LDA action_pressed
+    BEQ cee_no
+
+    ; Must be grounded.
+    LDA char_grounded
+    BEQ cee_no
+
+    ; Precompute Chell tile coords.
+    LDA char_tile_pos
+    AND #15
+    STA temp              ; chell_x
+    LDA char_tile_pos
+    LSR A : LSR A : LSR A : LSR A
+    STA temp_y            ; chell_y (top)
+
+    ; Chell feet tile_y = chell_y + 1 (2 tiles tall).
+    LDA temp_y
+    CLC
+    ADC #1
+    STA row_counter       ; chell_feet_y
+
+    ; Scan all objects for open exits in current room.
+    LDY #0
+.cee_loop
+    CPY #OBJ_COUNT
+    BCS cee_no
+
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_EXIT
+    BNE cee_next
+
+    ; Must be in current room.
+    LDA obj_room,Y
+    CMP current_room
+    BNE cee_next
+
+    ; Must be open (state bit0 = 1).
+    LDA obj_state,Y
+    AND #1
+    BEQ cee_next
+
+    ; Exit is 2 tiles wide, 2 tiles tall. Check if Chell overlaps.
+    ; Y overlap: exit occupies rows obj_y..obj_y+1.
+    ; Chell occupies rows chell_y..chell_y+1.
+    ; Overlap if |exit_y - chell_y| <= 1.
+    LDA obj_y,Y
+    SEC
+    SBC temp_y
+    BPL cee_yabs
+    EOR #&FF
+    CLC
+    ADC #1
+.cee_yabs
+    CMP #2
+    BCS cee_next
+
+    ; X overlap: both 2 tiles wide. Overlap if |exit_x - chell_x| < 2.
+    LDA obj_x,Y
+    SEC
+    SBC temp
+    BPL cee_xabs
+    EOR #&FF
+    CLC
+    ADC #1
+.cee_xabs
+    CMP #2
+    BCS cee_next
+
+    ; Overlap! Consume the action press so it doesn't also trigger cube drop.
+    LDA #0
+    STA action_pressed
+    SEC
+    RTS
+
+.cee_next
+    INY
+    JMP cee_loop
+
+.cee_no
+    CLC
+    RTS

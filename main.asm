@@ -163,6 +163,7 @@ ORG &00
   .debug_flags          SKIP 1
 
   .char_dead            SKIP 1    ; 0=alive, 1=dead (waiting for keypress)
+  .current_level        SKIP 1    ; 0-indexed level number (0..LEVEL_COUNT-1)
 
   ; Fizzler region state (per-room).
   .room_fizzler_count   SKIP 1    ; fizzlers in current room (0..4)
@@ -281,11 +282,20 @@ CHELL_FALL_LEFT_BASE        = 44
 CHELL_DEAD_BASE              = 48
 
 .entry
-    ; One-time MODE 7 screens (before any MODE 5 setup).
-    ; The boot loader sets MODE 5 before jumping here, but that's fine —
-    ; enter_mode7 switches to MODE 7 (only clears &7C00-&7FFF), and
-    ; restore_mode5 writes Video ULA + CRTC directly (no VDU 22,5).
+    ; One-time instruction screen (before any MODE 5 setup).
     JSR show_instructions
+
+    ; Initialize level counter.
+    LDA #0
+    STA current_level
+
+    ; Fall through to start_level.
+
+.start_level
+    ; Load the current level's header block into the active buffer.
+    JSR load_level
+
+    ; Show MODE 7 "Test Chamber XX" title card.
     JSR show_level_card
 
     ; Fall through to .start which handles full MODE 5 hardware init.
@@ -337,10 +347,8 @@ CHELL_DEAD_BASE              = 48
     LDA #45
     STA CRTC_DATA
 
-    ; Minimal demo harness.
-
-      ; Sideways RAM sprite banks are loaded by PROGRAM at boot.
-      ; PROGRAM also writes `chell_bank`/`obj_bank` (ROMSEL values) into ZP.
+    ; Sideways RAM sprite banks are loaded by PROGRAM at boot.
+    ; PROGRAM also writes `chell_bank`/`obj_bank` (ROMSEL values) into ZP.
 
     ; Enable shadow screen (Master).
     ; Writes ACCCON directly to set D=1 (CRTC displays LYNNE).
@@ -360,8 +368,8 @@ CHELL_DEAD_BASE              = 48
     ; Clear the shadow screen before redrawing.
     JSR clear_lynne_screen
 
-    ; Select the level-defined start room.
-    LDA #LEVEL_START_ROOM
+    ; Select the level-defined start room (from active buffer).
+    LDA level_start_room_buf
     STA current_room
     JSR set_room_tilemap
     JSR set_room_portalmap
@@ -371,8 +379,8 @@ CHELL_DEAD_BASE              = 48
     JSR init_persistent_objects
     JSR init_beams
 
-    ; Place Chell at the level-defined start tile.
-    LDA #LEVEL_START_TILE_POS
+    ; Place Chell at the level-defined start tile (from active buffer).
+    LDA level_start_pos_buf
     STA char_tile_pos
 
     ; Init state.
@@ -536,6 +544,19 @@ CHELL_DEAD_BASE              = 48
          STA sim_phase
          JMP main_loop
 
+
+ ; --- Level advance (called when player enters open exit) ---
+ .advance_level
+    INC current_level
+    LDA current_level
+    CMP #LEVEL_COUNT
+    BCC al_not_done
+    ; All levels complete — show completion screen, restart from level 0.
+    JSR show_complete_screen
+    LDA #0
+    STA current_level
+ .al_not_done
+    JMP start_level
 
  ; --- Render (incremental frame) ---
  ; Uses chell_dirty/reticle_dirty computed in the previous update.
@@ -738,6 +759,11 @@ CHELL_DEAD_BASE              = 48
 
         ; Room exits (screen transitions).
         JSR check_room_exits
+
+        ; Exit object entered? (SPACE on open exit → advance level)
+        JSR check_exit_entered
+        BCC update_finish_no_gameplay
+        JMP advance_level
 
   .update_finish_no_gameplay
 

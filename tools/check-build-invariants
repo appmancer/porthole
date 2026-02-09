@@ -50,7 +50,7 @@ def get_label(labels: dict, name: str) -> int:
 # Section budget definitions: (start_label, end_label, description, max_bytes)
 SECTION_BUDGETS = [
     # Render-safe zone (below &3000)
-    (".entry",                    ".render_start",           "main.asm",              780),
+    (".entry",                    ".render_start",           "main.asm",              850),
     (".render_start",             ".render_state_start",     "render",               1920),
     (".render_state_start",       ".room_runtime_start",     "render_state",          512),
     (".room_runtime_start",       ".debug_start",            "room_runtime",          256),
@@ -64,15 +64,15 @@ SECTION_BUDGETS = [
     (".reticle_start",            ".input_start",            "reticle",              1792),
     (".input_start",              ".portal_place_start",     "input",                 512),
     (".portal_place_start",       ".frame_update_start",     "portal_place",         1280),
-    (".frame_update_start",       ".persistent_objects_start","frame_update",         1024),
+    (".frame_update_start",       ".persistent_objects_start","frame_update",         1152),
     (".persistent_objects_start", ".ui_start",               "persistent_objects",   2560),
     (".ui_start",                 ".screens_start",          "ui",                    256),
-    (".screens_start",            ".loaders_start",          "screens",               896),
+    (".screens_start",            ".loaders_start",          "screens",              1280),
     (".loaders_start",            ".timing_start",           "loaders",              1024),
     (".timing_start",             ".movement_start",         "timing",                 64),
     (".movement_start",           ".laser_start",            "movement",             1024),
     (".laser_start",              ".tilemap_data_start",     "laser",                1280),
-    (".tilemap_data_start",       ".objects_start",           "tilemap",             1280),
+    (".tilemap_data_start",       ".objects_start",           "tilemap",             3072),
     (".objects_start",            ".persistent_data_start",   "objects",              512),
     (".persistent_data_start",    ".end",                     "persistent_obj_data",  768),
 ]

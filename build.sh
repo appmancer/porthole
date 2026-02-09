@@ -75,8 +75,14 @@ mkdir -p .tmp
   --out "sprites/generated_tiles.asm"
 
 ./tools/gen-level \
+  --level "levels/level1" \
+  --out "levels/generated_level1.asm" \
+  --label-prefix level1 --pad-obj 5 --pad-laser 1 --pad-target 1
+
+./tools/gen-level \
   --level "levels/level2" \
-  --out "levels/generated_level2.asm"
+  --out "levels/generated_level2.asm" \
+  --label-prefix level2 --pad-obj 5 --pad-laser 1 --pad-target 1
 
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)
 if [[ "${LOADSCR_WH}" == "160 256" ]]; then
