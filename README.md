@@ -20,7 +20,6 @@ A Portal demake for the BBC Master 128, written in 6502 assembly.
 - Puzzle elements: buttons, pressure pads, exit doors, fizzler fields, cube spawners
 - Multi-room levels with screen transitions
 - Reticle-based aiming system for portal placement
-- Hand-drawn loading screen artwork
 - MODE 7 teletext interstitial screens
 
 ## Requirements
