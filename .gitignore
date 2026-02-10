@@ -6,30 +6,31 @@ sprites/generated_tiles.asm
 sprites/generated_objects_sprites.asm
 sprites/generated_objects_masks.asm
 
-# Tooling outputs
-.tmp/beebasm.labels
-.tmp/refs_*.txt
+# Build outputs (keep porthole.ssd)
+CHDATA
+LOADSCR
+OBJDAT
+PORTHLE
+PROGRAM
+TILDAT
 
 # Python caches
 tools/__pycache__/
 
-# Reference materials (not part of PORTHOLE build)
-Spycat.ssd
-Disc041-Spycat.ssd
-Superior/
+# Reference materials (not part of build)
 books/
+*.ssd
+!porthole.ssd
 
-# Local/dev artifacts (do not commit)
+# Claude Code project files
+AGENTS.md
+CLAUDE.md
+
+# Local/dev artifacts
 .~lock.*#
-Portal Screen.ods
 grid64.xlsx
 STATUS.md
-Nevryon.ssd
 levels/room00.txt
 levels/level1/Level1txt
-/nevyron_annotated_disasm.md
-/nevyron_notes.md
-/reference/nevyron_annotated_disasm.md
-/reference/nevyron_notes.md
 tools/b2-scan-zp.py
 tools/b2-watch-key.py
