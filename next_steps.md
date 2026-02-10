@@ -20,22 +20,13 @@ Architecture reference auto-loaded from `MEMORY.md`.
 - **Cube physics** — gravity (fall 1 tile/frame), pad triggering (cube on pad activates signal), floor portal entry (cube falls through floor portal to paired exit)
 - **Fizzler regions** — parsed from TMX metadata, clear portals and destroy carried cube on contact, block portal LOS, surgical per-tile erase (no full room redraw), laser beams pass through
 - **Pedestal button latching** — buttons latch on first SPACE press (permanent activation), pads remain momentary. Buttons parsed from meta objectgroup.
+- **Falling + portal flinging** — fast-fall (2x speed, no lateral) after 6 tiles, velocity persists across room transitions and portal teleports, floor-to-wall flings with high horizontal momentum
 
 ---
 
 ## P2: Follow-ups
 
-1) Falling + flinging (high-speed portal traversal)
-
-   - At some point jumping becomes falling; Chell accelerates and moves faster.
-   - Quick-shot straight-down already works while falling.
-   - Velocity must be preserved through portals — enter a floor portal fast,
-     exit a wall portal fast (horizontal fling across gaps).
-   - Requires: higher terminal velocity, velocity mapping through portal
-     orientations (vt/vn decomposition already in portal_teleport.asm),
-     possibly swept collision detection to avoid tunnelling at high speeds.
-
-2) Cube fling through portals
+1) Cube fling through portals
 
    - Cubes currently only support floor portal entry (gravity drop-through).
    - Full momentum mapping (like Chell) for cube-through-portal fling is a stretch goal.
