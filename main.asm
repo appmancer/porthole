@@ -533,6 +533,13 @@ CHELL_DEAD_BASE              = 48
          JMP restart_level
        .no_restart
 
+         ; Cheat: L skips to next level.
+         LDX #&A9            ; INKEY(-87) = 'L'
+         JSR is_key_pressed
+         BCC no_skip_level
+         JMP advance_level
+       .no_skip_level
+
          ; Slow-motion pacing: update gameplay every other frame (50% speed).
          LDA sim_phase
          BNE main_skip_update

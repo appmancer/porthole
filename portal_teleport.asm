@@ -97,7 +97,16 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         STA col_counter       ; chell_bottom_y
 
         ; Prefer portal A if both overlap (shouldn't happen with non-overlap rule).
+        ; Save Chell rect (temp/temp_y) — portal A's overlap check clobbers them.
+        LDA temp_y
+        PHA
+        LDA temp
+        PHA
         JSR cpei_try_portal_a
+        PLA
+        STA temp
+        PLA
+        STA temp_y
         BCS cpei_done
         JSR cpei_try_portal_b
 

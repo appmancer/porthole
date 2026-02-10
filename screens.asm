@@ -231,9 +231,16 @@
 
 
 ; --- wait_space ---
-; Poll until SPACE is pressed using OSBYTE 129 (INKEY).
+; Wait for SPACE release (debounce), then poll until SPACE is pressed.
 ; INKEY-99 = SPACE key.
 .wait_space
+.ws_release
+    LDA #129
+    LDX #(256-99)      ; INKEY-99 = SPACE
+    LDY #&FF
+    JSR OSBYTE
+    CPX #&FF
+    BEQ ws_release      ; still held — keep waiting
 .ws_loop
     LDA #129
     LDX #(256-99)      ; INKEY-99 = SPACE
@@ -406,15 +413,15 @@
     EQUB 12, 3, 28
     EQUB 134
     EQUS "Thank you for participating"
-    EQUB 13, 3, 28
+    EQUB 13, 3, 26
     EQUB 134
     EQUS "in this Enrichment Center"
-    EQUB 14, 3, 18
+    EQUB 14, 3, 16
     EQUB 134
     EQUS "activity.  Bye!"
 
     ; Flashing prompt.
-    EQUB 20, 4, 26
+    EQUB 20, 4, 24
     EQUB 136, 135
     EQUS "Press SPACE to restart"
 
