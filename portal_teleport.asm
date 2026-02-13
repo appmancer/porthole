@@ -479,22 +479,12 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         ; can produce arbitrary low-nibble offsets (e.g. 15) which breaks stepping and
         ; can leave Chell "floating".
         ;
-        ; - For wall/floor exits: round down to avoid pushing into nearby geometry.
-        ; - For ceiling exits: round up so we don't snap upward into the ceiling.
-        LDA row_counter
-        CMP #PORTAL_ORIENT_CEIL
-        BNE mt_quant_y_down
-        LDA temp_y
-        CLC
-        ADC #7
-        AND #&F8
-        STA temp_y
-        JMP mt_quant_y_clamp
- .mt_quant_y_down
+        ; Round down for all orientations. The PORTAL_EXIT_NUDGE already pushes
+        ; Chell away from the surface; rounding up on ceiling exits overcorrects
+        ; and embeds her one stripe into the floor below.
         LDA temp_y
         AND #&F8
         STA temp_y
- .mt_quant_y_clamp
         ; Prevent y+32 overflow in grounded checks (treats overflow as solid).
         ; Keep aligned to 8px stripes (max safe is 223 -> 216 when quantized).
         LDA temp_y
@@ -554,7 +544,7 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         BNE mt_face_store
  .mt_face_left
         LDA #0
-        BNE mt_face_store
+        BEQ mt_face_store
  .mt_face_keep
         LDA last_anim_dir
  .mt_face_store
@@ -571,6 +561,7 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         LDA #0
         STA move_held
         STA last_move_held
+        STA action_pressed        ; consume SPACE so cube drop doesn't fire
         LDA #PORTAL_COOLDOWN_FRAMES
         STA teleport_cooldown
         LDA #8

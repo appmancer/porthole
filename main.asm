@@ -764,6 +764,11 @@ CHELL_DEAD_BASE              = 48
         ; (We can later split this into pending + consume phases.)
         JSR maybe_teleport
 
+        ; Cube pickup/drop runs after portal entry so SPACE prioritises
+        ; back-wall portal entry over cube drop.  maybe_teleport clears
+        ; action_pressed when it fires, preventing an unwanted drop.
+        JSR handle_cube_pickup_drop
+
         ; Room exits (screen transitions).
         JSR check_room_exits
 

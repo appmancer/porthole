@@ -76,7 +76,7 @@ The `tools/` directory includes helpers for the B2 emulator's HTTP debug API:
 
 ## Status
 
-Beta. Core gameplay mechanics are complete. Graphics and level design are the current focus. 
+Beta. Core gameplay mechanics are complete. Graphics and level design are the current focus.  Level design is done using [Tiled](https://www.mapeditor.org/)
 
 ## AI Usage
 

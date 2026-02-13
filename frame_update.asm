@@ -91,11 +91,11 @@
 
 ; Normal mode: handle reticle deactivation, movement, and gravity.
  .update_normal_mode
-    ; Quick-shot portal firing (outside reticle mode).
+     ; Quick-shot portal firing (outside reticle mode).
     JSR handle_quick_shot
 
-    ; Cube pickup/drop (SPACE edge).
-    JSR handle_cube_pickup_drop
+    ; Cube pickup/drop is deferred to the main loop (after portal entry)
+    ; so that SPACE prioritises back-wall portal entry over cube drop.
 
     ; Keep the physics solidity plane up to date (tiles + standable objects).
     ; This lets Chell stand on cubes.
@@ -128,23 +128,27 @@
     STA chell_dirty
 
  .unm_done
-     ; Falling pose readability: once descent is committed (vy threshold), switch
-     ; to a dedicated fall pose even on frames where we don't move (paced fall).
-     ; Track a tiny pose state so we can force a redraw only on transitions.
+     ; Track a 3-state pose so any transition forces a redraw:
+     ;   0 = grounded, 1 = airborne/jump, 2 = airborne/fall.
+     ; Previous bug: jump and grounded were both 0, so landing from
+     ; a short hop (never reaching fall threshold) was invisible.
      LDA chell_air_pose
      STA temp
  
-     LDA #0
+     LDA #0                    ; assume grounded
      STA chell_air_pose
  
      LDA char_grounded
-     BNE unm_pose_check
+     BNE unm_pose_check        ; grounded -> stays 0
+ 
+     LDA #1                    ; airborne: default to jump pose
+     STA chell_air_pose
  
      LDA char_vy
-     BMI unm_pose_check
+     BMI unm_pose_check        ; rising -> keep 1 (jump)
      CMP #FALL_POSE_VY_THRESHOLD
-     BCC unm_pose_check
-     LDA #1
+     BCC unm_pose_check        ; slow descent -> keep 1 (jump)
+     LDA #2                    ; fast descent -> fall pose
      STA chell_air_pose
  
  .unm_pose_check
@@ -624,12 +628,20 @@
      LSR A
      STA row_counter          ; hit_y
 
-     ; base cell_x = min(hit_x, 14)
+      ; base cell_x = max(hit_x - 1, 0), clamped to 14.
+     ; compute_reticle_state treats reticle_cell_x as the LEFT column of a
+     ; 2-tile span.  Shifting back by 1 ensures a right-wall hit tile lands
+     ; in the right column of that span, matching reticle-mode conventions
+     ; and giving the LOS check a clear target in the open space.
      LDA col_counter
-     CMP #15
-     BCC hqs_wall_x_ok
-     LDA #14
+     BEQ hqs_wall_x_ok
+     SEC
+     SBC #1
    .hqs_wall_x_ok
+     CMP #15
+     BCC hqs_wall_x_clamp_ok
+     LDA #14
+   .hqs_wall_x_clamp_ok
      STA reticle_cell_x
 
      ; base y = min(hit_y, 14) (wall portals are 2 tiles tall)
