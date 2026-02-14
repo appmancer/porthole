@@ -1364,6 +1364,13 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
     ; Stamp standable objects into the physics plane.
     ; Note: pads are triggers on the floor and should not raise Chell, so only
     ; cubes contribute to physics solidity.
+    ; Precompute Chell tile coords for overlap skip.
+    LDA char_tile_pos
+    AND #15
+    STA col_counter            ; chell_x
+    LDA char_tile_pos
+    LSR A : LSR A : LSR A : LSR A
+    STA row_counter            ; chell_y
     LDY #0
   .rsp_obj_loop
     LDA obj_room,Y
@@ -1378,6 +1385,30 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
     LDA obj_state,Y
     AND #OBJ_STATE_CARRIED
     BNE rsp_obj_next
+
+    ; Skip solidity stamp if cube overlaps Chell (prevents trapping).
+    ; Chell is 2 wide x 2 tall at (chell_x, chell_y)..(chell_x+1, chell_y+1).
+    ; Cube is 2 wide x 1 tall at (obj_x, obj_y)..(obj_x+1, obj_y).
+    ; Y overlap: cube_y == chell_y OR cube_y == chell_y+1
+    LDA obj_y,Y
+    CMP row_counter            ; chell_y
+    BEQ rsp_chk_x_overlap
+    SEC
+    SBC row_counter
+    CMP #1                     ; cube_y == chell_y+1?
+    BNE rsp_obj_stamp          ; no Y overlap — stamp normally
+  .rsp_chk_x_overlap
+    ; X overlap: |cube_x - chell_x| < 2
+    LDA obj_x,Y
+    SEC
+    SBC col_counter            ; cube_x - chell_x (signed)
+    BPL rsp_x_pos
+    EOR #&FF
+    CLC
+    ADC #1                     ; abs(cube_x - chell_x)
+  .rsp_x_pos
+    CMP #2
+    BCC rsp_obj_next           ; overlap — skip stamp
 
   .rsp_obj_stamp
     ; idx = obj_y*16 + obj_x

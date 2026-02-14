@@ -232,10 +232,10 @@ TILE_EXIT_OPEN_TL             = 7
 TILE_EXIT_OPEN_TR             = 8
 TILE_EXIT_OPEN_BL             = 9
 TILE_EXIT_OPEN_BR             = 10
-TILE_BARRIER_OPEN_L           = 54
-TILE_BARRIER_OPEN_R           = 55
-TILE_BARRIER_CLOSED_L         = 30
-TILE_BARRIER_CLOSED_R         = 31
+TILE_BARRIER_OPEN_T           = 30
+TILE_BARRIER_OPEN_B           = 31
+TILE_BARRIER_CLOSED_T         = 54
+TILE_BARRIER_CLOSED_B         = 55
 
 ; Overlay sprite indices (overlay_sprite_table).
 CHELL_OVERLAY_CARRY_RIGHT_BASE = 24

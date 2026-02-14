@@ -31,7 +31,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 2                 ; pad    (16x16)
     EQUB 2                 ; exit   (16x32)
     EQUB 0                 ; spawner (tile-based, no sprite)
-    EQUB 2                 ; barrier (16x8, 2 tiles wide)
+    EQUB 1                 ; barrier (8x32, 1 tile wide x 2 tall)
 
 .obj_redraw_h_tiles
     EQUB 0                 ; type 0 (unused)
@@ -40,7 +40,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 1                 ; pad
     EQUB 2                 ; exit
     EQUB 0                 ; spawner (tile-based, no sprite)
-    EQUB 1                 ; barrier
+    EQUB 2                 ; barrier (2 tiles tall)
 
 ; Initialize per-object runtime arrays from generated obj_defs.
 ; Clobbers: A,X,Y,temp,temp_y
@@ -828,7 +828,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     ; Visible change? only matters if this exit is in the current room.
     LDA obj_room,Y
     CMP current_room
-    BNE usos_cons_next
+    BEQ usos_exit_in_room
+    JMP usos_cons_next
+  .usos_exit_in_room
     LDA #1
     STA objects_pending
     STA obj_dirty,Y
@@ -870,6 +872,29 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA obj_room,Y
     CMP current_room
     BNE usos_cons_next
+
+    ; Patch solid_tile_plane for the barrier's two tiles (1w x 2h).
+    ; Open (obj_state bit0=1) → solid=0; Closed (bit0=0) → solid=1.
+    LDA obj_state,Y
+    AND #1
+    EOR #1              ; invert: open→0, closed→1
+    PHA                 ; save solidity value
+    LDX obj_y,Y
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX                 ; X = tile index (top tile)
+    PLA
+    STA solid_tile_plane,X   ; patch top tile
+    TXA
+    CLC
+    ADC #16
+    TAX
+    LDA obj_state,Y
+    AND #1
+    EOR #1
+    STA solid_tile_plane,X   ; patch bottom tile
+
     LDA #1
     STA objects_pending
     STA obj_dirty,Y
@@ -1018,21 +1043,24 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA obj_state,Y
     AND #1
     BEQ uots_barrier_closed
-    LDA #TILE_BARRIER_OPEN_L
+    LDA #TILE_BARRIER_OPEN_T
     STA temp
-    LDA #TILE_BARRIER_OPEN_R
+    LDA #TILE_BARRIER_OPEN_B
     STA col_counter
     JMP uots_barrier_write
   .uots_barrier_closed
-    LDA #TILE_BARRIER_CLOSED_L
+    LDA #TILE_BARRIER_CLOSED_T
     STA temp
-    LDA #TILE_BARRIER_CLOSED_R
+    LDA #TILE_BARRIER_CLOSED_B
     STA col_counter
   .uots_barrier_write
     JSR uots_set_room_ptr_and_offset
     LDA temp
     STA (temp_sprite_ptr),Y
-    INY
+    TYA
+    CLC
+    ADC #16
+    TAY
     LDA col_counter
     STA (temp_sprite_ptr),Y
 
@@ -1121,20 +1149,14 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     JSR apou_redraw_footprint
   .apou_skip_redraw_old
 
-    ; Redraw new footprint only if the object is in the current room.
+    ; Redraw current footprint if the object is in the current room.
+    ; This covers both movement (new position) and state-only changes
+    ; (e.g. barrier open/closed) where coords didn't change.
     LDY temp_y
     LDA obj_room,Y
     CMP current_room
     BNE apou_redraw_restore
 
-    ; If the object moved within the room, redraw the new footprint as well.
-    LDA obj_prev_x,Y
-    CMP obj_x,Y
-    BNE apou_do_redraw_new
-    LDA obj_prev_y,Y
-    CMP obj_y,Y
-    BEQ apou_redraw_restore
-  .apou_do_redraw_new
     LDA obj_x,Y
     STA temp_sprite_ptr
     LDA obj_y,Y
@@ -1532,7 +1554,10 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     BNE hcpd_pick_next
     LDA obj_y,Y
     CMP row_counter
+    BEQ hcpd_y_ok
+    CMP temp_y
     BNE hcpd_pick_next
+  .hcpd_y_ok
     ; Pickup should work when Chell is adjacent (cubes are solid, so overlap is rare).
     JSR chell_near_2wide_obj
     BCC hcpd_pick_next

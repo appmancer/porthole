@@ -51,7 +51,7 @@ def get_label(labels: dict, name: str) -> int:
 SECTION_BUDGETS = [
     # Render-safe zone (below &3000)
     (".entry",                    ".render_start",           "main.asm",              850),
-    (".render_start",             ".render_state_start",     "render",               1920),
+    (".render_start",             ".render_state_start",     "render",               1952),
     (".render_state_start",       ".room_runtime_start",     "render_state",          512),
     (".room_runtime_start",       ".debug_start",            "room_runtime",          256),
     (".debug_start",              ".times16_table",           "debug",                 256),
