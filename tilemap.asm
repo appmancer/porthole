@@ -3,33 +3,39 @@
 ;
 ; Level data + active buffer for multi-level support.
 ;
-; Both levels are included with prefixed labels. At level load time,
+; All levels are included with prefixed labels. At level load time,
 ; `load_level` memcpy's the selected level's header block into the
 ; active buffer. Game code references the active buffer labels unchanged.
 
 ; Global constants (max across all levels).
-LEVEL_COUNT = 2
+LEVEL_COUNT = 5
 MAX_ROOMS = 2
-OBJ_COUNT = 5
+OBJ_COUNT = 6
 OBJ_DEF_SIZE = 6
 LASER_COUNT = 1
 LASER_DEF_SIZE = 7
 TARGET_COUNT = 1
 TARGET_DEF_SIZE = 4
-FIZZLER_DEF_SIZE = 4
+FIZZLER_DEF_SIZE = 5
 
 ; Header block size: sum of all fields in the active buffer.
-; 1+1 + 4+4 + 6*4 + 30 + 6 + 7 + 4 + 6 = 87
+; 1+1 + 4+4 + 6*4 + 36 + 6 + 7 + 4 + 6 = 93
 LEVEL_HEADER_SIZE = 1 + 1 + (MAX_ROOMS*2) + (MAX_ROOMS*2) + (MAX_ROOMS + MAX_ROOMS*2)*4 + (OBJ_COUNT*OBJ_DEF_SIZE) + (MAX_ROOMS + MAX_ROOMS*2) + (LASER_COUNT*LASER_DEF_SIZE) + (TARGET_COUNT*TARGET_DEF_SIZE) + (MAX_ROOMS + MAX_ROOMS*2)
 
-; Include both level data files (prefixed labels).
+; Include all level data files (prefixed labels).
 INCLUDE "levels/generated_level1.asm"
 INCLUDE "levels/generated_level2.asm"
+INCLUDE "levels/generated_level3.asm"
+INCLUDE "levels/generated_level4.asm"
+INCLUDE "levels/generated_level5.asm"
 
 ; Level header pointer table (indexed by current_level).
 .level_header_ptrs
     EQUW level1_header
     EQUW level2_header
+    EQUW level3_header
+    EQUW level4_header
+    EQUW level5_header
 
 ; ================================================================
 ; Active buffer — game code references these labels.

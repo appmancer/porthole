@@ -60,6 +60,7 @@ OBJECT_TYPE_TO_ID: dict[str, int] = {
     "pad": 3,
     "exit": 4,
     "spawner": 5,
+    "barrier": 6,
 }
 
 
@@ -209,7 +210,7 @@ def _parse_exits_and_objects_from_tmx(
     tile_h: int,
 ) -> tuple[
     dict[str, list[tuple[int, int, str]]],
-    list[tuple[str, int, int, str, int]],
+    list[tuple[str, int, int, str, int, int]],
     tuple[int, int] | None,
     bool,
     bool,
@@ -218,11 +219,11 @@ def _parse_exits_and_objects_from_tmx(
     list[tuple[int, int, int, int]],
 ]:
     exits = {"left": [], "right": [], "up": [], "down": []}
-    objects: list[tuple[str, int, int, str, int]] = []
+    objects: list[tuple[str, int, int, str, int, int]] = []
     start: tuple[int, int] | None = None
     lasers: list[tuple[int, int, int, int, str]] = []    # (tile_x, tile_y, dir, channel, id)
     targets: list[tuple[int, int, int, str]] = []         # (tile_x, tile_y, channel, id)
-    fizzlers: list[tuple[int, int, int, int]] = []        # (game_x0, game_y0, game_x1, game_y1)
+    fizzlers: list[tuple[int, int, int, int, int]] = []    # (game_x0, game_y0, game_x1, game_y1, channel)
 
     has_exit_group = False
     has_objects_group = False
@@ -406,6 +407,15 @@ def _parse_exits_and_objects_from_tmx(
                 if w <= 0 or h <= 0:
                     raise ValueError(f"{path}: fizzler must have width and height")
 
+                # Parse optional channel property (default 0).
+                chan_text = (props.get("channel") or "").strip()
+                if not chan_text:
+                    channel = 0
+                else:
+                    channel = int(chan_text)
+                    if not (0 <= channel <= 7):
+                        raise ValueError(f"{path}: fizzler channel out of range (0..7), got {channel}")
+
                 # Convert Tiled pixel coords to game pixel coords.
                 # Tiled uses tilewidth pixels; game X is half (8px per tile vs 16px).
                 game_x0 = x // 2
@@ -418,7 +428,7 @@ def _parse_exits_and_objects_from_tmx(
                         f"{path}: fizzler out of bounds: game ({game_x0},{game_y0})-({game_x1},{game_y1})"
                     )
 
-                fizzlers.append((game_x0, game_y0, game_x1, game_y1))
+                fizzlers.append((game_x0, game_y0, game_x1, game_y1, channel))
                 continue
 
             # --- Buttons in meta group ---
@@ -447,7 +457,7 @@ def _parse_exits_and_objects_from_tmx(
                 if not (0 <= cx <= 15 and 0 <= cy <= 15):
                     raise ValueError(f"{path}: button out of bounds at {cx},{cy}")
 
-                objects.append(("button", cx, cy, obj_id, channel))
+                objects.append(("button", cx, cy, obj_id, channel, 0))
                 continue
 
             # --- Gameplay objects (planned/optional) ---
@@ -484,7 +494,19 @@ def _parse_exits_and_objects_from_tmx(
                 if t == "exit" and cy > (map_h - 2):
                     raise ValueError(f"{path}: exit object out of bounds for 1x2 footprint at {cx},{cy} (y must be <= {map_h - 2})")
 
-                objects.append((t, cx, cy, obj_id, channel))
+                # Optional initial state (used by barriers: 0=closed, 1=open).
+                state_text = (props.get("state") or "").strip()
+                if state_text:
+                    try:
+                        init_state = int(state_text)
+                    except ValueError:
+                        raise ValueError(f"{path}: object {obj_type!r} has non-integer state={state_text!r}")
+                    if not (0 <= init_state <= 255):
+                        raise ValueError(f"{path}: object {obj_type!r} state out of range (0..255), got {init_state}")
+                else:
+                    init_state = 0
+
+                objects.append((t, cx, cy, obj_id, channel, init_state))
 
     return exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers
 
@@ -494,13 +516,13 @@ def parse_room_tmx(
 ) -> tuple[
     list[int],
     dict[str, list[tuple[int, int, str]]],
-    list[tuple[str, int, int, str, int]],
+    list[tuple[str, int, int, str, int, int]],
     tuple[int, int] | None,
     bool,
     bool,
     list[tuple[int, int, int, int, str]],
     list[tuple[int, int, int, str]],
-    list[tuple[int, int, int, int]],
+    list[tuple[int, int, int, int, int]],
 ]:
     root = ET.fromstring(path.read_text(encoding="utf-8"))
     if root.tag != "map":
@@ -585,11 +607,11 @@ class Room:
     exits_right: list[tuple[int, int, str]]
     exits_up: list[tuple[int, int, str]]
     exits_down: list[tuple[int, int, str]]
-    objects: list[tuple[str, int, int, str, int]]
+    objects: list[tuple[str, int, int, str, int, int]]
     start: tuple[int, int] | None
     lasers: list[tuple[int, int, int, int, str]]    # (tile_x, tile_y, dir, channel, id)
     targets: list[tuple[int, int, int, str]]         # (tile_x, tile_y, channel, id)
-    fizzlers: list[tuple[int, int, int, int]]        # (game_x0, game_y0, game_x1, game_y1)
+    fizzlers: list[tuple[int, int, int, int, int]]        # (game_x0, game_y0, game_x1, game_y1, channel)
 
 
 def parse_meta(
@@ -687,7 +709,7 @@ def parse_room(path: Path) -> Room:
     tmx_has_objects_group = False
     tmx_lasers: list[tuple[int, int, int, int, str]] = []
     tmx_targets: list[tuple[int, int, int, str]] = []
-    tmx_fizzlers: list[tuple[int, int, int, int]] = []
+    tmx_fizzlers: list[tuple[int, int, int, int, int]] = []
     if path.suffix.lower() == ".tmx":
         tiles, tmx_exits, tmx_objects, tmx_start, tmx_has_exit_group, tmx_has_objects_group, tmx_lasers, tmx_targets, tmx_fizzlers = parse_room_tmx(path)
     elif path.suffix.lower() == ".txt":
@@ -704,9 +726,9 @@ def parse_room(path: Path) -> Room:
     exits = meta_exits
     # NOTE: legacy .meta objects do not carry id/channel.
     # We keep them only as a fallback when a TMX objects group is absent.
-    objects: list[tuple[str, int, int, str, int]] = []
+    objects: list[tuple[str, int, int, str, int, int]] = []
     if meta_objects:
-        objects = [(typ, x, y, f"__meta__:{name}:{typ}@{x},{y}", 0) for (typ, x, y) in meta_objects]
+        objects = [(typ, x, y, f"__meta__:{name}:{typ}@{x},{y}", 0, 0) for (typ, x, y) in meta_objects]
     if tmx_exits is not None and tmx_has_exit_group:
         exits = tmx_exits
     if tmx_objects is not None and tmx_has_objects_group:
@@ -752,6 +774,8 @@ def main() -> None:
     ap.add_argument("--pad-obj", type=int, default=0, help="pad obj_defs to N entries")
     ap.add_argument("--pad-laser", type=int, default=0, help="pad laser_defs to N entries")
     ap.add_argument("--pad-target", type=int, default=0, help="pad target_defs to N entries")
+    ap.add_argument("--max-rooms", type=int, default=0,
+                     help="pad per-room header arrays to N entries (must >= actual rooms)")
     args = ap.parse_args()
 
     prefix = args.label_prefix
@@ -813,7 +837,7 @@ def main() -> None:
     # TMX-authored object ids must be unique across the whole level.
     seen_ids: dict[str, str] = {}
     for r in rooms:
-        for typ, x, y, obj_id, _channel in r.objects:
+        for typ, x, y, obj_id, _channel, _init_state in r.objects:
             if obj_id.startswith("__meta__:"):
                 continue
             if obj_id in seen_ids:
@@ -843,10 +867,11 @@ def main() -> None:
         home_room: int
         home_x: int
         home_y: int
+        init_state: int = 0
 
     objs: list[Obj] = []
     for r in rooms:
-        for typ, x, y, obj_id, channel in r.objects:
+        for typ, x, y, obj_id, channel, init_state in r.objects:
             if typ not in OBJECT_TYPE_TO_ID:
                 raise SystemExit(f"{level_dir}: {r.name}: unknown obj type {typ!r}")
             objs.append(
@@ -857,6 +882,7 @@ def main() -> None:
                     home_room=r.index,
                     home_x=x,
                     home_y=y,
+                    init_state=init_state,
                 )
             )
 
@@ -869,7 +895,7 @@ def main() -> None:
                     obj_id=cube_id,
                     type_id=OBJECT_TYPE_TO_ID["cube"],
                     channel=0,
-                    home_room=0xFF,
+                    home_room=o.home_room,
                     home_x=o.home_x,
                     home_y=o.home_y,
                 )
@@ -901,8 +927,8 @@ def main() -> None:
     for r in rooms:
         fizzler_counts.append(len(r.fizzlers))
         flat_f: list[int] = []
-        for x0, y0, x1, y1 in r.fizzlers:
-            flat_f.extend([x0, y0, x1, y1])
+        for x0, y0, x1, y1, ch in r.fizzlers:
+            flat_f.extend([x0, y0, x1, y1, ch])
         fizzler_data.append(flat_f)
 
     # Per-room object index lists.
@@ -915,6 +941,17 @@ def main() -> None:
     pad_obj = max(args.pad_obj, len(objs))
     pad_laser = max(args.pad_laser, len(all_lasers))
     pad_target = max(args.pad_target, len(all_targets))
+    max_rooms = max(args.max_rooms, len(rooms))
+
+    # Pad per-room arrays to max_rooms so the header block is the same size
+    # regardless of how many rooms the level actually has.
+    for arr in (exits_left, exits_right, exits_up, exits_down, room_indices):
+        while len(arr) < max_rooms:
+            arr.append([])
+    while len(fizzler_counts) < max_rooms:
+        fizzler_counts.append(0)
+    while len(fizzler_data) < max_rooms:
+        fizzler_data.append([])
 
     # Build padded obj_defs flat bytes.
     obj_flat: list[int] = []
@@ -922,7 +959,7 @@ def main() -> None:
         if o.type_id == OBJECT_TYPE_TO_ID["spawner"]:
             init_flags = obj_id_to_index[spawner_to_cube[o.obj_id]]
         else:
-            init_flags = 0
+            init_flags = o.init_state
         obj_flat.extend([o.type_id, o.channel, init_flags, o.home_room, o.home_x, o.home_y])
     # Pad with dummy type=0, room=&FF objects.
     for _ in range(pad_obj - len(objs)):
@@ -967,12 +1004,14 @@ def main() -> None:
         # 2. start_tile_pos (1B)
         lines.append(f"    EQUB &{((start_y << 4) | start_x):02X}")
 
-        # 3. room_pointers (MAX_ROOMS * 2)
-        for r in rooms:
+        # 3. room_pointers (max_rooms * 2)
+        for i in range(max_rooms):
+            r = rooms[i] if i < len(rooms) else rooms[0]
             lines.append(f"    EQUW {level_name}_{r.name}")
 
-        # 4. portal_room_pointers (MAX_ROOMS * 2)
-        for r in rooms:
+        # 4. portal_room_pointers (max_rooms * 2)
+        for i in range(max_rooms):
+            r = rooms[i] if i < len(rooms) else rooms[0]
             lines.append(f"    EQUW {level_name}_{r.name}_portal")
 
         # 5-8. exit tables (counts + ptrs per direction)
@@ -981,7 +1020,8 @@ def main() -> None:
             for entries in per_room:
                 lines.append(f"    EQUB {len(entries)}")
             for i in range(len(per_room)):
-                lines.append(f"    EQUW {level_name}_room{i:02d}_exit_{edge}")
+                ri = i if i < len(rooms) else 0
+                lines.append(f"    EQUW {level_name}_room{ri:02d}_exit_{edge}")
 
         # 9. obj_defs (pad_obj * OBJ_DEF_SIZE)
         if obj_flat:
@@ -993,7 +1033,8 @@ def main() -> None:
         for idxs in room_indices:
             lines.append(f"    EQUB {len(idxs)}")
         for i in range(len(room_indices)):
-            lines.append(f"    EQUW {level_name}_room{i:02d}_obj_indices")
+            ri = i if i < len(rooms) else 0
+            lines.append(f"    EQUW {level_name}_room{ri:02d}_obj_indices")
 
         # 11. laser_defs (pad_laser * LASER_DEF_SIZE)
         if laser_flat:
@@ -1010,8 +1051,9 @@ def main() -> None:
         # 13. fizzler_room_counts + fizzler_room_ptrs
         for c in fizzler_counts:
             lines.append(f"    EQUB {c}")
-        for i in range(len(rooms)):
-            lines.append(f"    EQUW {level_name}_room{i:02d}_fizzlers")
+        for i in range(len(fizzler_counts)):
+            ri = i if i < len(rooms) else 0
+            lines.append(f"    EQUW {level_name}_room{ri:02d}_fizzlers")
 
         lines.append("")
     else:
@@ -1021,12 +1063,14 @@ def main() -> None:
         lines.append("")
 
         lines.append(".room_pointers")
-        for r in rooms:
+        for i in range(max_rooms):
+            r = rooms[i] if i < len(rooms) else rooms[0]
             lines.append(f"    EQUW {level_name}_{r.name}")
         lines.append("")
 
         lines.append(".portal_room_pointers")
-        for r in rooms:
+        for i in range(max_rooms):
+            r = rooms[i] if i < len(rooms) else rooms[0]
             lines.append(f"    EQUW {level_name}_{r.name}_portal")
         lines.append("")
 
@@ -1037,9 +1081,12 @@ def main() -> None:
             lines.append("")
             lines.append(f".exit_{edge}_ptrs")
             for i in range(len(per_room)):
-                lines.append(f"    EQUW {level_name}_room{i:02d}_exit_{edge}")
+                ri = i if i < len(rooms) else 0
+                lines.append(f"    EQUW {level_name}_room{ri:02d}_exit_{edge}")
             lines.append("")
             for i, entries in enumerate(per_room):
+                if i >= len(rooms):
+                    break  # padded slots point to room00; no extra labels needed
                 lines.append(f".{level_name}_room{i:02d}_exit_{edge}")
                 if not entries:
                     lines.append("    ; (no exits)")
@@ -1073,7 +1120,8 @@ def main() -> None:
 
         lines.append(".obj_room_ptrs")
         for i in range(len(room_indices)):
-            lines.append(f"    EQUW {level_name}_room{i:02d}_obj_indices")
+            ri = i if i < len(rooms) else 0
+            lines.append(f"    EQUW {level_name}_room{ri:02d}_obj_indices")
         lines.append("")
 
         lines.append(f"LASER_COUNT = {pad_laser if args.pad_laser else len(all_lasers)}")
@@ -1105,12 +1153,15 @@ def main() -> None:
         lines.append("")
 
         lines.append(".fizzler_room_ptrs")
-        for i in range(len(rooms)):
-            lines.append(f"    EQUW {level_name}_room{i:02d}_fizzlers")
+        for i in range(len(fizzler_counts)):
+            ri = i if i < len(rooms) else 0
+            lines.append(f"    EQUW {level_name}_room{ri:02d}_fizzlers")
         lines.append("")
 
         # Per-room obj_indices (legacy mode emits inline).
         for i, idxs in enumerate(room_indices):
+            if i >= len(rooms):
+                break  # padded slots point to room00; no extra labels needed
             lines.append(f".{level_name}_room{i:02d}_obj_indices")
             if not idxs:
                 lines.append("    ; (no objects)")
@@ -1120,6 +1171,8 @@ def main() -> None:
 
         # Per-room fizzler data (legacy mode emits inline).
         for i, fd in enumerate(fizzler_data):
+            if i >= len(rooms):
+                break  # padded slots point to room00; no extra labels needed
             lines.append(f".{level_name}_room{i:02d}_fizzlers")
             if not fd:
                 lines.append("    ; (no fizzlers)")
@@ -1132,6 +1185,8 @@ def main() -> None:
         for edge, per_room in [("left", exits_left), ("right", exits_right),
                                 ("up", exits_up), ("down", exits_down)]:
             for i, entries in enumerate(per_room):
+                if i >= len(rooms):
+                    break  # padded slots point to room00; no extra labels needed
                 lines.append(f".{level_name}_room{i:02d}_exit_{edge}")
                 if not entries:
                     lines.append("    ; (no exits)")
@@ -1143,6 +1198,8 @@ def main() -> None:
                 lines.append("")
 
         for i, idxs in enumerate(room_indices):
+            if i >= len(rooms):
+                break  # padded slots point to room00; no extra labels needed
             lines.append(f".{level_name}_room{i:02d}_obj_indices")
             if not idxs:
                 lines.append("    ; (no objects)")
@@ -1151,6 +1208,8 @@ def main() -> None:
             lines.append("")
 
         for i, fd in enumerate(fizzler_data):
+            if i >= len(rooms):
+                break  # padded slots point to room00; no extra labels needed
             lines.append(f".{level_name}_room{i:02d}_fizzlers")
             if not fd:
                 lines.append("    ; (no fizzlers)")

@@ -11,15 +11,17 @@
 ; VDU-based routines in .start (set_palette, disable_cursor) still work.
 
 
-; --- show_instructions ---
-; Display the instruction/story screen. Blocks until SPACE pressed.
-.show_instructions
+; --- show_start_screen ---
+; Load a raw 1000-byte MODE 7 screen from disc and display it.
+; Blocks until SPACE pressed.
+.show_start_screen
     JSR enter_mode7
 
-    ; Copy instruction screen data directly into MODE 7 screen RAM.
-    LDX #<str_instructions
-    LDY #>str_instructions
-    JSR write_mode7_screen
+    ; OSFILE &FF — load STRTSCR directly into MODE 7 screen RAM at &7C00.
+    LDA #&FF
+    LDX #<osfile_blk_strtscr
+    LDY #>osfile_blk_strtscr
+    JSR OSFILE
 
     JSR wait_space
     JSR restore_mode5
@@ -27,18 +29,32 @@
 
 
 ; --- show_level_card ---
-; Display "Test Chamber XX" title card. Blocks until SPACE pressed.
+; Display level title card on the Aperture template. Blocks until SPACE pressed.
 ; Input: current_level (0-indexed) in ZP.
 .show_level_card
     JSR enter_mode7
 
-    ; Copy level card data directly into MODE 7 screen RAM.
-    LDX #<str_level_card
-    LDY #>str_level_card
+    ; Load raw template screen into MODE 7 RAM at &7C00.
+    LDA #&FF
+    LDX #<osfile_blk_templte
+    LDY #>osfile_blk_templte
+    JSR OSFILE
+
+    ; Look up per-level overlay data pointer.
+    LDA current_level
+    ASL A                       ; *2 for word index
+    TAX
+    LDA level_card_ptrs,X
+    STA temp_sprite_ptr
+    LDA level_card_ptrs+1,X
+    STA temp_sprite_ptr+1
+
+    ; Write overlay records (TEST CHAMBER header + GLaDOS quote + prompt).
+    LDX temp_sprite_ptr
+    LDY temp_sprite_ptr+1
     JSR write_mode7_screen
 
-    ; Overwrite the level number placeholder bytes with actual digits.
-    ; The number appears twice (double-height top + bottom row).
+    ; Patch level number placeholder with actual digits.
     ; current_level is 0-indexed; display as 1-indexed.
     LDA current_level
     CLC
@@ -51,22 +67,21 @@
     INX
     JMP slc_tens
 .slc_tens_done
-    ; X = tens digit, A = units digit.
     PHA
 
-    ; Write tens digit into both rows.
+    ; Write tens digit into both double-height rows.
     TXA
     CLC
     ADC #ASC("0")
-    STA &7C00 + 12*40 + 14     ; row 12, col 14 (top half)
-    STA &7C00 + 13*40 + 14     ; row 13, col 14 (bottom half)
+    STA &7C00 + 12*40 + 17     ; row 12, col 17 (top half)
+    STA &7C00 + 13*40 + 17     ; row 13, col 17 (bottom half)
 
-    ; Write units digit into both rows.
+    ; Write units digit into both double-height rows.
     PLA
     CLC
     ADC #ASC("0")
-    STA &7C00 + 12*40 + 15     ; row 12, col 15
-    STA &7C00 + 13*40 + 15     ; row 13, col 15
+    STA &7C00 + 12*40 + 18     ; row 12, col 18
+    STA &7C00 + 13*40 + 18     ; row 13, col 18
 
     JSR wait_space
     JSR restore_mode5
@@ -102,6 +117,13 @@
     ; VDU 22,7 — programs Video ULA, CRTC, clears &7C00, sets MOS state.
     LDA #22 : JSR OSWRCH
     LDA #7  : JSR OSWRCH
+
+    ; VDU 23,1,0;0;0;0; — disable text cursor.
+    LDA #23 : JSR OSWRCH
+    LDA #1  : JSR OSWRCH
+    LDA #0
+    JSR OSWRCH : JSR OSWRCH : JSR OSWRCH : JSR OSWRCH
+    JSR OSWRCH : JSR OSWRCH : JSR OSWRCH : JSR OSWRCH
     RTS
 
 
@@ -315,86 +337,119 @@
 ;   136 = flash on,   141 = double-height
 ; =====================================================================
 
-.str_instructions
-    ; Title: "P O R T H O L E" in cyan.
-    EQUB 3, 5, 16
-    EQUB 134
-    EQUS "P O R T H O L E"
+; OSFILE control block for loading STRTSCR to &7C00.
+; exec low byte = 0 => use supplied load address.
+.osfile_blk_strtscr
+    EQUW fname_strtscr
+    EQUB &00,&7C,0,0        ; load &7C00
+    EQUB 0,0,0,0            ; exec low=0 => use supplied load
+    EQUB 0,0,0,0            ; start/len (ignored)
+    EQUB 0,0,0,0            ; end/attrs (ignored)
 
-    ; Story blurb in white.
-    EQUB 6, 3, 25
-    EQUB 135
-    EQUS "Aperture Science reminds"
-    EQUB 7, 3, 24
-    EQUB 135
-    EQUS "you that the Enrichment"
-    EQUB 8, 3, 26
-    EQUB 135
-    EQUS "Center is not responsible"
-    EQUB 9, 3, 24
-    EQUB 135
-    EQUS "for any consequences of"
-    EQUB 10, 3, 9
-    EQUB 135
-    EQUS "testing."
+.fname_strtscr
+    EQUS "STRTSCR",13
 
-    ; Controls in yellow.
-    EQUB 13, 3, 19
-    EQUB 131
-    EQUS "LEFT / RIGHT  Move"
-    EQUB 14, 3, 19
-    EQUB 131
-    EQUS "RETURN        Jump"
-    EQUB 15, 3, 26
-    EQUB 131
-    EQUS "R             Aim reticle"
-    EQUB 16, 3, 27
-    EQUB 131
-    EQUS "A / S         Fire portals"
-    EQUB 17, 3, 27
-    EQUB 131
-    EQUS "SPACE         Pick up/Drop"
-    EQUB 18, 3, 22
-    EQUB 131
-    EQUS "ESCAPE        Restart"
+; OSFILE control block for loading TEMPLTE to &7C00.
+.osfile_blk_templte
+    EQUW fname_templte
+    EQUB &00,&7C,0,0        ; load &7C00
+    EQUB 0,0,0,0            ; exec low=0 => use supplied load
+    EQUB 0,0,0,0            ; start/len (ignored)
+    EQUB 0,0,0,0            ; end/attrs (ignored)
 
-    ; Flashing prompt.
-    EQUB 22, 5, 22
-    EQUB 136, 135
-    EQUS "Press SPACE to begin"
-
-    EQUB &FF            ; end sentinel
+.fname_templte
+    EQUS "TEMPLTE",13
 
 
-; Level card: double-height "TEST CHAMBER" + number placeholder.
-; Number digits are patched in by show_level_card after this is written.
-.str_level_card
-    ; Top half of "TEST CHAMBER"
-    EQUB 8, 6, 14
-    EQUB 141, 135
-    EQUS "TEST CHAMBER"
+; =====================================================================
+; Per-level card overlays: pointer table + record data.
+;
+; Each overlay is a sequence of (row, col, len, data...) records
+; terminated by &FF, written on top of the TEMPLTE background.
+;
+; The "00" number placeholder is patched by show_level_card afterwards.
+;
+; MODE 7 control codes used:
+;   &8D = double-height,  &87 = white alpha,  &84 = blue alpha
+;   &88 = flash on,  &89 = flash off (steady)
+; =====================================================================
 
-    ; Bottom half of "TEST CHAMBER"
-    EQUB 9, 6, 14
-    EQUB 141, 135
-    EQUS "TEST CHAMBER"
+.level_card_ptrs
+    EQUW level_card_0
+    EQUW level_card_1
+    EQUW level_card_2
+    EQUW level_card_3
+    EQUW level_card_4
 
-    ; Top half of level number (placeholder "00")
-    EQUB 12, 13, 4
-    EQUB 141, 131
-    EQUS "00"                   ; patched by show_level_card
+; --- Level 1 card ---
+.level_card_0
+    ; Double-height "TEST CHAMBER 00" (rows 12-13, control codes in template).
+    EQUB 12, 4, 15
+    EQUS "TEST CHAMBER 00"
+    EQUB 13, 4, 15
+    EQUS "TEST CHAMBER 00"
 
-    ; Bottom half of level number (placeholder "00")
-    EQUB 13, 13, 4
-    EQUB 141, 131
-    EQUS "00"                   ; patched by show_level_card
+    ; GLaDOS quote (rows 16-17, colour code in template).
+    EQUB 16, 4, 24
+    EQUS "This is the part where I"
+    EQUB 17, 4, 23
+    EQUS "kill you. Just kidding."
 
-    ; Flashing prompt.
-    EQUB 20, 4, 25
-    EQUB 136, 135
-    EQUS "Press SPACE to continue"
+    EQUB &FF
 
-    EQUB &FF            ; end sentinel
+; --- Level 2 card ---
+.level_card_1
+    EQUB 12, 4, 15
+    EQUS "TEST CHAMBER 00"
+    EQUB 13, 4, 15
+    EQUS "TEST CHAMBER 00"
+
+    EQUB 16, 4, 23
+    EQUS "Impressive. Not really."
+    EQUB 17, 4, 26
+    EQUS "But the lie motivates you."
+
+    EQUB &FF
+
+; --- Level 3 card ---
+.level_card_2
+    EQUB 12, 4, 15
+    EQUS "TEST CHAMBER 00"
+    EQUB 13, 4, 15
+    EQUS "TEST CHAMBER 00"
+
+    EQUB 16, 4, 23
+    EQUS "You're doing very well."
+    EQUB 17, 4, 12
+    EQUS "For a human."
+
+    EQUB &FF
+
+; --- Level 4 card ---
+.level_card_3
+    EQUB 12, 4, 15
+    EQUS "TEST CHAMBER 00"
+    EQUB 13, 4, 15
+    EQUS "TEST CHAMBER 00"
+
+    EQUB 16, 4, 30
+    EQUS "The cube cannot love you back."
+
+    EQUB &FF
+
+; --- Level 5 card ---
+.level_card_4
+    EQUB 12, 4, 15
+    EQUS "TEST CHAMBER 00"
+    EQUB 13, 4, 15
+    EQUS "TEST CHAMBER 00"
+
+    EQUB 16, 4, 24
+    EQUS "This is your final test."
+    EQUB 17, 4, 9
+    EQUS "Probably."
+
+    EQUB &FF
 
 
 ; Completion screen: double-height "TESTING COMPLETE".

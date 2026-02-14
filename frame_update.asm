@@ -299,6 +299,10 @@
 ; Uses LOS scratch ZP (safe — LOS not active during normal update).
 ; Clobbers: A,X,Y,los_x0,los_y0,los_x1,los_y1,los_dx,los_dy,los_err
 .check_fizzler_contact
+    ; Clear fizzler signal for this frame.
+    LDA #0
+    STA fizzler_signal
+
     LDA room_fizzler_count
     BEQ cfz_none
 
@@ -321,11 +325,13 @@
     LDX room_fizzler_count
 .cfz_loop
     ; Load fizzler bounds from (room_fizzler_ptr),Y
+    ; Format: x0, y0, x1, y1, channel (5 bytes per fizzler)
     LDA (room_fizzler_ptr),Y : INY : STA los_x1   ; fiz_x0
     LDA (room_fizzler_ptr),Y : INY : STA los_y1   ; fiz_y0
     LDA (room_fizzler_ptr),Y : INY : STA los_dx   ; fiz_x1
     LDA (room_fizzler_ptr),Y : INY : STA los_dy   ; fiz_y1
-    STY los_err                                     ; save Y
+    INY                                             ; skip channel (read on hit)
+    STY los_err                                     ; save Y (past channel)
 
     ; AABB: Chell (x, y, x+15, y+31) vs fizzler (x0, y0, x1, y1)
     ; x1/y1 are exclusive, so test: chell_right >= fiz_x0 AND chell_left < fiz_x1
@@ -356,6 +362,15 @@
     BCS cfz_next
 
     ; --- OVERLAP: trigger fizzler ---
+    ; Read channel byte from the fizzler that matched (1 byte before saved Y).
+    LDY los_err
+    DEY
+    LDA (room_fizzler_ptr),Y  ; channel index (0-7)
+    TAY
+    LDA bit_table,Y
+    ORA fizzler_signal
+    STA fizzler_signal
+
     JMP cfz_trigger
 
 .cfz_next

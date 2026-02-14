@@ -57,6 +57,10 @@
 .sig_state
     SKIP 1
 
+; Fizzler-driven signal bits (set by check_fizzler_contact, consumed by pass 1 epilogue).
+.fizzler_signal
+    SKIP 1
+
 ; Per-target lit flag, set by retrace_all_beams, read by update_beam_targets.
 ; Placed here (before the large 256-byte planes) so it stays below &5800
 ; in MAIN RAM — safe from any stray writes to the screen region.

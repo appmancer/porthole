@@ -31,6 +31,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 2                 ; pad    (16x16)
     EQUB 2                 ; exit   (16x32)
     EQUB 0                 ; spawner (tile-based, no sprite)
+    EQUB 2                 ; barrier (16x8, 2 tiles wide)
 
 .obj_redraw_h_tiles
     EQUB 0                 ; type 0 (unused)
@@ -39,6 +40,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 1                 ; pad
     EQUB 2                 ; exit
     EQUB 0                 ; spawner (tile-based, no sprite)
+    EQUB 1                 ; barrier
 
 ; Initialize per-object runtime arrays from generated obj_defs.
 ; Clobbers: A,X,Y,temp,temp_y
@@ -781,6 +783,11 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     ; Beam targets as signal drivers (laser → target → channel).
     JSR update_beam_targets
 
+    ; Fizzler-driven signals (set by check_fizzler_contact earlier this frame).
+    LDA fizzler_signal
+    ORA sig_state
+    STA sig_state
+
     ; Pass 2: consumers (exit, spawner)
     LDY #0
   .usos_cons_loop
@@ -809,7 +816,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
 
     LDA obj_state,Y
     CMP screen_ptr
-    BEQ usos_cons_next
+    BNE usos_exit_changed
+    JMP usos_cons_next
+  .usos_exit_changed
 
     LDA screen_ptr
     STA obj_state,Y
@@ -826,6 +835,47 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     JMP usos_cons_next
 
   .usos_chk_spawner
+    CMP #OBJ_TYPE_BARRIER
+    BNE usos_chk_spawner2
+
+    ; Barrier: open = (sig_state & (1<<channel)) != 0
+    LDX obj_channel,Y
+    LDA bit_table,X
+    AND sig_state
+    BEQ usos_barrier_closed
+    LDA #1
+    JMP usos_barrier_apply
+  .usos_barrier_closed
+    LDA #0
+
+  .usos_barrier_apply
+    STA col_counter
+
+    ; Update obj_state bit0 (open/closed)
+    LDA obj_state,Y
+    AND #&FE
+    ORA col_counter
+    STA screen_ptr          ; new_state
+
+    LDA obj_state,Y
+    CMP screen_ptr
+    BEQ usos_cons_next
+
+    LDA screen_ptr
+    STA obj_state,Y
+
+    JSR update_object_tiles_for_state
+
+    ; Visible change? only matters if in the current room.
+    LDA obj_room,Y
+    CMP current_room
+    BNE usos_cons_next
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+    JMP usos_cons_next
+
+  .usos_chk_spawner2
     CMP #OBJ_TYPE_SPAWNER
     BNE usos_cons_next
 
@@ -858,7 +908,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
   .usos_cons_next
     INY
     CPY #OBJ_COUNT
-    BNE usos_cons_loop
+    BEQ usos_cons_done
+    JMP usos_cons_loop
+  .usos_cons_done
 
     RTS
 
@@ -878,7 +930,11 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     BEQ uots_button
     CMP #OBJ_TYPE_EXIT
     BEQ uots_exit
+    CMP #OBJ_TYPE_BARRIER
+    BEQ uots_barrier_jmp
     JMP uots_done
+  .uots_barrier_jmp
+    JMP uots_barrier
 
   .uots_pad
     LDA obj_state,Y
@@ -955,6 +1011,29 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     STA (temp_sprite_ptr),Y
     INY
     LDA screen_ptr+1
+    STA (temp_sprite_ptr),Y
+    JMP uots_done
+
+  .uots_barrier
+    LDA obj_state,Y
+    AND #1
+    BEQ uots_barrier_closed
+    LDA #TILE_BARRIER_OPEN_L
+    STA temp
+    LDA #TILE_BARRIER_OPEN_R
+    STA col_counter
+    JMP uots_barrier_write
+  .uots_barrier_closed
+    LDA #TILE_BARRIER_CLOSED_L
+    STA temp
+    LDA #TILE_BARRIER_CLOSED_R
+    STA col_counter
+  .uots_barrier_write
+    JSR uots_set_room_ptr_and_offset
+    LDA temp
+    STA (temp_sprite_ptr),Y
+    INY
+    LDA col_counter
     STA (temp_sprite_ptr),Y
 
   .uots_done

@@ -232,6 +232,10 @@ TILE_EXIT_OPEN_TL             = 7
 TILE_EXIT_OPEN_TR             = 8
 TILE_EXIT_OPEN_BL             = 9
 TILE_EXIT_OPEN_BR             = 10
+TILE_BARRIER_OPEN_L           = 54
+TILE_BARRIER_OPEN_R           = 55
+TILE_BARRIER_CLOSED_L         = 30
+TILE_BARRIER_CLOSED_R         = 31
 
 ; Overlay sprite indices (overlay_sprite_table).
 CHELL_OVERLAY_CARRY_RIGHT_BASE = 24
@@ -243,6 +247,7 @@ OBJ_TYPE_BUTTON              = 2
 OBJ_TYPE_PAD                 = 3
 OBJ_TYPE_EXIT                = 4
 OBJ_TYPE_SPAWNER             = 5
+OBJ_TYPE_BARRIER             = 6
 
 ; Hazard tile IDs. Touching any of these kills Chell.
 TILE_ACID                    = 11
@@ -282,8 +287,8 @@ CHELL_FALL_LEFT_BASE        = 44
 CHELL_DEAD_BASE              = 48
 
 .entry
-    ; One-time instruction screen (before any MODE 5 setup).
-    JSR show_instructions
+    ; One-time start screen (before any MODE 5 setup).
+    JSR show_start_screen
 
     ; Initialize level counter.
     LDA #0
@@ -913,3 +918,17 @@ ORG &3000
 INCBIN ".tmp/loadscr_mode2.bin"
 .loadscr_end
 SAVE "LOADSCR", loadscr_start, loadscr_end
+
+; Start screen (MODE 7) — raw 1000-byte teletext screen.
+; Loaded at runtime by show_start_screen via OSFILE to &7C00.
+
+CLEAR &7C00, &8000
+ORG &7C00
+.strtscr_start
+INCBIN "P8FF-3F7F"
+.strtscr_end
+SAVE "STRTSCR", strtscr_start, strtscr_end
+
+; Level card template — raw 1000-byte MODE 7 screen (Aperture logo + yellow area).
+; Loaded at runtime by show_level_card via OSFILE to &7C00.
+PUTFILE "TEMPLATE", "TEMPLTE", &7C00, &7C00
