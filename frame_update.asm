@@ -91,6 +91,16 @@
 
 ; Normal mode: handle reticle deactivation, movement, and gravity.
  .update_normal_mode
+     ; If reticle was active last frame, the A/S key edges in keys_pressed
+     ; belong to reticle-mode placement.  Clear them so handle_quick_shot
+     ; doesn't fire a spurious quick-shot on the SHIFT-release frame.
+     LDA reticle_prev_active
+     BEQ unm_qs_ok
+     LDA keys_pressed
+      AND #&3F
+     STA keys_pressed
+  .unm_qs_ok
+
      ; Quick-shot portal firing (outside reticle mode).
     JSR handle_quick_shot
 
@@ -167,6 +177,9 @@
     ; - If Chell is dirty, we must redraw Chell.
     ; - If reticle is active and (reticle_dirty or chell_dirty), redraw reticle.
     ; - If reticle just deactivated and had under saved, restore it.
+    ; Note: portal_pending/objects_pending are consumed pre-vsync in
+    ; pre_render_bg_patch, so they are always 0 here.  Their background
+    ; work forces chell_dirty=1, which is picked up below.
 
     LDA #0
     STA dirty_flag
@@ -183,20 +196,6 @@
     LDA #1
     STA dirty_flag
  .df_skip_chell
-
-    ; Portal placement/stamping forces a render.
-    LDA portal_pending
-    BEQ df_skip_portal
-    LDA #1
-    STA dirty_flag
- .df_skip_portal
-
-    ; Persistent object visual updates need a background patch + restamp.
-     LDA objects_pending
-     BEQ df_skip_objects
-     LDA #1
-     STA dirty_flag
-  .df_skip_objects
 
      LDA reticle_active
      BEQ df_reticle_off

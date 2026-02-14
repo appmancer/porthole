@@ -570,9 +570,46 @@ CHELL_DEAD_BASE              = 48
  .al_not_done
     JMP start_level
 
- ; --- Render (incremental frame) ---
- ; Uses chell_dirty/reticle_dirty computed in the previous update.
- ; Reticle redraw condition includes chell_dirty because Chell can move under it.
+ ; --- Pre-vsync background patch ---
+ ; Applies heavy background updates (portal placement, object tile changes,
+ ; beam retracing) BEFORE vsync, outside the critical post-vsync window.
+ ; When updates are pending, restores sprite unders first so the background
+ ; patch doesn't write over stale save-under data.
+ ; Called at the end of update_chell, after compute_chell_render_state.
+ .pre_render_bg_patch
+        LDA portal_pending
+        ORA objects_pending
+        BNE prbp_has_work
+        RTS
+
+   .prbp_has_work
+        ; Restore reticle under first (LIFO peel — reticle drawn last, restored first).
+        LDA reticle_has_under
+        BEQ prbp_skip_restore_reticle
+        JSR restore_reticle_under
+        LDA #0
+        STA reticle_has_under
+   .prbp_skip_restore_reticle
+
+        ; Restore Chell under.
+        LDA chell_has_under
+        BEQ prbp_skip_restore_chell
+        JSR restore_chell_under
+        LDA #0
+        STA chell_has_under
+   .prbp_skip_restore_chell
+
+        ; Now the background is clean — apply portal and object tile patches.
+        JSR apply_pending_portal_update
+        JSR apply_pending_object_updates
+
+        RTS
+
+
+ ; --- Render (incremental frame, post-vsync blit only) ---
+ ; After the pre-vsync pass has handled heavy background work, this routine
+ ; only does: restore sprite unders -> save new unders -> draw sprites.
+ ; This keeps the post-vsync critical window as short as possible.
  .render_frame_simple
         ; Optional debug feedback: palette flash (currently disabled).
         ; JSR palette_flash_update
@@ -603,30 +640,10 @@ CHELL_DEAD_BASE              = 48
         LDA #1
         STA reticle_dirty
 
-  .render_no_room_redraw
-        ; Portal placement: we will patch the background this frame.
-        ; Force both sprites to redraw so their save-under captures the updated BG.
-        LDA portal_pending
-        BEQ render_no_portal_force
-        LDA #1
-        STA chell_dirty
-        LDA reticle_active
-        BEQ render_no_portal_force
-        LDA #1
-        STA reticle_dirty
-  .render_no_portal_force
-
-        ; Persistent object visual changes: we will patch the background.
-        ; Force sprites to redraw so save-under captures the updated BG.
-        LDA objects_pending
-        BEQ render_no_obj_force
-        LDA #1
-        STA chell_dirty
-        LDA reticle_active
-        BEQ render_no_obj_force
-        LDA #1
-        STA reticle_dirty
-  .render_no_obj_force
+   .render_no_room_redraw
+        ; Portal/object background patches are now handled pre-vsync in
+        ; pre_render_bg_patch (called at end of update_chell), so the
+        ; post-vsync window only does sprite restore/save/draw.
 
         ; Handle reticle deactivation: restore last rect.
         LDA reticle_active
@@ -659,10 +676,8 @@ CHELL_DEAD_BASE              = 48
         JSR restore_chell_under
 
   .render_portal_maybe
-        JSR apply_pending_portal_update
-
-        ; If persistent objects changed visually, patch and restamp them now.
-        JSR apply_pending_object_updates
+        ; Portal/object background patches already applied pre-vsync.
+        ; Fall through to sprite draw.
 
  .render_draw_maybe
        ; Draw Chell if dirty.
@@ -809,16 +824,34 @@ CHELL_DEAD_BASE              = 48
         LDA aim_held
         STA last_aim_held
 
-        ; Clear latched edge inputs now that update consumed them.
+         ; Clear latched edge inputs now that update consumed them.
         LDA #0
         STA keys_pressed
         STA action_pressed
+
+        ; If portal or object changes are pending, force chell + reticle dirty
+        ; so their save-under captures the updated background.
+        LDA portal_pending
+        ORA objects_pending
+        BEQ no_bg_dirty_force
+        LDA #1
+        STA chell_dirty
+        LDA reticle_active
+        BEQ no_bg_dirty_force
+        LDA #1
+        STA reticle_dirty
+ .no_bg_dirty_force
 
         ; Precompute Chell render decisions for next frame.
         LDA chell_dirty
         BEQ skip_precompute
         JSR compute_chell_render_state
  .skip_precompute
+
+        ; Pre-vsync background patch: apply heavy portal/object updates now,
+        ; outside the critical post-vsync window.  This restores sprite unders
+        ; first so the background patch doesn't corrupt stale save-under data.
+        JSR pre_render_bg_patch
 
         JSR compute_dirty_flag
         RTS
