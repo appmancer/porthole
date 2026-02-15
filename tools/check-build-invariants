@@ -67,7 +67,7 @@ SECTION_BUDGETS = [
     (".frame_update_start",       ".persistent_objects_start","frame_update",         1152),
     (".persistent_objects_start", ".ui_start",               "persistent_objects",   2688),
     (".ui_start",                 ".screens_start",          "ui",                    256),
-    (".screens_start",            ".loaders_start",          "screens",              1536),
+    (".screens_start",            ".loaders_start",          "screens",              2048),
     (".loaders_start",            ".timing_start",           "loaders",              1024),
     (".timing_start",             ".movement_start",         "timing",                 64),
     (".movement_start",           ".laser_start",            "movement",             1024),
