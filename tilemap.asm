@@ -19,8 +19,8 @@ TARGET_DEF_SIZE = 4
 FIZZLER_DEF_SIZE = 5
 
 ; Header block size: sum of all fields in the active buffer.
-; 1+1 + 4+4 + 6*4 + 36 + 6 + 7 + 4 + 6 = 93
-LEVEL_HEADER_SIZE = 1 + 1 + (MAX_ROOMS*2) + (MAX_ROOMS*2) + (MAX_ROOMS + MAX_ROOMS*2)*4 + (OBJ_COUNT*OBJ_DEF_SIZE) + (MAX_ROOMS + MAX_ROOMS*2) + (LASER_COUNT*LASER_DEF_SIZE) + (TARGET_COUNT*TARGET_DEF_SIZE) + (MAX_ROOMS + MAX_ROOMS*2)
+; 1+1 + 4 + 6*4 + 36 + 6 + 7 + 4 + 6 = 89
+LEVEL_HEADER_SIZE = 1 + 1 + (MAX_ROOMS*2) + (MAX_ROOMS + MAX_ROOMS*2)*4 + (OBJ_COUNT*OBJ_DEF_SIZE) + (MAX_ROOMS + MAX_ROOMS*2) + (LASER_COUNT*LASER_DEF_SIZE) + (TARGET_COUNT*TARGET_DEF_SIZE) + (MAX_ROOMS + MAX_ROOMS*2)
 
 ; Include all level data files (prefixed labels).
 INCLUDE "levels/generated_level1.asm"
@@ -44,7 +44,6 @@ INCLUDE "levels/generated_level5.asm"
 .level_start_room_buf   SKIP 1
 .level_start_pos_buf    SKIP 1
 .room_pointers          SKIP MAX_ROOMS * 2
-.portal_room_pointers   SKIP MAX_ROOMS * 2
 .exit_left_counts       SKIP MAX_ROOMS
 .exit_left_ptrs         SKIP MAX_ROOMS * 2
 .exit_right_counts      SKIP MAX_ROOMS

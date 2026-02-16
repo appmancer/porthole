@@ -177,7 +177,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         LDA teleport_exit_room
         STA current_room
         JSR set_room_tilemap
-        JSR set_room_portalmap
         JSR set_room_fizzlers
         JSR build_material_planes_from_tilemap
 

@@ -140,21 +140,6 @@
     RTS
 
 
-; Set portalmap_ptr based on current_room variable.
-; Uses portal_room_pointers table to get correct room data.
-.set_room_portalmap
-    LDA current_room
-    ASL A                   ; ×2 for 16-bit pointer
-    TAX
-
-    LDA portal_room_pointers,X
-    STA portalmap_ptr
-    LDA portal_room_pointers+1,X
-    STA portalmap_ptr+1
-
-    RTS
-
-
 ; Set room_fizzler_count and room_fizzler_ptr from current_room.
 .set_room_fizzlers
     LDA current_room

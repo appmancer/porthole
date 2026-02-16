@@ -9,7 +9,6 @@ INCLUDE "oscalls.asm"
 ; Hard layout invariants relied on by hot paths:
 ; - screen_ptr  must be at &71
 ; - tilemap_ptr must be at &79
-; - portalmap_ptr must be at &7B
 ;
 ORG &70
 .temp               SKIP 1    ; Temporary storage (must stay at &70)
@@ -20,7 +19,6 @@ ORG &70
 .col_counter        SKIP 1    ; Column counter for loops
 .current_room       SKIP 1    ; Current room number (0=room1, 1=room2)
 .tilemap_ptr        SKIP 2    ; Pointer to current room's tilemap data
-.portalmap_ptr      SKIP 2    ; Pointer to current room's portalable tile layer
 .mask_ptr           SKIP 2    ; Pointer to current mask data
 .temp_sprite_ptr    SKIP 2    ; Temp sprite pointer for striped blit
 .temp_mask_ptr      SKIP 2    ; Temp mask pointer for striped blit
@@ -377,7 +375,6 @@ CHELL_DEAD_BASE              = 48
     LDA level_start_room_buf
     STA current_room
     JSR set_room_tilemap
-    JSR set_room_portalmap
     JSR set_room_fizzlers
 
     ; Initialize level-global object state from generated tables.
@@ -618,7 +615,6 @@ CHELL_DEAD_BASE              = 48
         LDA room_dirty
         BEQ render_no_room_redraw
         JSR set_room_tilemap
-        JSR set_room_portalmap
         JSR set_room_fizzlers
         LDA #0
         STA beam_do_redraw

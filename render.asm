@@ -1500,39 +1500,6 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
     CLC
     RTS
 
-; Return C=1 if portalable at (X,Y) using the portalable tile-layer.
-; Tiles are 8x16 pixels (16 tiles across 128px).
-.is_portalable
-    ; tile_x = X >> 3
-    TXA
-    LSR A
-    LSR A
-    LSR A
-    STA col_counter
-
-    ; tile_y = Y >> 4
-    TYA
-    LSR A
-    LSR A
-    LSR A
-    LSR A
-    TAY
-
-    ; tilepos = tile_y*16 + tile_x
-    LDA times16_table,Y
-    CLC
-    ADC col_counter
-    TAY
-
-    LDA (portalmap_ptr),Y
-    BEQ portal_clear
-    SEC
-    RTS
-.portal_clear
-    CLC
-    RTS
-
-
 ; Legacy: redraw tiles behind the character (tilemap-based restore)
 .redraw_background_area
     ; Save screen_ptr

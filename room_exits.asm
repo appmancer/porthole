@@ -300,7 +300,6 @@
     PLA
     STA current_room
     JSR set_room_tilemap
-    JSR set_room_portalmap
     JSR set_room_fizzlers
     LDA temp_y : PHA             ; save spawn Y across plane rebuild
     JSR build_material_planes_from_tilemap
@@ -345,7 +344,6 @@
     PLA
     STA current_room
     JSR set_room_tilemap
-    JSR set_room_portalmap
     JSR set_room_fizzlers
     LDA temp_y : PHA             ; save spawn Y across plane rebuild
     JSR build_material_planes_from_tilemap
@@ -396,7 +394,6 @@
     PLA
     STA current_room
     JSR set_room_tilemap
-    JSR set_room_portalmap
     JSR set_room_fizzlers
     JSR build_material_planes_from_tilemap
 
@@ -473,7 +470,6 @@
     PLA
     STA current_room
     JSR set_room_tilemap
-    JSR set_room_portalmap
     JSR set_room_fizzlers
     JSR build_material_planes_from_tilemap
 

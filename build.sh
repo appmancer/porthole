@@ -153,7 +153,7 @@ if bad_90:
 
 allowed_70 = {
     '.temp', '.screen_ptr', '.sprite_ptr', '.temp_y', '.row_counter', '.col_counter', '.current_room',
-    '.tilemap_ptr', '.portalmap_ptr', '.mask_ptr', '.temp_sprite_ptr', '.temp_mask_ptr',
+    '.tilemap_ptr', '.mask_ptr', '.temp_sprite_ptr', '.temp_mask_ptr',
 }
 bad_70 = sorted([(k, v) for k, v in zp if 0x70 <= v <= 0x8F and k not in allowed_70], key=lambda kv: kv[1])
 if bad_70:

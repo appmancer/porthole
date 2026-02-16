@@ -90,7 +90,6 @@ def main(argv: list[str]) -> int:
 
     # Hard layout invariants relied on by (zp),Y code paths.
     require_eq(labels, "tilemap_ptr", 0x0079)
-    require_eq(labels, "portalmap_ptr", 0x007B)
     require_eq(labels, "screen_ptr", 0x0071)
 
     # Avoid MOS workspace ZP range (OSBYTE/OSGBPB etc.).

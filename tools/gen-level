@@ -9,9 +9,9 @@ Supported inputs (per level directory):
 Emits beebasm `EQUB` data for:
 
 - `room_pointers` (tilemap pointers)
-- `portal_room_pointers` (portalability layer pointers)
 - per-room tilemap data (256 bytes each)
-- per-room portalmap data (256 bytes each, currently all zeros)
+
+Portal eligibility is derived at runtime from tile IDs (no separate portal map).
 
 This is a build-time tool; the game never parses authoring files at runtime.
 """
@@ -1009,12 +1009,7 @@ def main() -> None:
             r = rooms[i] if i < len(rooms) else rooms[0]
             lines.append(f"    EQUW {level_name}_{r.name}")
 
-        # 4. portal_room_pointers (max_rooms * 2)
-        for i in range(max_rooms):
-            r = rooms[i] if i < len(rooms) else rooms[0]
-            lines.append(f"    EQUW {level_name}_{r.name}_portal")
-
-        # 5-8. exit tables (counts + ptrs per direction)
+        # 4. exit tables (counts + ptrs per direction)
         for edge, per_room in [("left", exits_left), ("right", exits_right),
                                 ("up", exits_up), ("down", exits_down)]:
             for entries in per_room:
@@ -1066,12 +1061,6 @@ def main() -> None:
         for i in range(max_rooms):
             r = rooms[i] if i < len(rooms) else rooms[0]
             lines.append(f"    EQUW {level_name}_{r.name}")
-        lines.append("")
-
-        lines.append(".portal_room_pointers")
-        for i in range(max_rooms):
-            r = rooms[i] if i < len(rooms) else rooms[0]
-            lines.append(f"    EQUW {level_name}_{r.name}_portal")
         lines.append("")
 
         def emit_exit_tables(edge: str, per_room: list[list[tuple[int, int, int]]]) -> None:
@@ -1217,14 +1206,10 @@ def main() -> None:
                 lines.append(format_eqbytes(fd, per_line=16))
             lines.append("")
 
-    # Per-room tilemaps and portal maps.
+    # Per-room tilemaps.
     for r in rooms:
         lines.append(f".{level_name}_{r.name}")
         lines.append(format_eqbytes(r.tiles, per_line=16))
-        lines.append("")
-
-        lines.append(f".{level_name}_{r.name}_portal")
-        lines.append(format_eqbytes([0] * 256, per_line=16))
         lines.append("")
 
     out_path.write_text("\n".join(lines), encoding="ascii")
