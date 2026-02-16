@@ -1,6 +1,6 @@
 .loaders_start
 ; loaders.asm
-; Shadow-screen and sideways-RAM loader utilities.
+; Shadow-screen, sideways-RAM, and level-pack loader utilities.
 ; (VSync/delay helpers live in timing.asm.)
 
 ; File handles must not live in MOS-clobbered ZP (e.g. &A0..).
@@ -9,6 +9,145 @@
 .objdata_fh       SKIP 1
 ;
 ; Kept in its own file so `main.asm` stays navigable.
+
+; --- Level pack loader ---
+;
+; Loads a binary level pack from DFS into LYNNE (&3000-&57FF) using OSFILE.
+;
+; LYNNE is accessed by setting ACCCON X=1 (bit 2). With X=1, CPU writes
+; to &3000-&7FFF go to shadow RAM (LYNNE) instead of main RAM. The OSFILE
+; control block and filename must be below &3000 so the MOS can read them
+; even with X=1 — we place them at &0900 (post-boot reclaimable area).
+;
+; Pack caching: loaded_pack_index tracks which pack is currently in LYNNE.
+; If the requested pack is already loaded, the disc read is skipped.
+
+PACK_OSFILE_BLK  = &0900       ; 18-byte OSFILE control block (below &3000)
+PACK_FNAME       = &0912       ; filename string (below &3000), max 8 chars + CR
+PACK_LOAD_ADDR   = &3000       ; LYNNE data area start
+LEVELS_PER_PACK  = 10          ; levels per pack file
+
+.loaded_pack_index  SKIP 1     ; &FF = no pack loaded
+
+; load_pack_for_level: ensure the correct pack is in LYNNE for current_level.
+;
+; Computes pack_index = current_level / LEVELS_PER_PACK.
+; If loaded_pack_index == pack_index, returns immediately (cache hit).
+; Otherwise loads the pack from DFS.
+;
+; Input: current_level set.
+; Clobbers: A,X,Y,temp,temp_sprite_ptr
+.load_pack_for_level
+    ; Compute pack_index = current_level / LEVELS_PER_PACK.
+    ; LEVELS_PER_PACK = 10, so we do repeated subtraction.
+    LDA current_level
+    LDX #0
+.lpfl_div
+    CMP #LEVELS_PER_PACK
+    BCC lpfl_div_done
+    SBC #LEVELS_PER_PACK        ; C is set from BCC fallthrough
+    INX
+    BNE lpfl_div                ; always taken (pack_index < 256)
+.lpfl_div_done
+    ; X = pack_index (0-based)
+    ; Check cache.
+    CPX loaded_pack_index
+    BEQ lpfl_cached
+    ; Cache miss — load this pack.
+    STX loaded_pack_index
+    TXA
+    JSR load_pack
+.lpfl_cached
+    RTS
+
+; load_pack: load pack file "LVLSnn" from DFS into LYNNE at &3000.
+;
+; Input: A = pack index (0-based; pack 0 -> "LVLS01", pack 1 -> "LVLS02", etc.)
+; Clobbers: A,X,Y,temp,temp_sprite_ptr
+.load_pack
+    ; Build filename "LVLSnn" at PACK_FNAME.
+    ; Pack index is 0-based; filename is 1-based (LVLS01, LVLS02, ...).
+    CLC
+    ADC #1                      ; 1-based pack number (1..25)
+    ; Divide A by 10 to get tens and units digits.
+    LDX #0
+.lp_tens_div
+    CMP #10
+    BCC lp_tens_done
+    SBC #10
+    INX
+    BNE lp_tens_div
+.lp_tens_done
+    ; X = tens digit, A = units digit
+    PHA                         ; save units
+    ; Write "LVLS" prefix.
+    LDA #'L' : STA PACK_FNAME+0
+    LDA #'V' : STA PACK_FNAME+1
+    LDA #'L' : STA PACK_FNAME+2
+    LDA #'S' : STA PACK_FNAME+3
+    ; Tens digit.
+    TXA
+    CLC
+    ADC #'0'
+    STA PACK_FNAME+4
+    ; Units digit.
+    PLA
+    CLC
+    ADC #'0'
+    STA PACK_FNAME+5
+    ; CR terminator.
+    LDA #13
+    STA PACK_FNAME+6
+
+    ; Populate the OSFILE control block at PACK_OSFILE_BLK.
+    ;   +0,+1: pointer to filename (16-bit LE)
+    ;   +2..+5: load address (32-bit LE) = PACK_LOAD_ADDR
+    ;   +6..+9: exec address (32-bit LE); low byte = 0 means use supplied load addr
+    ;   +10..+17: unused by load (start/end length)
+    LDA #<PACK_FNAME
+    STA PACK_OSFILE_BLK+0
+    LDA #>PACK_FNAME
+    STA PACK_OSFILE_BLK+1
+    ; Load address = &3000.
+    LDA #<PACK_LOAD_ADDR
+    STA PACK_OSFILE_BLK+2
+    LDA #>PACK_LOAD_ADDR
+    STA PACK_OSFILE_BLK+3
+    LDA #0
+    STA PACK_OSFILE_BLK+4
+    STA PACK_OSFILE_BLK+5
+    ; Exec address: low byte = 0 means "use supplied load address".
+    STA PACK_OSFILE_BLK+6
+    STA PACK_OSFILE_BLK+7
+    STA PACK_OSFILE_BLK+8
+    STA PACK_OSFILE_BLK+9
+    ; Remaining bytes (start, end) — unused for load, zero them.
+    STA PACK_OSFILE_BLK+10
+    STA PACK_OSFILE_BLK+11
+    STA PACK_OSFILE_BLK+12
+    STA PACK_OSFILE_BLK+13
+    STA PACK_OSFILE_BLK+14
+    STA PACK_OSFILE_BLK+15
+    STA PACK_OSFILE_BLK+16
+    STA PACK_OSFILE_BLK+17
+
+    ; Set ACCCON X=1 so CPU writes to &3000-&7FFF go to LYNNE.
+    LDA ACCCON
+    ORA #&04
+    STA ACCCON
+
+    ; OSFILE &FF = load file.
+    LDA #&FF
+    LDX #<PACK_OSFILE_BLK
+    LDY #>PACK_OSFILE_BLK
+    JSR OSFILE
+
+    ; Restore ACCCON X=0 (CPU sees main RAM at &3000-&7FFF).
+    LDA ACCCON
+    AND #&FB
+    STA ACCCON
+
+    RTS
 
 ; Enable Master shadow screen via direct ACCCON register writes.
 ;

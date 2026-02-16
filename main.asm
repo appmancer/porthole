@@ -288,9 +288,11 @@ CHELL_DEAD_BASE              = 48
     ; One-time start screen (before any MODE 5 setup).
     JSR show_start_screen
 
-    ; Initialize level counter.
+    ; Initialize level counter and pack cache.
     LDA #0
     STA current_level
+    LDA #&FF
+    STA loaded_pack_index
 
     ; Fall through to start_level.
 
@@ -961,3 +963,6 @@ SAVE "STRTSCR", strtscr_start, strtscr_end
 ; Level card template — raw 1000-byte MODE 7 screen (Aperture logo + yellow area).
 ; Loaded at runtime by show_level_card via OSFILE to &7C00.
 PUTFILE "TEMPLATE", "TEMPLTE", &7C00, &7C00
+
+; Level pack 01 — binary level data loaded at runtime to LYNNE &3000.
+PUTFILE ".tmp/LVLS01.dat", "LVLS01", &3000, &3000

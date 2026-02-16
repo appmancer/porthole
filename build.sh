@@ -99,6 +99,11 @@ mkdir -p .tmp
   --out "levels/generated_level5.asm" \
   --label-prefix level5 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
 
+# --- Binary level pack (LYNNE-loaded) ---
+./tools/gen-level --binary-pack \
+  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 \
+  --out ".tmp/LVLS01.dat"
+
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)
 if [[ "${LOADSCR_WH}" == "160 256" ]]; then
   python3 tools/mode2-pack.py --in loading.png --out .tmp/loadscr_mode2.bin
