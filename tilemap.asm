@@ -24,22 +24,6 @@ FIZZLER_DEF_SIZE = 5
 ; Located after the trampoline code + OSFILE block + filename at &0900.
 STAGING_BUF = &09E0
 
-; Include all level data files (prefixed labels).
-; These are retained during the transition (Step 8 removes them).
-INCLUDE "levels/generated_level1.asm"
-INCLUDE "levels/generated_level2.asm"
-INCLUDE "levels/generated_level3.asm"
-INCLUDE "levels/generated_level4.asm"
-INCLUDE "levels/generated_level5.asm"
-
-; Level header pointer table — kept for transition; Step 8 removes.
-.level_header_ptrs
-    EQUW level1_header
-    EQUW level2_header
-    EQUW level3_header
-    EQUW level4_header
-    EQUW level5_header
-
 ; ================================================================
 ; Active buffer — game code references these labels.
 ; The parser populates these from the binary pack.

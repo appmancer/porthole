@@ -1,7 +1,6 @@
 .tmp/
 
 # Build-generated includes
-levels/generated_level*.asm
 sprites/generated_tiles.asm
 sprites/generated_objects_sprites.asm
 sprites/generated_objects_masks.asm

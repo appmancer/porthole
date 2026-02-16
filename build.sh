@@ -74,31 +74,6 @@ mkdir -p .tmp
   --in "sprites/NewTiles - Grid.csv" \
   --out "sprites/generated_tiles.asm"
 
-./tools/gen-level \
-  --level "levels/level1" \
-  --out "levels/generated_level1.asm" \
-  --label-prefix level1 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
-
-./tools/gen-level \
-  --level "levels/level2" \
-  --out "levels/generated_level2.asm" \
-  --label-prefix level2 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
-
-./tools/gen-level \
-  --level "levels/level3" \
-  --out "levels/generated_level3.asm" \
-  --label-prefix level3 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
-
-./tools/gen-level \
-  --level "levels/level4" \
-  --out "levels/generated_level4.asm" \
-  --label-prefix level4 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
-
-./tools/gen-level \
-  --level "levels/level5" \
-  --out "levels/generated_level5.asm" \
-  --label-prefix level5 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
-
 # --- Binary level pack (LYNNE-loaded) ---
 ./tools/gen-level --binary-pack \
   --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 \

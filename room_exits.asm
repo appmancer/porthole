@@ -4,7 +4,7 @@
 
 ; --- Room exits / transitions ---
 ;
-; Uses the generated exit tables in `levels/generated_level1.asm`.
+; Uses the active buffer exit tables populated by load_level from the binary pack.
 ;
 ; Supports left/right and up/down edge exits.
 ;
