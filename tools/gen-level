@@ -766,6 +766,25 @@ def format_eqbytes(data: list[int], *, per_line: int = 16) -> str:
     return "\n".join(out_lines)
 
 
+def rle_encode(tiles: list[int]) -> list[int]:
+    """RLE-compress a 256-byte tilemap into byte-pair [count][tile_id] format.
+
+    Runs are capped at 255. The decoder emits tiles until 256 are written.
+    """
+    assert len(tiles) == 256, f"expected 256 tiles, got {len(tiles)}"
+    encoded: list[int] = []
+    i = 0
+    while i < 256:
+        tile = tiles[i]
+        run = 1
+        while i + run < 256 and tiles[i + run] == tile and run < 255:
+            run += 1
+        encoded.append(run)
+        encoded.append(tile)
+        i += run
+    return encoded
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--level", required=True, help="level directory, e.g. levels/level1")
@@ -1206,10 +1225,13 @@ def main() -> None:
                 lines.append(format_eqbytes(fd, per_line=16))
             lines.append("")
 
-    # Per-room tilemaps.
+    # Per-room tilemaps (RLE-compressed).
     for r in rooms:
+        rle = rle_encode(r.tiles)
+        ratio = len(rle) * 100 // 256
         lines.append(f".{level_name}_{r.name}")
-        lines.append(format_eqbytes(r.tiles, per_line=16))
+        lines.append(f"    ; RLE: {len(rle)} bytes ({ratio}% of 256)")
+        lines.append(format_eqbytes(rle, per_line=16))
         lines.append("")
 
     out_path.write_text("\n".join(lines), encoding="ascii")
