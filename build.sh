@@ -77,27 +77,27 @@ mkdir -p .tmp
 ./tools/gen-level \
   --level "levels/level1" \
   --out "levels/generated_level1.asm" \
-  --label-prefix level1 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 2
+  --label-prefix level1 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
 
 ./tools/gen-level \
   --level "levels/level2" \
   --out "levels/generated_level2.asm" \
-  --label-prefix level2 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 2
+  --label-prefix level2 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
 
 ./tools/gen-level \
   --level "levels/level3" \
   --out "levels/generated_level3.asm" \
-  --label-prefix level3 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 2
+  --label-prefix level3 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
 
 ./tools/gen-level \
   --level "levels/level4" \
   --out "levels/generated_level4.asm" \
-  --label-prefix level4 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 2
+  --label-prefix level4 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
 
 ./tools/gen-level \
   --level "levels/level5" \
   --out "levels/generated_level5.asm" \
-  --label-prefix level5 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 2
+  --label-prefix level5 --pad-obj 6 --pad-laser 1 --pad-target 1 --max-rooms 8
 
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)
 if [[ "${LOADSCR_WH}" == "160 256" ]]; then

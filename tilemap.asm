@@ -9,7 +9,7 @@
 
 ; Global constants (max across all levels).
 LEVEL_COUNT = 5
-MAX_ROOMS = 2
+MAX_ROOMS = 8
 OBJ_COUNT = 6
 OBJ_DEF_SIZE = 6
 LASER_COUNT = 1
@@ -19,7 +19,7 @@ TARGET_DEF_SIZE = 4
 FIZZLER_DEF_SIZE = 5
 
 ; Header block size: sum of all fields in the active buffer.
-; 1+1 + 4 + 6*4 + 36 + 6 + 7 + 4 + 6 = 89
+; With MAX_ROOMS=8: 1+1 + 16 + 24*4 + 36 + 24 + 7 + 4 + 24 = 209
 LEVEL_HEADER_SIZE = 1 + 1 + (MAX_ROOMS*2) + (MAX_ROOMS + MAX_ROOMS*2)*4 + (OBJ_COUNT*OBJ_DEF_SIZE) + (MAX_ROOMS + MAX_ROOMS*2) + (LASER_COUNT*LASER_DEF_SIZE) + (TARGET_COUNT*TARGET_DEF_SIZE) + (MAX_ROOMS + MAX_ROOMS*2)
 
 ; Include all level data files (prefixed labels).
@@ -59,6 +59,11 @@ INCLUDE "levels/generated_level5.asm"
 .target_defs            SKIP TARGET_COUNT * TARGET_DEF_SIZE
 .fizzler_room_counts    SKIP MAX_ROOMS
 .fizzler_room_ptrs      SKIP MAX_ROOMS * 2
+
+; Decompressed tilemap buffers — one 256-byte flat tilemap per room.
+; room_pointers entries are patched at load time to point here.
+; Game code reads/writes via (tilemap_ptr),Y unchanged.
+.tilemap_buffers        SKIP MAX_ROOMS * 256
 
 
 ; load_level: copy level header into the active buffer.
