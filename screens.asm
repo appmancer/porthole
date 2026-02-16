@@ -40,18 +40,10 @@
     LDY #>osfile_blk_templte
     JSR OSFILE
 
-    ; Look up per-level overlay data pointer.
-    LDA current_level
-    ASL A                       ; *2 for word index
-    TAX
-    LDA level_card_ptrs,X
-    STA temp_sprite_ptr
-    LDA level_card_ptrs+1,X
-    STA temp_sprite_ptr+1
-
-    ; Write overlay records (TEST CHAMBER header + GLaDOS quote + prompt).
-    LDX temp_sprite_ptr
-    LDY temp_sprite_ptr+1
+    ; Use level card overlay pointer set by load_level parser.
+    ; Points into the staging buffer (populated from the binary pack).
+    LDX level_card_ptr
+    LDY level_card_ptr+1
     JSR write_mode7_screen
 
     ; Patch level number placeholder with actual digits.
@@ -932,93 +924,5 @@ TW_CHAR_DELAY = 3              ; frames per character (~17 chars/sec at 50Hz)
     EQUS "TEMPLTE",13
 
 
-; =====================================================================
-; Per-level card overlays: pointer table + record data.
-;
-; Each overlay is a sequence of (row, col, len, data...) records
-; terminated by &FF, written on top of the TEMPLTE background.
-;
-; The "00" number placeholder is patched by show_level_card afterwards.
-;
-; MODE 7 control codes used:
-;   &8D = double-height,  &87 = white alpha,  &84 = blue alpha
-;   &88 = flash on,  &89 = flash off (steady)
-; =====================================================================
-
-.level_card_ptrs
-    EQUW level_card_0
-    EQUW level_card_1
-    EQUW level_card_2
-    EQUW level_card_3
-    EQUW level_card_4
-
-; --- Level 1 card ---
-.level_card_0
-    ; Double-height "TEST CHAMBER 00" (rows 12-13, control codes in template).
-    EQUB 12, 4, 15
-    EQUS "TEST CHAMBER 00"
-    EQUB 13, 4, 15
-    EQUS "TEST CHAMBER 00"
-
-    ; GLaDOS quote (rows 16-17, colour code in template).
-    EQUB 16, 4, 24
-    EQUS "This is the part where I"
-    EQUB 17, 4, 23
-    EQUS "kill you. Just kidding."
-
-    EQUB &FF
-
-; --- Level 2 card ---
-.level_card_1
-    EQUB 12, 4, 15
-    EQUS "TEST CHAMBER 00"
-    EQUB 13, 4, 15
-    EQUS "TEST CHAMBER 00"
-
-    EQUB 16, 4, 23
-    EQUS "Impressive. Not really."
-    EQUB 17, 4, 26
-    EQUS "But the lie motivates you."
-
-    EQUB &FF
-
-; --- Level 3 card ---
-.level_card_2
-    EQUB 12, 4, 15
-    EQUS "TEST CHAMBER 00"
-    EQUB 13, 4, 15
-    EQUS "TEST CHAMBER 00"
-
-    EQUB 16, 4, 23
-    EQUS "You're doing very well."
-    EQUB 17, 4, 12
-    EQUS "For a human."
-
-    EQUB &FF
-
-; --- Level 4 card ---
-.level_card_3
-    EQUB 12, 4, 15
-    EQUS "TEST CHAMBER 00"
-    EQUB 13, 4, 15
-    EQUS "TEST CHAMBER 00"
-
-    EQUB 16, 4, 30
-    EQUS "The cube cannot love you back."
-
-    EQUB &FF
-
-; --- Level 5 card ---
-.level_card_4
-    EQUB 12, 4, 15
-    EQUS "TEST CHAMBER 00"
-    EQUB 13, 4, 15
-    EQUS "TEST CHAMBER 00"
-
-    EQUB 16, 4, 24
-    EQUS "This is your final test."
-    EQUB 17, 4, 9
-    EQUS "Probably."
-
-    EQUB &FF
-
+; Per-level card overlay data is now embedded in binary level packs
+; and pointed to by level_card_ptr (set by load_level in tilemap.asm).

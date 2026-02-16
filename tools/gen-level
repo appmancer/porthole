@@ -790,6 +790,26 @@ class ProcessedLevel:
     fizzler_counts: list[int]
     fizzler_data: list[list[int]]
     room_indices: list[list[int]]
+    card_lines: list[str]
+
+
+def _read_card_txt(level_dir: Path) -> list[str]:
+    """Read level card quote lines from card.txt in the level directory.
+
+    Returns a list of non-empty lines (max 2).  If card.txt is absent,
+    returns an empty list (the overlay will just show the TEST CHAMBER
+    header with no quote).
+    """
+    card_path = level_dir / "card.txt"
+    if not card_path.exists():
+        return []
+    lines = [l.rstrip("\n\r") for l in card_path.read_text().splitlines() if l.strip()]
+    if len(lines) > 2:
+        raise SystemExit(f"{card_path}: too many lines (max 2 quote lines), got {len(lines)}")
+    for i, line in enumerate(lines):
+        if len(line) > 36:
+            raise SystemExit(f"{card_path}: line {i+1} too long ({len(line)} chars, max 36)")
+    return lines
 
 
 def process_level(level_dir: Path) -> ProcessedLevel:
@@ -959,6 +979,7 @@ def process_level(level_dir: Path) -> ProcessedLevel:
         fizzler_counts=fizzler_counts,
         fizzler_data=fizzler_data,
         room_indices=room_indices,
+        card_lines=_read_card_txt(level_dir),
     )
 
 
@@ -988,7 +1009,7 @@ def build_level_binary(lvl: ProcessedLevel) -> bytes:
         1B    obj_index_count   + N*1B indices
         1B    fizzler_count     + F*5B records
       Level card text:
-        &FF   (empty placeholder — populated in step 7)
+        sequence of (row, col, len, data...) overlay records, &FF terminated
     """
     buf = bytearray()
 
@@ -1039,7 +1060,21 @@ def build_level_binary(lvl: ProcessedLevel) -> bytes:
         buf.append(lvl.fizzler_counts[ri])
         buf.extend(lvl.fizzler_data[ri])
 
-    # Level card text (empty placeholder — step 7 adds real data).
+    # Level card text overlay records (row, col, len, data...) + &FF terminator.
+    # Header: "TEST CHAMBER 00" on rows 12 and 13 (double-height).
+    header_text = b"TEST CHAMBER 00"
+    buf.extend([12, 4, len(header_text)])
+    buf.extend(header_text)
+    buf.extend([13, 4, len(header_text)])
+    buf.extend(header_text)
+
+    # Quote lines on rows 16-17.
+    for i, line in enumerate(lvl.card_lines):
+        encoded = line.encode("ascii")
+        buf.extend([16 + i, 4, len(encoded)])
+        buf.extend(encoded)
+
+    # Terminator.
     buf.append(0xFF)
 
     return bytes(buf)

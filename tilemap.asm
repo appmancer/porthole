@@ -68,6 +68,10 @@ INCLUDE "levels/generated_level5.asm"
 .ll_room_count  SKIP 1
 .ll_room_idx    SKIP 1
 
+; Pointer to level card overlay data in the staging buffer.
+; Set by ll_parse_staged after room parsing; used by show_level_card.
+.level_card_ptr SKIP 2
+
 ; Decompressed tilemap buffers — one 256-byte flat tilemap per room.
 ; room_pointers entries are patched at load time to point here.
 ; Game code reads/writes via (tilemap_ptr),Y unchanged.
@@ -145,7 +149,7 @@ ALIGN 256
 ;     1B     exit_down_count  + E*3B records
 ;     1B     obj_index_count  + N*1B indices
 ;     1B     fizzler_count    + F*5B records
-;   &FF    level card text terminator (placeholder)
+;   Level card overlay: (row, col, len, data...)... &FF terminated
 ;
 ; Input: temp_sprite_ptr = STAGING_BUF (source cursor).
 ; Clobbers: A,X,Y,temp,temp_sprite_ptr,temp_mask_ptr
@@ -460,6 +464,12 @@ ALIGN 256
     JMP ll_unused_rooms
 
 .ll_rooms_done
+    ; temp_sprite_ptr now points to the level card overlay data
+    ; in the staging buffer.  Save it for show_level_card.
+    LDA temp_sprite_ptr
+    STA level_card_ptr
+    LDA temp_sprite_ptr+1
+    STA level_card_ptr+1
     RTS
 
 
