@@ -966,3 +966,14 @@ PUTFILE "TEMPLATE", "TEMPLTE", &7C00, &7C00
 
 ; Level pack 01 — binary level data loaded at runtime to LYNNE &3000.
 PUTFILE ".tmp/LVLS01.dat", "LVLS01", &3000, &3000
+
+; Trampoline code for below-&3000 ACCCON X-bit operations.
+; Contains lynne_osfile (OSFILE with X=1) and lynne_stage_level
+; (copy level data from LYNNE to staging buffer).
+; Loaded by boot_loader to &0900 before the game starts.
+CLEAR &0900, &09E0
+ORG &0900
+.trampoline_start
+INCLUDE "trampoline.asm"
+.trampoline_end
+SAVE "TRAMPLN", trampoline_start, trampoline_end

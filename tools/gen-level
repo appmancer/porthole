@@ -1049,18 +1049,21 @@ def build_pack_binary(level_binaries: list[bytes]) -> bytes:
     """Build a complete pack file from a list of per-level binary blobs.
 
     Layout:
-      +0        1B      level_count (N)
-      +1        N*2B    offset table (16-bit LE, relative to start of file)
-      +1+N*2    ...     concatenated level data
+      +0          1B        level_count (N)
+      +1          (N+1)*2B  offset table (16-bit LE, relative to start of file)
+                            Entry N is a sentinel pointing past the last level,
+                            so level i has size = offset[i+1] - offset[i].
+      +1+(N+1)*2  ...       concatenated level data
     """
     n = len(level_binaries)
-    header_size = 1 + n * 2
+    header_size = 1 + (n + 1) * 2      # +1 for sentinel entry
     # Compute offsets.
     offsets: list[int] = []
     pos = header_size
     for lb in level_binaries:
         offsets.append(pos)
         pos += len(lb)
+    offsets.append(pos)                 # sentinel: end of last level
 
     buf = bytearray()
     buf.append(n)
@@ -1078,17 +1081,17 @@ def dump_pack(data: bytes) -> None:
         return
     n = data[0]
     print(f"Pack: {n} level(s), {len(data)} bytes total")
-    if len(data) < 1 + n * 2:
+    if len(data) < 1 + (n + 1) * 2:
         print("ERROR: truncated offset table")
         return
     offsets: list[int] = []
-    for i in range(n):
+    for i in range(n + 1):             # +1 for sentinel
         off = struct.unpack_from("<H", data, 1 + i * 2)[0]
         offsets.append(off)
 
     for li in range(n):
         off = offsets[li]
-        end = offsets[li + 1] if li + 1 < n else len(data)
+        end = offsets[li + 1]
         size = end - off
         if off >= len(data):
             print(f"  Level {li}: offset {off} out of bounds")
@@ -1454,9 +1457,9 @@ def main() -> None:
             raise SystemExit(
                 f"verify: pack has {n_pack} level(s) but {len(args.levels)} --levels given"
             )
-        # Parse offset table from pack.
+        # Parse offset table from pack (N+1 entries; last is sentinel).
         pack_offsets: list[int] = []
-        for i in range(n_pack):
+        for i in range(n_pack + 1):
             pack_offsets.append(struct.unpack_from("<H", pack_data, 1 + i * 2)[0])
 
         all_ok = True
@@ -1465,7 +1468,7 @@ def main() -> None:
             expected = build_level_binary(lvl)
             # Extract actual bytes from pack.
             off = pack_offsets[li]
-            end = pack_offsets[li + 1] if li + 1 < n_pack else len(pack_data)
+            end = pack_offsets[li + 1]
             actual = pack_data[off:end]
             if expected == actual:
                 print(f"  Level {li} ({ld}): OK ({len(expected)} bytes)")

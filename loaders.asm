@@ -22,8 +22,8 @@
 ; Pack caching: loaded_pack_index tracks which pack is currently in LYNNE.
 ; If the requested pack is already loaded, the disc read is skipped.
 
-PACK_OSFILE_BLK  = &0900       ; 18-byte OSFILE control block (below &3000)
-PACK_FNAME       = &0912       ; filename string (below &3000), max 8 chars + CR
+PACK_OSFILE_BLK  = &09C0       ; 18-byte OSFILE control block (below &3000)
+PACK_FNAME       = &09D2       ; filename string (below &3000), max 8 chars + CR
 PACK_LOAD_ADDR   = &3000       ; LYNNE data area start
 LEVELS_PER_PACK  = 10          ; levels per pack file
 
@@ -131,21 +131,9 @@ LEVELS_PER_PACK  = 10          ; levels per pack file
     STA PACK_OSFILE_BLK+16
     STA PACK_OSFILE_BLK+17
 
-    ; Set ACCCON X=1 so CPU writes to &3000-&7FFF go to LYNNE.
-    LDA ACCCON
-    ORA #&04
-    STA ACCCON
-
-    ; OSFILE &FF = load file.
-    LDA #&FF
-    LDX #<PACK_OSFILE_BLK
-    LDY #>PACK_OSFILE_BLK
-    JSR OSFILE
-
-    ; Restore ACCCON X=0 (CPU sees main RAM at &3000-&7FFF).
-    LDA ACCCON
-    AND #&FB
-    STA ACCCON
+    ; Load file to LYNNE via below-&3000 trampoline (sets ACCCON X=1,
+    ; calls OSFILE, restores X=0).
+    JSR lynne_osfile
 
     RTS
 
