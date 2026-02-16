@@ -758,50 +758,47 @@ def parse_room(path: Path) -> Room:
     )
 
 
-def format_eqbytes(data: list[int], *, per_line: int = 16) -> str:
-    out_lines: list[str] = []
-    for i in range(0, len(data), per_line):
-        chunk = data[i : i + per_line]
-        out_lines.append("    EQUB " + ",".join(f"&{b:02X}" for b in chunk))
-    return "\n".join(out_lines)
+@dataclass(frozen=True)
+class Obj:
+    """Resolved object definition (used by both ASM and binary-pack output)."""
+    obj_id: str
+    type_id: int
+    channel: int
+    home_room: int
+    home_x: int
+    home_y: int
+    init_state: int = 0
 
 
-def rle_encode(tiles: list[int]) -> list[int]:
-    """RLE-compress a 256-byte tilemap into byte-pair [count][tile_id] format.
+@dataclass
+class ProcessedLevel:
+    """All data for one level, fully resolved and ready for serialisation."""
+    level_dir: Path
+    rooms: list[Room]
+    exits_left: list[list[tuple[int, int, int]]]
+    exits_right: list[list[tuple[int, int, int]]]
+    exits_up: list[list[tuple[int, int, int]]]
+    exits_down: list[list[tuple[int, int, int]]]
+    start_room: int
+    start_x: int
+    start_y: int
+    objs: list[Obj]
+    obj_id_to_index: dict[str, int]
+    spawner_to_cube: dict[str, str]
+    all_lasers: list[tuple[int, int, int, int, int, int, int]]
+    all_targets: list[tuple[int, int, int, int]]
+    fizzler_counts: list[int]
+    fizzler_data: list[list[int]]
+    room_indices: list[list[int]]
 
-    Runs are capped at 255. The decoder emits tiles until 256 are written.
+
+def process_level(level_dir: Path) -> ProcessedLevel:
+    """Parse and resolve all data for one level directory.
+
+    Returns a ProcessedLevel with all exits resolved to indices, objects
+    sorted, spawner cubes created, lasers/targets/fizzlers collected, and
+    per-room object index lists built.
     """
-    assert len(tiles) == 256, f"expected 256 tiles, got {len(tiles)}"
-    encoded: list[int] = []
-    i = 0
-    while i < 256:
-        tile = tiles[i]
-        run = 1
-        while i + run < 256 and tiles[i + run] == tile and run < 255:
-            run += 1
-        encoded.append(run)
-        encoded.append(tile)
-        i += run
-    return encoded
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--level", required=True, help="level directory, e.g. levels/level1")
-    ap.add_argument("--out", required=True, help="output asm include")
-    ap.add_argument("--label-prefix", default="", help="prefix for shared labels (e.g. level1)")
-    ap.add_argument("--pad-obj", type=int, default=0, help="pad obj_defs to N entries")
-    ap.add_argument("--pad-laser", type=int, default=0, help="pad laser_defs to N entries")
-    ap.add_argument("--pad-target", type=int, default=0, help="pad target_defs to N entries")
-    ap.add_argument("--max-rooms", type=int, default=0,
-                     help="pad per-room header arrays to N entries (must >= actual rooms)")
-    args = ap.parse_args()
-
-    prefix = args.label_prefix
-
-    level_dir = Path(args.level)
-    out_path = Path(args.out)
-
     # Collect room sources; prefer TMX when both exist for the same roomNN.
     room_sources: dict[int, Path] = {}
     for p in sorted(level_dir.glob("room*.txt")):
@@ -814,16 +811,14 @@ def main() -> None:
 
     rooms = [parse_room(p) for _, p in sorted(room_sources.items(), key=lambda kv: kv[0])]
 
-    # Enforce contiguous indices starting at 0 for now.
+    # Enforce contiguous indices starting at 0.
     for want, r in enumerate(rooms):
         if r.index != want:
             raise SystemExit(
                 f"rooms must be contiguous starting at room00; expected room{want:02d}, got {r.name}"
             )
 
-    level_name = level_dir.name  # level1
-
-    # Resolve exit destinations to indices and validate.
+    # Resolve exit destinations to indices.
     name_to_index = {r.name: r.index for r in rooms}
 
     def resolve(exits: list[tuple[int, int, str]], *, src: str) -> list[tuple[int, int, int]]:
@@ -853,7 +848,7 @@ def main() -> None:
     else:
         start_room, start_x, start_y = (0, 4, 4)
 
-    # TMX-authored object ids must be unique across the whole level.
+    # Validate unique object/laser/target ids.
     seen_ids: dict[str, str] = {}
     for r in rooms:
         for typ, x, y, obj_id, _channel, _init_state in r.objects:
@@ -877,17 +872,7 @@ def main() -> None:
                 )
             seen_ids[obj_id] = f"{r.name}:target@{tx},{ty}"
 
-    # --- Build object list ---
-    @dataclass(frozen=True)
-    class Obj:
-        obj_id: str
-        type_id: int
-        channel: int
-        home_room: int
-        home_x: int
-        home_y: int
-        init_state: int = 0
-
+    # Build object list.
     objs: list[Obj] = []
     for r in rooms:
         for typ, x, y, obj_id, channel, init_state in r.objects:
@@ -930,7 +915,7 @@ def main() -> None:
     objs.sort(key=_obj_sort_key)
     obj_id_to_index = {o.obj_id: i for i, o in enumerate(objs)}
 
-    # --- Build laser/target lists ---
+    # Build laser/target lists.
     all_lasers: list[tuple[int, int, int, int, int, int, int]] = []
     all_targets: list[tuple[int, int, int, int]] = []
     for r in rooms:
@@ -940,7 +925,7 @@ def main() -> None:
         for tx, ty, c, _id in r.targets:
             all_targets.append((r.index, tx, ty, c))
 
-    # --- Build fizzler data ---
+    # Build fizzler data.
     fizzler_counts: list[int] = []
     fizzler_data: list[list[int]] = []
     for r in rooms:
@@ -956,14 +941,220 @@ def main() -> None:
         if 0 <= o.home_room < len(rooms):
             room_indices[o.home_room].append(obj_id_to_index[o.obj_id])
 
-    # --- Apply padding ---
-    pad_obj = max(args.pad_obj, len(objs))
-    pad_laser = max(args.pad_laser, len(all_lasers))
-    pad_target = max(args.pad_target, len(all_targets))
-    max_rooms = max(args.max_rooms, len(rooms))
+    return ProcessedLevel(
+        level_dir=level_dir,
+        rooms=rooms,
+        exits_left=exits_left,
+        exits_right=exits_right,
+        exits_up=exits_up,
+        exits_down=exits_down,
+        start_room=start_room,
+        start_x=start_x,
+        start_y=start_y,
+        objs=objs,
+        obj_id_to_index=obj_id_to_index,
+        spawner_to_cube=spawner_to_cube,
+        all_lasers=all_lasers,
+        all_targets=all_targets,
+        fizzler_counts=fizzler_counts,
+        fizzler_data=fizzler_data,
+        room_indices=room_indices,
+    )
 
-    # Pad per-room arrays to max_rooms so the header block is the same size
-    # regardless of how many rooms the level actually has.
+
+# ================================================================
+# Binary pack format
+# ================================================================
+
+def build_level_binary(lvl: ProcessedLevel) -> bytes:
+    """Serialize one ProcessedLevel into the compact binary pack per-level format.
+
+    Layout:
+      +0    1B   room_count
+      +1    1B   start_room
+      +2    1B   start_tile_pos  (y<<4 | x)
+      +3    1B   object_count
+      +4    P*6B object defs
+      +?    1B   laser_count
+      +?    L*7B laser defs
+      +?    1B   target_count
+      +?    T*4B target defs
+      Per room (room_count times):
+        var   RLE-compressed tilemap
+        1B    exit_left_count   + E*3B records
+        1B    exit_right_count  + E*3B records
+        1B    exit_up_count     + E*3B records
+        1B    exit_down_count   + E*3B records
+        1B    obj_index_count   + N*1B indices
+        1B    fizzler_count     + F*5B records
+      Level card text:
+        &FF   (empty placeholder — populated in step 7)
+    """
+    buf = bytearray()
+
+    # --- Level header ---
+    buf.append(len(lvl.rooms))                          # room_count
+    buf.append(lvl.start_room)                          # start_room
+    buf.append((lvl.start_y << 4) | lvl.start_x)       # start_tile_pos
+
+    # Object defs.
+    buf.append(len(lvl.objs))
+    for o in lvl.objs:
+        if o.type_id == OBJECT_TYPE_TO_ID["spawner"]:
+            init_flags = lvl.obj_id_to_index[lvl.spawner_to_cube[o.obj_id]]
+        else:
+            init_flags = o.init_state
+        buf.extend([o.type_id, o.channel, init_flags, o.home_room, o.home_x, o.home_y])
+
+    # Laser defs.
+    buf.append(len(lvl.all_lasers))
+    for room_idx, tx, ty, d, c, ex, ey in lvl.all_lasers:
+        buf.extend([room_idx, tx, ty, d, c, ex, ey])
+
+    # Target defs.
+    buf.append(len(lvl.all_targets))
+    for room_idx, tx, ty, c in lvl.all_targets:
+        buf.extend([room_idx, tx, ty, c])
+
+    # --- Per-room data ---
+    for ri, room in enumerate(lvl.rooms):
+        # RLE-compressed tilemap.
+        rle = rle_encode(room.tiles)
+        buf.extend(rle)
+
+        # Exits (4 directions).
+        for exits_dir in (lvl.exits_left, lvl.exits_right,
+                          lvl.exits_up, lvl.exits_down):
+            entries = exits_dir[ri]
+            buf.append(len(entries))
+            for a0, a1, dst in entries:
+                buf.extend([a0, a1, dst])
+
+        # Object indices for this room.
+        indices = lvl.room_indices[ri]
+        buf.append(len(indices))
+        buf.extend(indices)
+
+        # Fizzlers for this room.
+        buf.append(lvl.fizzler_counts[ri])
+        buf.extend(lvl.fizzler_data[ri])
+
+    # Level card text (empty placeholder — step 7 adds real data).
+    buf.append(0xFF)
+
+    return bytes(buf)
+
+
+def build_pack_binary(level_binaries: list[bytes]) -> bytes:
+    """Build a complete pack file from a list of per-level binary blobs.
+
+    Layout:
+      +0        1B      level_count (N)
+      +1        N*2B    offset table (16-bit LE, relative to start of file)
+      +1+N*2    ...     concatenated level data
+    """
+    n = len(level_binaries)
+    header_size = 1 + n * 2
+    # Compute offsets.
+    offsets: list[int] = []
+    pos = header_size
+    for lb in level_binaries:
+        offsets.append(pos)
+        pos += len(lb)
+
+    buf = bytearray()
+    buf.append(n)
+    for off in offsets:
+        buf.extend(struct.pack("<H", off))
+    for lb in level_binaries:
+        buf.extend(lb)
+    return bytes(buf)
+
+
+def dump_pack(data: bytes) -> None:
+    """Print a human-readable summary of a binary pack file."""
+    if len(data) < 1:
+        print("ERROR: empty pack file")
+        return
+    n = data[0]
+    print(f"Pack: {n} level(s), {len(data)} bytes total")
+    if len(data) < 1 + n * 2:
+        print("ERROR: truncated offset table")
+        return
+    offsets: list[int] = []
+    for i in range(n):
+        off = struct.unpack_from("<H", data, 1 + i * 2)[0]
+        offsets.append(off)
+
+    for li in range(n):
+        off = offsets[li]
+        end = offsets[li + 1] if li + 1 < n else len(data)
+        size = end - off
+        if off >= len(data):
+            print(f"  Level {li}: offset {off} out of bounds")
+            continue
+        room_count = data[off]
+        start_room = data[off + 1]
+        start_pos = data[off + 2]
+        obj_count = data[off + 3]
+        print(f"  Level {li}: offset={off}, size={size}B, rooms={room_count}, "
+              f"start_room={start_room}, start_pos=&{start_pos:02X}, objs={obj_count}")
+
+
+def format_eqbytes(data: list[int], *, per_line: int = 16) -> str:
+    out_lines: list[str] = []
+    for i in range(0, len(data), per_line):
+        chunk = data[i : i + per_line]
+        out_lines.append("    EQUB " + ",".join(f"&{b:02X}" for b in chunk))
+    return "\n".join(out_lines)
+
+
+def rle_encode(tiles: list[int]) -> list[int]:
+    """RLE-compress a 256-byte tilemap into byte-pair [count][tile_id] format.
+
+    Runs are capped at 255. The decoder emits tiles until 256 are written.
+    """
+    assert len(tiles) == 256, f"expected 256 tiles, got {len(tiles)}"
+    encoded: list[int] = []
+    i = 0
+    while i < 256:
+        tile = tiles[i]
+        run = 1
+        while i + run < 256 and tiles[i + run] == tile and run < 255:
+            run += 1
+        encoded.append(run)
+        encoded.append(tile)
+        i += run
+    return encoded
+
+
+def _emit_asm(lvl: ProcessedLevel, *, prefix: str, out_path: Path,
+              pad_obj: int, pad_laser: int, pad_target: int, max_rooms: int) -> None:
+    """Emit beebasm ASM output (prefixed or legacy mode) — existing pipeline."""
+    rooms = lvl.rooms
+    level_name = lvl.level_dir.name
+    start_room = lvl.start_room
+    start_x = lvl.start_x
+    start_y = lvl.start_y
+    objs = lvl.objs
+    obj_id_to_index = lvl.obj_id_to_index
+    spawner_to_cube = lvl.spawner_to_cube
+    all_lasers = lvl.all_lasers
+    all_targets = lvl.all_targets
+    exits_left = list(lvl.exits_left)
+    exits_right = list(lvl.exits_right)
+    exits_up = list(lvl.exits_up)
+    exits_down = list(lvl.exits_down)
+    fizzler_counts = list(lvl.fizzler_counts)
+    fizzler_data = list(lvl.fizzler_data)
+    room_indices = list(lvl.room_indices)
+
+    # --- Apply padding ---
+    pad_obj = max(pad_obj, len(objs))
+    pad_laser = max(pad_laser, len(all_lasers))
+    pad_target = max(pad_target, len(all_targets))
+    max_rooms = max(max_rooms, len(rooms))
+
     for arr in (exits_left, exits_right, exits_up, exits_down, room_indices):
         while len(arr) < max_rooms:
             arr.append([])
@@ -972,7 +1163,7 @@ def main() -> None:
     while len(fizzler_data) < max_rooms:
         fizzler_data.append([])
 
-    # Build padded obj_defs flat bytes.
+    # Build padded flat byte arrays.
     obj_flat: list[int] = []
     for o in objs:
         if o.type_id == OBJECT_TYPE_TO_ID["spawner"]:
@@ -980,18 +1171,15 @@ def main() -> None:
         else:
             init_flags = o.init_state
         obj_flat.extend([o.type_id, o.channel, init_flags, o.home_room, o.home_x, o.home_y])
-    # Pad with dummy type=0, room=&FF objects.
     for _ in range(pad_obj - len(objs)):
         obj_flat.extend([0, 0, 0, 0xFF, 0, 0])
 
-    # Build padded laser_defs flat bytes.
     laser_flat: list[int] = []
     for room_idx, tx, ty, d, c, ex, ey in all_lasers:
         laser_flat.extend([room_idx, tx, ty, d, c, ex, ey])
     for _ in range(pad_laser - len(all_lasers)):
         laser_flat.extend([0xFF, 0, 0, 0, 0, 0, 0])
 
-    # Build padded target_defs flat bytes.
     target_flat: list[int] = []
     for room_idx, tx, ty, c in all_targets:
         target_flat.extend([room_idx, tx, ty, c])
@@ -1003,32 +1191,20 @@ def main() -> None:
     # ================================================================
     lines: list[str] = []
     lines.append("; Auto-generated by tools/gen-level. DO NOT EDIT.")
-    lines.append(f"; Source: {level_dir}")
+    lines.append(f"; Source: {lvl.level_dir}")
     lines.append("")
-
-    # Label prefix helper: ".prefix_name" or ".name"
-    def lbl(name: str) -> str:
-        if prefix:
-            return f".{prefix}_{name}"
-        return f".{name}"
 
     if prefix:
         # --- Prefixed mode: emit contiguous header block ---
-        # The header block is memcpy'd into the active buffer at runtime.
-        # Order must exactly match the active buffer layout in tilemap.asm.
         lines.append(f".{prefix}_header")
 
-        # 1. start_room (1B)
         lines.append(f"    EQUB {start_room}")
-        # 2. start_tile_pos (1B)
         lines.append(f"    EQUB &{((start_y << 4) | start_x):02X}")
 
-        # 3. room_pointers (max_rooms * 2)
         for i in range(max_rooms):
             r = rooms[i] if i < len(rooms) else rooms[0]
             lines.append(f"    EQUW {level_name}_{r.name}")
 
-        # 4. exit tables (counts + ptrs per direction)
         for edge, per_room in [("left", exits_left), ("right", exits_right),
                                 ("up", exits_up), ("down", exits_down)]:
             for entries in per_room:
@@ -1037,32 +1213,27 @@ def main() -> None:
                 ri = i if i < len(rooms) else 0
                 lines.append(f"    EQUW {level_name}_room{ri:02d}_exit_{edge}")
 
-        # 9. obj_defs (pad_obj * OBJ_DEF_SIZE)
         if obj_flat:
             lines.append(format_eqbytes(obj_flat, per_line=16))
         else:
             lines.append("    ; (no objects)")
 
-        # 10. obj_room_counts + obj_room_ptrs
         for idxs in room_indices:
             lines.append(f"    EQUB {len(idxs)}")
         for i in range(len(room_indices)):
             ri = i if i < len(rooms) else 0
             lines.append(f"    EQUW {level_name}_room{ri:02d}_obj_indices")
 
-        # 11. laser_defs (pad_laser * LASER_DEF_SIZE)
         if laser_flat:
             lines.append(format_eqbytes(laser_flat, per_line=16))
         else:
             lines.append("    ; (no lasers)")
 
-        # 12. target_defs (pad_target * TARGET_DEF_SIZE)
         if target_flat:
             lines.append(format_eqbytes(target_flat, per_line=16))
         else:
             lines.append("    ; (no targets)")
 
-        # 13. fizzler_room_counts + fizzler_room_ptrs
         for c in fizzler_counts:
             lines.append(f"    EQUB {c}")
         for i in range(len(fizzler_counts)):
@@ -1094,7 +1265,7 @@ def main() -> None:
             lines.append("")
             for i, entries in enumerate(per_room):
                 if i >= len(rooms):
-                    break  # padded slots point to room00; no extra labels needed
+                    break
                 lines.append(f".{level_name}_room{i:02d}_exit_{edge}")
                 if not entries:
                     lines.append("    ; (no exits)")
@@ -1110,7 +1281,7 @@ def main() -> None:
         emit_exit_tables("up", exits_up)
         emit_exit_tables("down", exits_down)
 
-        lines.append(f"OBJ_COUNT = {pad_obj if args.pad_obj else len(objs)}")
+        lines.append(f"OBJ_COUNT = {pad_obj if pad_obj else len(objs)}")
         lines.append(f"OBJ_DEF_SIZE = {OBJ_DEF_SIZE}")
         lines.append("")
 
@@ -1132,7 +1303,7 @@ def main() -> None:
             lines.append(f"    EQUW {level_name}_room{ri:02d}_obj_indices")
         lines.append("")
 
-        lines.append(f"LASER_COUNT = {pad_laser if args.pad_laser else len(all_lasers)}")
+        lines.append(f"LASER_COUNT = {pad_laser if pad_laser else len(all_lasers)}")
         lines.append(f"LASER_DEF_SIZE = 7")
         lines.append("")
         lines.append(".laser_defs")
@@ -1142,7 +1313,7 @@ def main() -> None:
             lines.append("    ; (no lasers)")
         lines.append("")
 
-        lines.append(f"TARGET_COUNT = {pad_target if args.pad_target else len(all_targets)}")
+        lines.append(f"TARGET_COUNT = {pad_target if pad_target else len(all_targets)}")
         lines.append(f"TARGET_DEF_SIZE = 4")
         lines.append("")
         lines.append(".target_defs")
@@ -1166,10 +1337,9 @@ def main() -> None:
             lines.append(f"    EQUW {level_name}_room{ri:02d}_fizzlers")
         lines.append("")
 
-        # Per-room obj_indices (legacy mode emits inline).
         for i, idxs in enumerate(room_indices):
             if i >= len(rooms):
-                break  # padded slots point to room00; no extra labels needed
+                break
             lines.append(f".{level_name}_room{i:02d}_obj_indices")
             if not idxs:
                 lines.append("    ; (no objects)")
@@ -1177,10 +1347,9 @@ def main() -> None:
                 lines.append(format_eqbytes(idxs, per_line=16))
             lines.append("")
 
-        # Per-room fizzler data (legacy mode emits inline).
         for i, fd in enumerate(fizzler_data):
             if i >= len(rooms):
-                break  # padded slots point to room00; no extra labels needed
+                break
             lines.append(f".{level_name}_room{i:02d}_fizzlers")
             if not fd:
                 lines.append("    ; (no fizzlers)")
@@ -1194,7 +1363,7 @@ def main() -> None:
                                 ("up", exits_up), ("down", exits_down)]:
             for i, entries in enumerate(per_room):
                 if i >= len(rooms):
-                    break  # padded slots point to room00; no extra labels needed
+                    break
                 lines.append(f".{level_name}_room{i:02d}_exit_{edge}")
                 if not entries:
                     lines.append("    ; (no exits)")
@@ -1207,7 +1376,7 @@ def main() -> None:
 
         for i, idxs in enumerate(room_indices):
             if i >= len(rooms):
-                break  # padded slots point to room00; no extra labels needed
+                break
             lines.append(f".{level_name}_room{i:02d}_obj_indices")
             if not idxs:
                 lines.append("    ; (no objects)")
@@ -1217,7 +1386,7 @@ def main() -> None:
 
         for i, fd in enumerate(fizzler_data):
             if i >= len(rooms):
-                break  # padded slots point to room00; no extra labels needed
+                break
             lines.append(f".{level_name}_room{i:02d}_fizzlers")
             if not fd:
                 lines.append("    ; (no fizzlers)")
@@ -1235,6 +1404,127 @@ def main() -> None:
         lines.append("")
 
     out_path.write_text("\n".join(lines), encoding="ascii")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest="command")
+
+    # --- Default / ASM mode (backward-compatible) ---
+    ap.add_argument("--level", help="level directory, e.g. levels/level1")
+    ap.add_argument("--out", help="output file path")
+    ap.add_argument("--label-prefix", default="", help="prefix for shared labels (e.g. level1)")
+    ap.add_argument("--pad-obj", type=int, default=0, help="pad obj_defs to N entries")
+    ap.add_argument("--pad-laser", type=int, default=0, help="pad laser_defs to N entries")
+    ap.add_argument("--pad-target", type=int, default=0, help="pad target_defs to N entries")
+    ap.add_argument("--max-rooms", type=int, default=0,
+                     help="pad per-room header arrays to N entries (must >= actual rooms)")
+
+    # --- Binary pack mode ---
+    ap.add_argument("--binary-pack", action="store_true",
+                    help="emit a binary level pack (provide multiple --level dirs via --levels)")
+    ap.add_argument("--levels", nargs="+",
+                    help="level directories for --binary-pack mode")
+
+    # --- Dump pack mode ---
+    ap.add_argument("--dump-pack", metavar="FILE",
+                    help="read and dump a binary pack file for verification")
+
+    # --- Verify pack mode ---
+    ap.add_argument("--verify-pack", metavar="FILE",
+                    help="verify a binary pack file against --levels source dirs")
+
+    args = ap.parse_args()
+
+    # --- Dump pack ---
+    if args.dump_pack:
+        data = Path(args.dump_pack).read_bytes()
+        dump_pack(data)
+        return
+
+    # --- Verify pack ---
+    if args.verify_pack:
+        if not args.levels:
+            raise SystemExit("--verify-pack requires --levels <dir1> <dir2> ...")
+        pack_data = Path(args.verify_pack).read_bytes()
+        if len(pack_data) < 1:
+            raise SystemExit("verify: empty pack file")
+        n_pack = pack_data[0]
+        if n_pack != len(args.levels):
+            raise SystemExit(
+                f"verify: pack has {n_pack} level(s) but {len(args.levels)} --levels given"
+            )
+        # Parse offset table from pack.
+        pack_offsets: list[int] = []
+        for i in range(n_pack):
+            pack_offsets.append(struct.unpack_from("<H", pack_data, 1 + i * 2)[0])
+
+        all_ok = True
+        for li, ld in enumerate(args.levels):
+            lvl = process_level(Path(ld))
+            expected = build_level_binary(lvl)
+            # Extract actual bytes from pack.
+            off = pack_offsets[li]
+            end = pack_offsets[li + 1] if li + 1 < n_pack else len(pack_data)
+            actual = pack_data[off:end]
+            if expected == actual:
+                print(f"  Level {li} ({ld}): OK ({len(expected)} bytes)")
+            else:
+                all_ok = False
+                print(f"  Level {li} ({ld}): MISMATCH!")
+                print(f"    expected {len(expected)} bytes, got {len(actual)} bytes")
+                # Show first difference.
+                for bi in range(max(len(expected), len(actual))):
+                    eb = expected[bi] if bi < len(expected) else None
+                    ab = actual[bi] if bi < len(actual) else None
+                    if eb != ab:
+                        print(f"    first diff at byte {bi}: expected={eb!r} actual={ab!r}")
+                        # Show a few more bytes of context.
+                        ctx = min(bi + 16, max(len(expected), len(actual)))
+                        print(f"    expected[{bi}:{ctx}] = {list(expected[bi:ctx])}")
+                        print(f"    actual  [{bi}:{ctx}] = {list(actual[bi:ctx])}")
+                        break
+        if all_ok:
+            print(f"Verify: all {n_pack} level(s) match.")
+        else:
+            raise SystemExit("Verify: FAILED — see mismatches above.")
+        return
+
+    # --- Binary pack ---
+    if args.binary_pack:
+        if not args.levels:
+            raise SystemExit("--binary-pack requires --levels <dir1> <dir2> ...")
+        if not args.out:
+            raise SystemExit("--binary-pack requires --out <file>")
+
+        level_binaries: list[bytes] = []
+        for ld in args.levels:
+            lvl = process_level(Path(ld))
+            lb = build_level_binary(lvl)
+            print(f"  {ld}: {len(lvl.rooms)} room(s), {len(lvl.objs)} obj(s), {len(lb)} bytes")
+            level_binaries.append(lb)
+
+        pack = build_pack_binary(level_binaries)
+        Path(args.out).write_bytes(pack)
+        print(f"Pack: {len(args.levels)} level(s), {len(pack)} bytes -> {args.out}")
+        return
+
+    # --- ASM mode (default) ---
+    if not args.level:
+        raise SystemExit("--level is required (or use --binary-pack)")
+    if not args.out:
+        raise SystemExit("--out is required")
+
+    lvl = process_level(Path(args.level))
+    _emit_asm(
+        lvl,
+        prefix=args.label_prefix,
+        out_path=Path(args.out),
+        pad_obj=args.pad_obj,
+        pad_laser=args.pad_laser,
+        pad_target=args.pad_target,
+        max_rooms=args.max_rooms,
+    )
 
 
 if __name__ == "__main__":
