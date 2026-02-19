@@ -65,7 +65,7 @@ SECTION_BUDGETS = [
     (".input_start",              ".portal_place_start",     "input",                 512),
     (".portal_place_start",       ".frame_update_start",     "portal_place",         1280),
     (".frame_update_start",       ".persistent_objects_start","frame_update",         1152),
-    (".persistent_objects_start", ".ui_start",               "persistent_objects",   2688),
+    (".persistent_objects_start", ".ui_start",               "persistent_objects",   2752),
     (".ui_start",                 ".screens_start",          "ui",                    256),
     (".screens_start",            ".loaders_start",          "screens",              2048),
     (".loaders_start",            ".timing_start",           "loaders",              1024),
@@ -74,7 +74,7 @@ SECTION_BUDGETS = [
     (".laser_start",              ".tilemap_data_start",     "laser",                1280),
     (".tilemap_data_start",       ".objects_start",           "tilemap",             5792),
     (".objects_start",            ".persistent_data_start",   "objects",              512),
-    (".persistent_data_start",    ".end",                     "persistent_obj_data",  768),
+    (".persistent_data_start",    ".end",                     "persistent_obj_data", 1024),
 ]
 
 # Global code ceiling: runtime buffers start at &7800.

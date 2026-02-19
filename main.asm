@@ -805,6 +805,7 @@ CHELL_DEAD_BASE              = 48
          ; Cube physics runs in the shared path so cubes fall even while
          ; reticle mode is active (update_normal_mode is skipped then).
          JSR update_cubes_physics
+         JSR check_offscreen_cube_portals
 
         ; While in reticle mode we ignore aim-based redraws.
         LDA reticle_active

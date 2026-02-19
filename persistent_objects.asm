@@ -153,6 +153,8 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     BNE ucp_velocity
 
     ; 3. Check floor portal entry (stationary cubes).
+    LDA current_room
+    STA temp_y
     JSR cube_check_floor_portal
     BCS ucp_next               ; teleported — skip gravity
 
@@ -279,7 +281,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA portal_a_enabled
     BEQ ccfp_try_b
     LDA portal_a_room
-    CMP current_room
+    CMP temp_y
     BNE ccfp_try_b
     LDA portal_a_orient
     CMP #PORTAL_ORIENT_FLOOR
@@ -312,7 +314,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA portal_b_enabled
     BEQ ccfp_miss
     LDA portal_b_room
-    CMP current_room
+    CMP temp_y
     BNE ccfp_miss
     LDA portal_b_orient
     CMP #PORTAL_ORIENT_FLOOR
@@ -665,6 +667,8 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     STA obj_y,Y
 
     ; Per-step portal check (prevents tunnelling past portals at high vy).
+    LDA current_room
+    STA temp_y
     JSR cube_check_floor_portal
     BCS cvm_teleported          ; teleported — exit immediately (portal sets new velocity)
 
@@ -1927,4 +1931,47 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA saved_romsel
     STA ROMSEL
     PLP
+    RTS
+
+
+; Check off-screen cubes against floor portals.
+;
+; Loops all objects, skips non-cubes / carried / in-current-room.
+; For off-screen cubes: ticks cooldown, sets temp_y = obj_room,Y,
+; calls cube_check_floor_portal.
+;
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
+.check_offscreen_cube_portals
+    LDY #0
+  .cocp_loop
+    CPY #OBJ_COUNT
+    BCS cocp_done
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BNE cocp_next
+    LDA obj_state,Y
+    AND #OBJ_STATE_CARRIED
+    BNE cocp_next
+    LDA obj_room,Y
+    CMP current_room
+    BEQ cocp_next               ; skip on-screen cubes (already handled)
+    CMP #&FF
+    BEQ cocp_next               ; skip despawned cubes
+
+    ; Tick portal cooldown.
+    LDA obj_portal_cd,Y
+    BEQ cocp_no_cd
+    SEC
+    SBC #1
+    STA obj_portal_cd,Y
+  .cocp_no_cd
+    ; Set temp_y = cube's room for parameterized portal check.
+    LDA obj_room,Y
+    STA temp_y
+    JSR cube_check_floor_portal
+
+  .cocp_next
+    INY
+    JMP cocp_loop
+  .cocp_done
     RTS
