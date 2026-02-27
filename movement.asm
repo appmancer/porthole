@@ -552,10 +552,12 @@
     STA temp
 
     ; y_test = (y + 32) (just below feet edge)
+    ; If y+32 overflows, we're past the bottom of the room — not grounded
+    ; (let her fall through to trigger a down-edge exit).
     JSR calc_char_y
     CLC
     ADC #32
-    BCS grounded_true
+    BCS grounded_false
     TAY
 
     ; left foot center
@@ -573,6 +575,7 @@
     JSR is_solid_physics
     BCS grounded_true
 
+.grounded_false
     CLC
     RTS
 .grounded_true
@@ -590,6 +593,12 @@
     BEQ step_down_to8
 
     ; Was at +8: wrap to +0 and advance to next cell row.
+    ; If tile_y is already 15, clamp here (don't wrap to y=0).
+    ; The exit check will fire on this frame at y=15.
+    LDA char_tile_pos
+    AND #&F0
+    CMP #&F0
+    BEQ step_down_blocked       ; tile_y=15, offset=8 — can't go lower
     LDA #0
     STA char_y_offset
     LDA char_tile_pos
@@ -620,6 +629,12 @@
     BNE step_up_to0
 
     ; Was at +0: wrap to +8 and move to previous cell row.
+    ; If tile_y is already 0, clamp — don't wrap to y=15.
+    ; Return C=1 so gravity doesn't cancel the jump; the exit
+    ; check will see y=0 and fire if an exit exists.
+    LDA char_tile_pos
+    AND #&F0
+    BEQ step_up_clamped         ; tile_y=0, offset=0 — at ceiling
     LDA #8
     STA char_y_offset
     LDA char_tile_pos
@@ -633,6 +648,10 @@
     LDA #0
     STA char_y_offset
     SEC
+    RTS
+
+.step_up_clamped
+    SEC                         ; report "moved" so jump isn't cancelled
     RTS
 
 .step_up_blocked
@@ -650,10 +669,12 @@
 
     ; y_test = (y + 8) + 31 (just below feet edge after stepping down)
     ; Keep vertical landing aligned to the 8px stripe grid.
+    ; If y+39 overflows, we're past the room bottom — no collision
+    ; (allow falling through to trigger a down-edge exit).
     JSR calc_char_y
     CLC
     ADC #39
-    BCS collide_down
+    BCS collide_down_false
     TAY
 
     ; left foot center
@@ -671,6 +692,7 @@
     JSR is_solid_physics
     BCS collide_down
 
+.collide_down_false
     CLC
     RTS
 .collide_down
@@ -688,9 +710,11 @@
 
     ; y_test = (y - 8) (top edge after stepping up)
     ; (Ceiling contact still needs to match the stripe grid.)
+    ; If y < 8, we're at the top of the room — no collision
+    ; (allow moving up to trigger an up-edge exit).
     JSR calc_char_y
     CMP #8
-    BCC collide_up
+    BCC collide_up_false
     SEC
     SBC #8
     TAY
@@ -710,6 +734,7 @@
     JSR is_solid_physics
     BCS collide_up
 
+.collide_up_false
     CLC
     RTS
  .collide_up

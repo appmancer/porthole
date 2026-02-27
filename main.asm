@@ -300,7 +300,7 @@ CHELL_DEAD_BASE              = 48
     ; Load the current level's header block into the active buffer.
     JSR load_level
 
-    ; Show MODE 7 "Test Chamber XX" title card.
+    ; Show MODE 5 "Test Chamber XX" title card (Aperture logo on cyan).
     JSR show_level_card
 
     ; Fall through to .start which handles full MODE 5 hardware init.
@@ -311,8 +311,9 @@ CHELL_DEAD_BASE              = 48
     ; clear would destroy code/data in MAIN RAM at &5800+ (our code blob
     ; extends past the MODE 5 screen start at &5800).
     ;
-    ; restore_mode5 (called by screen routines above) sets Video ULA +
-    ; CRTC screen start. The code below completes the MODE 5 setup.
+    ; show_level_card stays in MODE 5 (no mode switch). show_start_screen
+    ; uses MODE 7 and restore_mode5 sets Video ULA + CRTC screen start.
+    ; The code below completes the MODE 5 setup.
 
     ; Disable the blinking text cursor (it writes into screen RAM).
     JSR disable_cursor
@@ -888,6 +889,16 @@ INCLUDE "persistent_objects_data.asm"
 
 SAVE "PORTHLE", entry, end
 
+; Trampoline code for below-&3000 ACCCON X-bit operations.
+; Contains lynne_osfile (OSFILE with X=1) and lynne_stage_level
+; (copy level data from LYNNE to staging buffer).
+; Loaded by boot_loader to &0900 before the game starts.
+ORG &0900
+.trampoline_start
+INCLUDE "trampoline.asm"
+.trampoline_end
+SAVE "TRAMPLN", trampoline_start, trampoline_end
+
 ; Boot loader (PROGRAM) is a small machine-code binary.
 ; !Boot runs: *BASIC then *RUN PROGRAM.
 
@@ -925,25 +936,19 @@ ORG &C000
 .chelldata_end
 SAVE "CHDATA", chelldata_start, chelldata_end
 
-; Tile bitmap data for sideways RAM bank 6.
-; Room tile sprites (8x16 cells), generated from `sprites/NewTiles - Grid.csv`.
-; Labels (sprite_table etc.) are global and resolve to &8000+offset.
+; Tilemap tile data — stamps for rendering.
+; Kept in main RAM for fast tile rendering.
 CLEAR &8000, &C000
 ORG &8000
-.tiledata_start
+.tildat_start
 INCLUDE "sprites/generated_tiles.asm"
 
-; Pad to full 16KB SWRAM bank.
+; Pad to full 16KB SWRAM bank (loader expects 16KB).
 ORG &C000
-.tiledata_end
-SAVE "TILDAT", tiledata_start, tiledata_end
+.tildat_end
+SAVE "TILDAT", tildat_start, tildat_end
 
 ; Loading screen (MODE 2) file.
-;
-; Binary is generated at build-time into .tmp/loadscr_mode2.bin.
-; It is laid out as MODE 2 screen memory (20KB) and is intended to be
-; *LOADed to &3000 from BASIC during boot.
-
 CLEAR &3000, &8000
 ORG &3000
 .loadscr_start
@@ -953,7 +958,6 @@ SAVE "LOADSCR", loadscr_start, loadscr_end
 
 ; Start screen (MODE 7) — raw 1000-byte teletext screen.
 ; Loaded at runtime by show_start_screen via OSFILE to &7C00.
-
 CLEAR &7C00, &8000
 ORG &7C00
 .strtscr_start
@@ -965,16 +969,12 @@ SAVE "STRTSCR", strtscr_start, strtscr_end
 ; Loaded at runtime by show_level_card via OSFILE to &7C00.
 PUTFILE "TEMPLATE", "TEMPLTE", &7C00, &7C00
 
+; Aperture logo — MODE 5 graphic (128px wide).
+; Loaded at runtime by show_level_card directly into screen RAM at &5A00
+; (character row 3 onwards).
+PUTFILE ".tmp/aperture_logo.bin", "APLOGO", &5A00, &5A00
+
 ; Level pack 01 — binary level data loaded at runtime to LYNNE &3000.
 PUTFILE ".tmp/LVLS01.dat", "LVLS01", &3000, &3000
 
-; Trampoline code for below-&3000 ACCCON X-bit operations.
-; Contains lynne_osfile (OSFILE with X=1) and lynne_stage_level
-; (copy level data from LYNNE to staging buffer).
-; Loaded by boot_loader to &0900 before the game starts.
-CLEAR &0900, &09E0
-ORG &0900
-.trampoline_start
-INCLUDE "trampoline.asm"
-.trampoline_end
-SAVE "TRAMPLN", trampoline_start, trampoline_end
+; !Boot file added via build.sh post-assembly to work around beebasm PUTFILE issue.

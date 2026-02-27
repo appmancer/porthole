@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Debug tool to extract and verify level data from LVLS01.dat binary pack."""
+
+import struct
+import sys
+from pathlib import Path
+
+
+def rle_decode(data: bytes, offset: int) -> tuple[list[int], int]:
+    """Decode RLE tilemap starting at offset. Returns (tiles, bytes_consumed)."""
+    tiles: list[int] = []
+    pos = offset
+    while len(tiles) < 256:
+        if pos >= len(data):
+            raise ValueError(f"RLE decode ran past end of data at offset {pos}")
+        count = data[pos]
+        tile_id = data[pos + 1]
+        pos += 2
+        for _ in range(count):
+            tiles.append(tile_id)
+            if len(tiles) >= 256:
+                break
+    return tiles, pos - offset
+
+
+def extract_level(pack_data: bytes, level_index: int) -> tuple[int, bytes]:
+    """Extract a specific level from the pack. Returns (offset, level_data)."""
+    if len(pack_data) < 1:
+        raise ValueError("Empty pack file")
+    
+    level_count = pack_data[0]
+    if level_index >= level_count:
+        raise ValueError(f"Level {level_index} not found (pack has {level_count} levels)")
+    
+    # Read offset table
+    offset_table_size = 1 + (level_count + 1) * 2
+    if len(pack_data) < offset_table_size:
+        raise ValueError("Truncated offset table")
+    
+    offsets: list[int] = []
+    for i in range(level_count + 1):
+        off = struct.unpack_from("<H", pack_data, 1 + i * 2)[0]
+        offsets.append(off)
+    
+    start = offsets[level_index]
+    end = offsets[level_index + 1]
+    return start, pack_data[start:end]
+
+
+def parse_level_header(level_data: bytes) -> dict:
+    """Parse level header and return metadata."""
+    if len(level_data) < 4:
+        raise ValueError("Level data too short for header")
+    
+    room_count = level_data[0]
+    start_room = level_data[1]
+    start_tile_pos = level_data[2]
+    obj_count = level_data[3]
+    
+    return {
+        'room_count': room_count,
+        'start_room': start_room,
+        'start_x': start_tile_pos & 0x0F,
+        'start_y': (start_tile_pos >> 4) & 0x0F,
+        'obj_count': obj_count,
+    }
+
+
+def extract_room_tilemap(level_data: bytes, room_index: int) -> list[int]:
+    """Extract tilemap for a specific room from level data."""
+    header = parse_level_header(level_data)
+    room_count = header['room_count']
+    
+    if room_index >= room_count:
+        raise ValueError(f"Room {room_index} not found (level has {room_count} rooms)")
+    
+    # Skip header
+    pos = 4  # room_count, start_room, start_tile_pos, obj_count
+    
+    # Skip object defs (6 bytes each)
+    obj_count = header['obj_count']
+    pos += obj_count * 6
+    
+    # Skip laser defs
+    if pos >= len(level_data):
+        raise ValueError("Truncated level data after object defs")
+    laser_count = level_data[pos]
+    pos += 1 + laser_count * 7
+    
+    # Skip target defs
+    if pos >= len(level_data):
+        raise ValueError("Truncated level data after laser defs")
+    target_count = level_data[pos]
+    pos += 1 + target_count * 4
+    
+    # Now we're at the per-room data section
+    # We need to skip through RLE tilemaps + exit/obj/fizzler data for rooms 0..room_index-1
+    for ri in range(room_index + 1):
+        # RLE tilemap
+        tiles, rle_size = rle_decode(level_data, pos)
+        pos += rle_size
+        
+        if ri == room_index:
+            return tiles
+        
+        # Skip exits (4 directions: left, right, up, down)
+        for _ in range(4):
+            if pos >= len(level_data):
+                raise ValueError(f"Truncated at room {ri} exits")
+            exit_count = level_data[pos]
+            pos += 1 + exit_count * 3
+        
+        # Skip object indices
+        if pos >= len(level_data):
+            raise ValueError(f"Truncated at room {ri} obj indices")
+        obj_idx_count = level_data[pos]
+        pos += 1 + obj_idx_count
+        
+        # Skip fizzlers
+        if pos >= len(level_data):
+            raise ValueError(f"Truncated at room {ri} fizzlers")
+        fizzler_count = level_data[pos]
+        pos += 1 + fizzler_count * 5
+    
+    raise ValueError("Should not reach here")
+
+
+def print_tilemap(tiles: list[int], row: int | None = None):
+    """Print tilemap in 16x16 grid format."""
+    if len(tiles) != 256:
+        print(f"WARNING: tilemap has {len(tiles)} tiles (expected 256)")
+    
+    if row is not None:
+        # Print only the specified row
+        if row < 0 or row >= 16:
+            print(f"ERROR: row {row} out of range (0-15)")
+            return
+        start = row * 16
+        end = start + 16
+        print(f"Row {row}: {tiles[start:end]}")
+    else:
+        # Print all rows
+        for y in range(16):
+            start = y * 16
+            end = start + 16
+            row_tiles = tiles[start:end]
+            print(f"Row {y:2d}: {' '.join(f'{t:3d}' for t in row_tiles)}")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: debug-level-pack <pack-file> [level_index] [room_index] [row]")
+        print("  Default: level_index=6 (level 7), room_index=1 (room01), row=6 (0-indexed row 6 = display row 7)")
+        sys.exit(1)
+    
+    pack_path = Path(sys.argv[1])
+    level_index = int(sys.argv[2]) if len(sys.argv) > 2 else 6  # Level 7 = index 6
+    room_index = int(sys.argv[3]) if len(sys.argv) > 3 else 1   # room01
+    row = int(sys.argv[4]) if len(sys.argv) > 4 else None
+    
+    if not pack_path.exists():
+        print(f"ERROR: Pack file not found: {pack_path}")
+        sys.exit(1)
+    
+    pack_data = pack_path.read_bytes()
+    print(f"Pack file: {pack_path} ({len(pack_data)} bytes)")
+    print(f"Extracting level {level_index}, room {room_index}")
+    print()
+    
+    try:
+        offset, level_data = extract_level(pack_data, level_index)
+        print(f"Level {level_index} offset: {offset} (&{offset:04X}), size: {len(level_data)} bytes")
+        
+        header = parse_level_header(level_data)
+        print(f"Header: {header}")
+        print()
+        
+        tiles = extract_room_tilemap(level_data, room_index)
+        print(f"Room {room_index} tilemap ({len(tiles)} tiles):")
+        print_tilemap(tiles, row)
+        
+    except Exception as e:
+        print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

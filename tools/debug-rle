@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Debug tool to extract and display RLE-compressed tilemap data."""
+
+import sys
+from pathlib import Path
+
+
+def extract_rle_bytes(pack_data: bytes, level_index: int, room_index: int) -> bytes:
+    """Extract raw RLE bytes for a specific room."""
+    if len(pack_data) < 1:
+        raise ValueError("Empty pack file")
+    
+    level_count = pack_data[0]
+    if level_index >= level_count:
+        raise ValueError(f"Level {level_index} not found (pack has {level_count} levels)")
+    
+    # Read offset table
+    offset_table_size = 1 + (level_count + 1) * 2
+    if len(pack_data) < offset_table_size:
+        raise ValueError("Truncated offset table")
+    
+    import struct
+    offsets = []
+    for i in range(level_count + 1):
+        off = struct.unpack_from("<H", pack_data, 1 + i * 2)[0]
+        offsets.append(off)
+    
+    start = offsets[level_index]
+    level_data = pack_data[start:offsets[level_index + 1]]
+    
+    # Parse header
+    room_count = level_data[0]
+    obj_count = level_data[3]
+    
+    # Skip header (4 bytes)
+    pos = 4
+    
+    # Skip object defs
+    pos += obj_count * 6
+    
+    # Skip laser defs
+    laser_count = level_data[pos]
+    pos += 1 + laser_count * 7
+    
+    # Skip target defs
+    target_count = level_data[pos]
+    pos += 1 + target_count * 4
+    
+    # Now at per-room data
+    # Skip to the target room
+    for ri in range(room_index + 1):
+        rle_start = pos
+        # Scan RLE data to find the end (when 256 tiles are emitted)
+        tiles_emitted = 0
+        while tiles_emitted < 256:
+            if pos >= len(level_data):
+                raise ValueError(f"RLE data truncated at room {ri}")
+            count = level_data[pos]
+            pos += 2  # count + tile_id
+            tiles_emitted += count
+        
+        rle_end = pos
+        
+        if ri == room_index:
+            return level_data[rle_start:rle_end]
+        
+        # Skip exits (4 directions)
+        for _ in range(4):
+            exit_count = level_data[pos]
+            pos += 1 + exit_count * 3
+        
+        # Skip obj indices
+        obj_idx_count = level_data[pos]
+        pos += 1 + obj_idx_count
+        
+        # Skip fizzlers
+        fizzler_count = level_data[pos]
+        pos += 1 + fizzler_count * 5
+    
+    raise ValueError("Should not reach here")
+
+
+def decode_rle(rle_bytes: bytes) -> list[int]:
+    """Decode RLE bytes into tilemap."""
+    tiles = []
+    pos = 0
+    while len(tiles) < 256 and pos < len(rle_bytes):
+        count = rle_bytes[pos]
+        tile_id = rle_bytes[pos + 1]
+        pos += 2
+        for _ in range(count):
+            tiles.append(tile_id)
+            if len(tiles) >= 256:
+                break
+    return tiles
+
+
+def print_rle_hex(rle_bytes: bytes):
+    """Print RLE bytes in hex format."""
+    print(f"RLE bytes ({len(rle_bytes)} bytes):")
+    for i in range(0, len(rle_bytes), 16):
+        chunk = rle_bytes[i:i+16]
+        hex_str = ' '.join(f'{b:02X}' for b in chunk)
+        # Annotate pairs
+        pairs = []
+        for j in range(0, len(chunk), 2):
+            if j + 1 < len(chunk):
+                pairs.append(f"[{chunk[j]:2d} x {chunk[j+1]:2d}]")
+        annotation = ' '.join(pairs)
+        print(f"  {i:04X}: {hex_str:47s}  {annotation}")
+
+
+def print_tilemap_rows(tiles: list[int], rows: list[int]):
+    """Print specific rows of tilemap."""
+    for row in rows:
+        if 0 <= row < 16:
+            start = row * 16
+            end = start + 16
+            row_tiles = tiles[start:end]
+            print(f"Row {row:2d}: {' '.join(f'{t:3d}' for t in row_tiles)}")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: debug-rle <pack-file> [level_index] [room_index]")
+        print("  Default: level_index=6 (level 7), room_index=1 (room01)")
+        sys.exit(1)
+    
+    pack_path = Path(sys.argv[1])
+    level_index = int(sys.argv[2]) if len(sys.argv) > 2 else 6
+    room_index = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+    
+    if not pack_path.exists():
+        print(f"ERROR: Pack file not found: {pack_path}")
+        sys.exit(1)
+    
+    pack_data = pack_path.read_bytes()
+    print(f"Extracting RLE data for level {level_index}, room {room_index}")
+    print()
+    
+    try:
+        rle_bytes = extract_rle_bytes(pack_data, level_index, room_index)
+        print_rle_hex(rle_bytes)
+        print()
+        
+        tiles = decode_rle(rle_bytes)
+        print(f"Decoded {len(tiles)} tiles")
+        print()
+        print_tilemap_rows(tiles, [5, 6, 7])
+        
+    except Exception as e:
+        print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

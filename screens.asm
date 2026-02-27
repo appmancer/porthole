@@ -29,28 +29,117 @@
 
 
 ; --- show_level_card ---
-; Display level title card on the Aperture template. Blocks until SPACE pressed.
+; Display MODE 5 level title card: Aperture logo on cyan background.
+; Blocks until SPACE pressed.
 ; Input: current_level (0-indexed) in ZP.
 .show_level_card
-    JSR enter_mode7
+    ; Fill shadow screen RAM with cyan (handles ACCCON X=1 internally).
+    JSR clear_playfield_cyan
 
-    ; Load raw template screen into MODE 7 RAM at &7C00.
-    LDA #&FF
-    LDX #<osfile_blk_templte
-    LDY #>osfile_blk_templte
-    JSR OSFILE
+    ; Ensure CRTC R1=32 (128px wide) and R2=45 (centred) so the screen
+    ; memory layout matches our 32-byte-per-row logo data.
+    ; After restore_mode5, R1=40; we need our custom narrow layout.
+    LDA #1  : STA CRTC_ADDR
+    LDA #32 : STA CRTC_DATA
+    LDA #2  : STA CRTC_ADDR
+    LDA #45 : STA CRTC_DATA
 
-    ; Use level card overlay pointer set by load_level parser.
-    ; Points into the staging buffer (populated from the binary pack).
-    LDX level_card_ptr
-    LDY level_card_ptr+1
-    JSR write_mode7_screen
+    ; Ensure CRTC displays shadow RAM (D=1).
+    ; Safe from above &3000 — only X bit is dangerous.
+    ; LYNNE is already filled with cyan, so no garbage flash.
+    LDA ACCCON
+    ORA #&01
+    STA ACCCON
 
-    ; Patch level number placeholder with actual digits.
-    ; current_level is 0-indexed; display as 1-indexed.
+    ; Load Aperture logo from disc directly into shadow screen RAM at &5C00
+    ; (tile rows 2-5). Use the shared OSFILE block / filename area.
+    LDA #'A' : STA PACK_FNAME+0
+    LDA #'P' : STA PACK_FNAME+1
+    LDA #'L' : STA PACK_FNAME+2
+    LDA #'O' : STA PACK_FNAME+3
+    LDA #'G' : STA PACK_FNAME+4
+    LDA #'O' : STA PACK_FNAME+5
+    LDA #13  : STA PACK_FNAME+6
+
+    ; OSFILE control block: load to &5A00.
+    LDA #<PACK_FNAME
+    STA PACK_OSFILE_BLK+0
+    LDA #>PACK_FNAME
+    STA PACK_OSFILE_BLK+1
+    LDA #&00
+    STA PACK_OSFILE_BLK+2       ; load addr low = &00
+    LDA #&5A
+    STA PACK_OSFILE_BLK+3       ; load addr high = &5A
+    LDA #0
+    STA PACK_OSFILE_BLK+4
+    STA PACK_OSFILE_BLK+5
+    STA PACK_OSFILE_BLK+6       ; exec addr low = 0 => use supplied load addr
+    STA PACK_OSFILE_BLK+7
+    STA PACK_OSFILE_BLK+8
+    STA PACK_OSFILE_BLK+9
+    STA PACK_OSFILE_BLK+10
+    STA PACK_OSFILE_BLK+11
+    STA PACK_OSFILE_BLK+12
+    STA PACK_OSFILE_BLK+13
+    STA PACK_OSFILE_BLK+14
+    STA PACK_OSFILE_BLK+15
+    STA PACK_OSFILE_BLK+16
+    STA PACK_OSFILE_BLK+17
+
+    ; Load via trampoline (sets ACCCON X=1 for LYNNE write, restores X=0).
+    JSR lynne_osfile
+
+    ; Fill bottom half of screen (char rows 10-31) with yellow.
+    JSR fill_yellow_from_row12
+
+    ; Set the game palette first — on first entry the palette may still
+    ; reflect MODE 7's settings (restore_mode5 doesn't set palette entries).
+    ; This ensures colour 2 = cyan before we remap colour 0 to blue.
+    JSR set_palette
+
+    ; Remap colour 0 from black to blue for the card display.
+    ; VDU 19,0,4,0,0,0 — logical 0 -> physical 4 (blue)
+    LDA #19 : JSR OSWRCH
+    LDA #0  : JSR OSWRCH
+    LDA #4  : JSR OSWRCH
+    LDA #0  : JSR OSWRCH
+    LDA #0  : JSR OSWRCH
+    LDA #0  : JSR OSWRCH
+
+    ; --- "LABORATORIES" under the logo ---
+    ; Half-width, blue on cyan, at char row 8 col 11.
+    ; Row 8 = &5800 + 8*256 = &6000, col 11 = 11*8 = 88 bytes.
+    LDA #<slc_laboratories
+    STA sprite_ptr
+    LDA #>slc_laboratories
+    STA sprite_ptr+1
+    LDA #<(&6000 + 88)
+    STA screen_ptr
+    LDA #>(&6000 + 88)
+    STA screen_ptr+1
+    LDA #12                     ; "LABORATORIES" = 12 chars
+    STA col_counter
+    LDA #&F0                    ; cyan bg
+    STA row_counter
+    LDA #&00                    ; colour 0 fg (blue)
+    STA temp_y
+    JSR draw_half_text
+
+    ; --- Render card text from level data ---
+    ; level_card_ptr points to length-prefixed strings in STAGING_BUF:
+    ;   [len] [title...]  [len] [quote1...]  [len] [quote2...]
+    ;
+    ; Patch level number digits in the title before drawing.
+    ; "TEST CHAMBER 00" — the "00" are at byte offsets 14 and 15
+    ; (1 length byte + 13 chars to reach the first '0').
+    LDA level_card_ptr
+    STA tilemap_ptr
+    LDA level_card_ptr+1
+    STA tilemap_ptr+1
+
     LDA current_level
     CLC
-    ADC #1
+    ADC #1                      ; 1-indexed
     LDX #0
 .slc_tens
     CMP #10
@@ -59,25 +148,103 @@
     INX
     JMP slc_tens
 .slc_tens_done
-    PHA
+    PHA                         ; save units
 
-    ; Write tens digit into both double-height rows.
+    ; Write tens digit.
     TXA
     CLC
     ADC #ASC("0")
-    STA &7C00 + 12*40 + 17     ; row 12, col 17 (top half)
-    STA &7C00 + 13*40 + 17     ; row 13, col 17 (bottom half)
+    LDY #14                     ; offset: 1 (length byte) + 13
+    STA (tilemap_ptr),Y
 
-    ; Write units digit into both double-height rows.
+    ; Write units digit.
     PLA
     CLC
     ADC #ASC("0")
-    STA &7C00 + 12*40 + 18     ; row 12, col 18
-    STA &7C00 + 13*40 + 18     ; row 13, col 18
+    LDY #15                     ; offset: 1 (length byte) + 14
+    STA (tilemap_ptr),Y
+
+    ; Reset read pointer to start of card data.
+    LDA level_card_ptr
+    STA tilemap_ptr
+    LDA level_card_ptr+1
+    STA tilemap_ptr+1
+
+    ; All text is on the yellow section (char rows 10+).
+    ; Set bg byte for yellow (colour 3 = &FF).
+    LDA #&FF
+    STA row_counter
+
+    ; Draw title at char row 16 = &6800. Half-width, red on yellow.
+    LDA #&0F                    ; colour 1 fg (red)
+    STA temp_y
+    LDA #<(&6800)
+    STA temp_mask_ptr
+    LDA #>(&6800)
+    STA temp_mask_ptr+1
+    JSR draw_card_line
+
+    ; Draw quote lines in half-width, blue on yellow.
+    ; Vertically centred around row 23:
+    ;   2 lines -> rows 22 and 24 (&6E00, &7000)
+    ;   1 line  -> row 23 (&6F00)
+    ;   0 lines -> nothing
+    LDA #&00                    ; colour 0 fg (blue)
+    STA temp_y
+
+    ; Peek at quote line 1 length (tilemap_ptr points at it now).
+    LDY #0
+    LDA (tilemap_ptr),Y
+    BEQ slc_no_quotes           ; line 1 empty — skip both
+
+    ; Line 1 exists. Peek at line 2 length to decide layout.
+    ; Line 2 length is at tilemap_ptr + 1 + line1_len.
+    STA DCL_LEN                 ; save line 1 length
+    CLC
+    ADC #1                      ; skip length byte + string
+    TAY
+    LDA (tilemap_ptr),Y         ; line 2 length
+    BEQ slc_one_quote           ; line 2 empty — single line
+
+    ; Two quote lines: rows 22 and 24.
+    LDA #<(&6E00)
+    STA temp_mask_ptr
+    LDA #>(&6E00)
+    STA temp_mask_ptr+1
+    JSR draw_card_line
+
+    LDA #<(&7000)
+    STA temp_mask_ptr
+    LDA #>(&7000)
+    STA temp_mask_ptr+1
+    JSR draw_card_line
+    JMP slc_quotes_done
+
+.slc_one_quote
+    ; One quote line: row 23.
+    LDA #<(&6F00)
+    STA temp_mask_ptr
+    LDA #>(&6F00)
+    STA temp_mask_ptr+1
+    JSR draw_card_line
+    ; Skip the empty second line.
+    JSR draw_card_line
+    JMP slc_quotes_done
+
+.slc_no_quotes
+    ; Skip both empty lines (advance tilemap_ptr past them).
+    JSR draw_card_line
+    JSR draw_card_line
+
+.slc_quotes_done
 
     JSR wait_space
-    JSR restore_mode5
+
+    ; Palette restored by set_palette in .start (colour 0 -> black).
     RTS
+
+.slc_laboratories
+    EQUS "LABORATORIES"
 
 
 ; --- show_complete_screen ---
@@ -687,6 +854,16 @@ TW_CHAR_DELAY = 3              ; frames per character (~17 chars/sec at 50Hz)
     LDA #0
     JSR OSWRCH : JSR OSWRCH : JSR OSWRCH : JSR OSWRCH
     JSR OSWRCH : JSR OSWRCH : JSR OSWRCH : JSR OSWRCH
+
+    ; Force ACCCON to a known-good state for MODE 7:
+    ;   D=0 (CRTC reads main RAM), X=0 (CPU reads/writes main RAM).
+    ; During gameplay D=1 and blitters toggle X; OSWRCH calls above may
+    ; restore shadow bits from the MOS VDU workspace we saved, so we
+    ; clear them as the very last thing before returning.
+    ; .start re-enables D=1 after every card/completion screen.
+    LDA ACCCON
+    AND #&FA              ; clear D (bit 0) and X (bit 2)
+    STA ACCCON
     RTS
 
 
@@ -833,6 +1010,415 @@ TW_CHAR_DELAY = 3              ; frames per character (~17 chars/sec at 50Hz)
     JSR OSBYTE
     CPX #&FF
     BNE ws_loop         ; X=&FF means key pressed
+    RTS
+
+
+; --- draw_card_line ---
+; Read one length-prefixed string from (tilemap_ptr), centre it on the
+; character row whose base address is in temp_mask_ptr, and draw it.
+; Advances tilemap_ptr past the string (length byte + data bytes).
+;
+; Input:
+;   tilemap_ptr = pointer to [len] [char0] [char1] ... in main RAM
+;   temp_mask_ptr = base screen address of the character row
+;
+; If len=0, does nothing (skips empty line).
+; Clobbers: A, X, Y, temp, screen_ptr, sprite_ptr
+;
+DCL_LEN = CHAR_BUF+15          ; scratch byte for string length in draw_card_line
+
+.draw_card_line
+    ; Read string length.
+    LDY #0
+    LDA (tilemap_ptr),Y
+    BEQ dcl_empty               ; len=0 — skip
+
+    ; Save length (must not clobber temp_y which holds fg colour).
+    STA DCL_LEN
+
+    ; sprite_ptr = tilemap_ptr + 1 (start of string data).
+    CLC
+    LDA tilemap_ptr
+    ADC #1
+    STA sprite_ptr
+    LDA tilemap_ptr+1
+    ADC #0
+    STA sprite_ptr+1
+
+    ; Set character count for draw_half_text.
+    LDA DCL_LEN
+    STA col_counter
+
+    ; Compute centred screen address:
+    ;   offset = ((32 - len) / 2) * 8  bytes from row base.
+    ; (32 columns across the 128px screen.)
+    LDA #32
+    SEC
+    SBC DCL_LEN                 ; 32 - len
+    LSR A                       ; / 2 = column offset
+    ; Multiply by 8: shift left 3.
+    ASL A
+    ASL A
+    ASL A                       ; column offset * 8 = byte offset
+
+    ; screen_ptr = temp_mask_ptr + byte offset.
+    CLC
+    ADC temp_mask_ptr
+    STA screen_ptr
+    LDA temp_mask_ptr+1
+    ADC #0
+    STA screen_ptr+1
+
+    ; Draw the string.
+    JSR draw_half_text
+
+    ; Advance tilemap_ptr past length byte + string data.
+    CLC
+    LDA tilemap_ptr
+    ADC DCL_LEN
+    STA tilemap_ptr
+    LDA tilemap_ptr+1
+    ADC #0
+    STA tilemap_ptr+1
+    ; +1 for the length byte itself.
+    INC tilemap_ptr
+    BNE dcl_done
+    INC tilemap_ptr+1
+    JMP dcl_done
+
+.dcl_empty
+    ; Advance tilemap_ptr past the zero length byte.
+    INC tilemap_ptr
+    BNE dcl_done
+    INC tilemap_ptr+1
+.dcl_done
+    RTS
+
+
+; --- draw_half_text ---
+; Render a counted string in half-width (4px) font to shadow screen RAM.
+; Uses MOS ROM font via OSWORD 10, sampling bits 6,4,2,0 for each row.
+;
+; Foreground colour set by temp_y; background set by row_counter:
+;   temp_y      = &00 for colour 0 (black/blue), &0F for colour 1 (red)
+;   row_counter = &F0 for colour 2 (cyan bg), &FF for colour 3 (yellow bg)
+;
+; Input:
+;   sprite_ptr (&73-&74) = pointer to string data
+;   screen_ptr (&71-&72) = shadow screen RAM address (start of character column)
+;   col_counter (&77)    = number of characters to draw
+;   row_counter (&76)    = background byte pattern
+;   temp_y (&75)         = foreground byte pattern (&00=colour 0, &0F=colour 1)
+;
+; Each character occupies 8 consecutive bytes in screen RAM (one 8-row stripe).
+; Advances screen_ptr by 8 for each character drawn.
+;
+; Clobbers: A, X, Y, temp, screen_ptr, sprite_ptr, col_counter
+;
+; OSWORD 10 parameter block is placed at PACK_OSFILE_BLK (9 bytes needed,
+; 18 available — safe since OSFILE load is already complete).
+;
+OSWORD10_BLK = &09C0               ; reuse PACK_OSFILE_BLK area (18 bytes available)
+
+.draw_half_text
+
+.dht_next_char
+    ; Check remaining count.
+    LDA col_counter
+    BEQ dht_done                ; no more characters — finished
+
+    ; Fetch next character from string.
+    LDY #0
+    LDA (sprite_ptr),Y
+
+    ; Set up OSWORD 10 parameter block.
+    STA OSWORD10_BLK            ; byte 0 = ASCII character code
+
+    ; Call OSWORD 10: read character definition.
+    LDA #10
+    LDX #<OSWORD10_BLK
+    LDY #>OSWORD10_BLK
+    JSR OSWORD
+
+    ; Convert 8 rows of 8-pixel 1bpp data to 8 MODE 5 bytes.
+    ; ROM data is in OSWORD10_BLK+1..+8 (row 0 at +1).
+    ; Output to CHAR_BUF (8 bytes at &09C9).
+    LDY #0                      ; Y = row index (0..7)
+.dht_row
+    LDX OSWORD10_BLK+1,Y        ; X = 1bpp row data (bit 7 = leftmost)
+
+    ; Sample bits 6,4,2,0 into low nybble of A.
+    ; bit 6 -> bit 3, bit 4 -> bit 2, bit 2 -> bit 1, bit 0 -> bit 0
+    LDA #0
+    TXA
+    AND #&40                    ; isolate bit 6
+    BEQ dht_no_b6
+    LDA #&08                    ; -> bit 3
+.dht_no_b6
+    STA temp
+
+    TXA
+    AND #&10                    ; isolate bit 4
+    BEQ dht_no_b4
+    LDA #&04                    ; -> bit 2
+    ORA temp
+    STA temp
+.dht_no_b4
+
+    TXA
+    AND #&04                    ; isolate bit 2
+    BEQ dht_no_b2
+    LDA #&02                    ; -> bit 1
+    ORA temp
+    STA temp
+.dht_no_b2
+
+    TXA
+    AND #&01                    ; isolate bit 0
+    ORA temp                    ; -> bit 0
+
+    ; A now has sampled 4 bits in lower nybble (bits 3-0).
+    ; 1=fg pixel, 0=bg pixel.
+    ; byte = (bg_mask_replicated & row_counter) | (fg_mask & temp_y)
+    STA temp                    ; fg mask in bits 3-0
+    EOR #&0F                    ; bg mask
+    PHA                         ; save bg mask
+    ASL A
+    ASL A
+    ASL A
+    ASL A                       ; bg mask in bits 7-4
+    STA CHAR_BUF,Y             ; stash upper nybble temporarily
+    PLA                         ; bg mask in bits 3-0
+    ORA CHAR_BUF,Y             ; replicate into both nybbles
+    AND row_counter             ; apply bg colour
+    STA CHAR_BUF,Y             ; stash bg contribution
+    LDA temp                    ; fg mask
+    AND temp_y                  ; apply fg colour
+    ORA CHAR_BUF,Y             ; combine bg + fg
+
+    ; Store into character buffer (main RAM, below &3000).
+    STA CHAR_BUF,Y
+    INY
+    CPY #8
+    BNE dht_row
+
+    ; Copy 8-byte character from CHAR_BUF to shadow screen RAM.
+    ; write_char_to_shadow lives below &3000 and handles ACCCON X toggling.
+    JSR write_char_to_shadow
+
+    ; Advance screen_ptr to next character column (+8 bytes).
+    CLC
+    LDA screen_ptr
+    ADC #8
+    STA screen_ptr
+    LDA screen_ptr+1
+    ADC #0
+    STA screen_ptr+1
+
+    ; Advance string pointer and decrement count.
+    INC sprite_ptr
+    BNE dht_no_carry
+    INC sprite_ptr+1
+.dht_no_carry
+    DEC col_counter
+    JMP dht_next_char
+
+.dht_done
+    RTS
+
+
+; --- draw_full_text ---
+; Render a counted string in full-width (8px) MOS ROM font to shadow screen RAM.
+; Uses OSWORD 10, full 8 pixels per character = 2 MODE 5 bytes per row.
+;
+; Foreground = colour 1 (red), background from row_counter.
+;
+; Input:
+;   sprite_ptr (&73-&74) = pointer to string data
+;   screen_ptr (&71-&72) = shadow screen RAM address (start of character column)
+;   col_counter (&77)    = number of characters to draw
+;   row_counter (&76)    = background byte pattern (&F0=cyan, &FF=yellow)
+;
+; Each character occupies 16 consecutive bytes (2 columns × 8 rows).
+; Advances screen_ptr by 16 for each character drawn.
+;
+; Clobbers: A, X, Y, temp, screen_ptr, sprite_ptr, col_counter
+
+.draw_full_text
+
+.dft_next_char
+    LDA col_counter
+    BEQ dft_done
+
+    ; Fetch next character from string.
+    LDY #0
+    LDA (sprite_ptr),Y
+
+    ; Set up OSWORD 10 parameter block.
+    STA OSWORD10_BLK
+
+    ; Call OSWORD 10: read character definition.
+    LDA #10
+    LDX #<OSWORD10_BLK
+    LDY #>OSWORD10_BLK
+    JSR OSWORD
+
+    ; --- Left half: bits 7,6,5,4 of each row ---
+    LDY #0
+.dft_left_row
+    LDA OSWORD10_BLK+1,Y
+    ; Shift right 4 to get upper 4 bits into lower nybble.
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    ; A = 4 pixel bits (1=fg, 0=bg) in bits 3-0.
+    ; Colour 1 (red) = %01: upper nybble bit=0, lower nybble bit=1.
+    ; byte = (bg_mask_replicated & row_counter) | fg_mask
+    STA temp                    ; fg_mask in bits 3-0
+    EOR #&0F                    ; bg_mask
+    STA CHAR_BUF+8,Y           ; stash bg_mask temporarily
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    ORA CHAR_BUF+8,Y           ; replicate bg into both nybbles
+    AND row_counter             ; apply bg colour
+    ORA temp                    ; add fg (colour 1: only lower nybble)
+    STA CHAR_BUF,Y
+    INY
+    CPY #8
+    BNE dft_left_row
+
+    ; Write left column to shadow screen RAM.
+    JSR write_char_to_shadow
+
+    ; Advance screen_ptr to right column (+8 bytes).
+    CLC
+    LDA screen_ptr
+    ADC #8
+    STA screen_ptr
+    LDA screen_ptr+1
+    ADC #0
+    STA screen_ptr+1
+
+    ; --- Right half: bits 3,2,1,0 of each row ---
+    LDY #0
+.dft_right_row
+    LDA OSWORD10_BLK+1,Y
+    AND #&0F                    ; lower 4 bits already in place
+    STA temp                    ; fg_mask
+    EOR #&0F                    ; bg_mask
+    STA CHAR_BUF+8,Y           ; stash
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    ORA CHAR_BUF+8,Y
+    AND row_counter
+    ORA temp
+    STA CHAR_BUF,Y
+    INY
+    CPY #8
+    BNE dft_right_row
+
+    ; Write right column to shadow screen RAM.
+    JSR write_char_to_shadow
+
+    ; Advance screen_ptr to next character (+8 bytes for right col already done).
+    CLC
+    LDA screen_ptr
+    ADC #8
+    STA screen_ptr
+    LDA screen_ptr+1
+    ADC #0
+    STA screen_ptr+1
+
+    ; Advance string pointer and decrement count.
+    INC sprite_ptr
+    BNE dft_no_carry
+    INC sprite_ptr+1
+.dft_no_carry
+    DEC col_counter
+    JMP dft_next_char
+
+.dft_done
+    RTS
+
+
+; --- draw_full_card_line ---
+; Like draw_card_line but uses draw_full_text (full-width, red).
+; Full-width chars are 2 columns each, so 16 chars fit in 32 columns.
+;
+; Input:
+;   tilemap_ptr = pointer to [len] [char0] [char1] ... in main RAM
+;   temp_mask_ptr = base screen address of the character row
+;   row_counter = background byte
+;
+; Advances tilemap_ptr past the string.
+; Clobbers: A, X, Y, temp, screen_ptr, sprite_ptr, col_counter
+;
+.draw_full_card_line
+    ; Read string length.
+    LDY #0
+    LDA (tilemap_ptr),Y
+    BEQ dfcl_empty
+
+    STA temp_y
+
+    ; sprite_ptr = tilemap_ptr + 1.
+    CLC
+    LDA tilemap_ptr
+    ADC #1
+    STA sprite_ptr
+    LDA tilemap_ptr+1
+    ADC #0
+    STA sprite_ptr+1
+
+    ; Set character count.
+    LDA temp_y
+    STA col_counter
+
+    ; Compute centred screen address.
+    ; Full-width: each char = 2 columns, so max 16 chars in 32 cols.
+    ; offset = ((16 - len) / 2) * 16  bytes from row base.
+    LDA #16
+    SEC
+    SBC temp_y                  ; 16 - len
+    LSR A                       ; / 2 = column pair offset
+    ; Multiply by 16: shift left 4.
+    ASL A
+    ASL A
+    ASL A
+    ASL A                       ; byte offset
+
+    CLC
+    ADC temp_mask_ptr
+    STA screen_ptr
+    LDA temp_mask_ptr+1
+    ADC #0
+    STA screen_ptr+1
+
+    JSR draw_full_text
+
+    ; Advance tilemap_ptr past length byte + string data.
+    CLC
+    LDA tilemap_ptr
+    ADC temp_y
+    STA tilemap_ptr
+    LDA tilemap_ptr+1
+    ADC #0
+    STA tilemap_ptr+1
+    INC tilemap_ptr
+    BNE dfcl_done
+    INC tilemap_ptr+1
+    JMP dfcl_done
+
+.dfcl_empty
+    INC tilemap_ptr
+    BNE dfcl_done
+    INC tilemap_ptr+1
+.dfcl_done
     RTS
 
 

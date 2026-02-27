@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="14">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+35,35,35,35,35,43,44,35,35,35,35,35,35,35,35,54,
+1,1,1,1,1,36,34,30,30,30,30,30,30,30,30,54,
+1,0,0,0,0,39,40,30,30,30,30,30,30,30,30,54,
+1,0,0,0,0,1,1,30,30,30,30,30,4,5,30,54,
+1,0,0,0,0,38,37,30,30,30,30,30,6,7,30,54,
+33,50,51,33,33,42,41,33,33,33,33,33,33,33,33,54,
+44,35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+40,1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,
+1,1,0,0,0,1,1,1,1,1,1,1,1,38,33,33,
+1,1,1,0,0,45,46,48,49,47,1,1,1,39,35,54,
+1,1,1,1,1,1,1,36,34,1,1,1,1,1,1,54,
+1,1,1,1,1,1,1,36,34,12,12,12,12,12,12,54,
+33,33,33,33,33,33,33,42,41,54,54,54,54,54,54,54
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="12" name="exit_00" type="exit" x="192" y="48">
+   <properties>
+    <property name="channel" value="0"/>
+    <property name="id" value="exit_00"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="13" name="pad_00" type="pad" x="16" y="80">
+   <properties>
+    <property name="channel" value="0"/>
+    <property name="id" value="pad_00"/>
+   </properties>
+   <point/>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="9" name="edge_exit_03" type="edge_exit" x="0" y="176" width="16" height="64">
+   <properties>
+    <property name="id" value="edge_exit_03"/>
+    <property name="to" value="room00"/>
+   </properties>
+  </object>
+  <object id="10" name="edge_exit_04" type="edge_exit" x="240" y="112" width="16" height="64">
+   <properties>
+    <property name="id" value="edge_exit_04"/>
+    <property name="to" value="room02"/>
+   </properties>
+  </object>
+  <object id="11" name="edge_exit_05" type="edge_exit" x="0" y="16" width="16" height="64">
+   <properties>
+    <property name="id" value="edge_exit"/>
+    <property name="to" value="room00"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

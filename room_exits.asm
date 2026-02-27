@@ -436,11 +436,13 @@
     LDA #1
     STA room_dirty
     STA chell_dirty
-    ; Clear movement intent so we don't immediately re-trigger exits.
+    ; Short cooldown: entering from above means Chell has upward velocity,
+    ; so the down-exit (requires vy>0) won't re-trigger.  Keep minimal
+    ; to allow the up-edge exit to fire before tile_pos wraps.
     LDA #0
     STA move_held
     STA last_move_held
-    LDA #8
+    LDA #1
     STA exit_cooldown
 
     ; If we were fast-falling, restore fall_distance so fast-fall
@@ -510,11 +512,14 @@
     LDA #1
     STA room_dirty
     STA chell_dirty
-    ; Clear movement intent so we don't immediately re-trigger exits.
+    ; Short cooldown: entering from below means Chell has downward velocity,
+    ; so the up-exit (requires vy<0) won't re-trigger.  But she may fall
+    ; through the bottom quickly, so keep cooldown minimal to allow the
+    ; down-edge exit to fire before tile_pos wraps.
     LDA #0
     STA move_held
     STA last_move_held
-    LDA #8
+    LDA #1
     STA exit_cooldown
 
     ; Cancel reticle.

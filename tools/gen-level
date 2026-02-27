@@ -919,7 +919,7 @@ def process_level(level_dir: Path) -> ProcessedLevel:
                     obj_id=cube_id,
                     type_id=OBJECT_TYPE_TO_ID["cube"],
                     channel=0,
-                    home_room=o.home_room,
+                    home_room=0xFF,
                     home_x=o.home_x,
                     home_y=o.home_y,
                 )
@@ -1060,22 +1060,25 @@ def build_level_binary(lvl: ProcessedLevel) -> bytes:
         buf.append(lvl.fizzler_counts[ri])
         buf.extend(lvl.fizzler_data[ri])
 
-    # Level card text overlay records (row, col, len, data...) + &FF terminator.
-    # Header: "TEST CHAMBER 00" on rows 12 and 13 (double-height).
+    # Level card text: length-prefixed strings for MODE 5 half-width renderer.
+    #   byte 0:       title length
+    #   bytes 1..N:   title text (e.g. "TEST CHAMBER 00")
+    #   byte N+1:     quote line 1 length (0 if none)
+    #   bytes ...:    quote line 1 text
+    #   byte ...:     quote line 2 length (0 if none)
+    #   bytes ...:    quote line 2 text
     header_text = b"TEST CHAMBER 00"
-    buf.extend([12, 4, len(header_text)])
-    buf.extend(header_text)
-    buf.extend([13, 4, len(header_text)])
+    buf.append(len(header_text))
     buf.extend(header_text)
 
-    # Quote lines on rows 16-17.
-    for i, line in enumerate(lvl.card_lines):
-        encoded = line.encode("ascii")
-        buf.extend([16 + i, 4, len(encoded)])
-        buf.extend(encoded)
-
-    # Terminator.
-    buf.append(0xFF)
+    # Quote lines (0-2).  Always emit exactly 2 length-prefixed slots.
+    for i in range(2):
+        if i < len(lvl.card_lines):
+            encoded = lvl.card_lines[i].upper().encode("ascii")
+            buf.append(len(encoded))
+            buf.extend(encoded)
+        else:
+            buf.append(0)  # empty line
 
     return bytes(buf)
 

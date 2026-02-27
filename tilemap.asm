@@ -9,7 +9,7 @@
 ; buffer, which persists until the next level load.
 
 ; Global constants (max across all levels).
-LEVEL_COUNT = 5
+LEVEL_COUNT = 7
 MAX_ROOMS = 8
 OBJ_COUNT = 6
 OBJ_DEF_SIZE = 6
@@ -21,8 +21,9 @@ FIZZLER_DEF_SIZE = 5
 
 ; Staging buffer for level data copied from LYNNE.
 ; Lives below &3000 so ACCCON X-bit doesn't affect it.
-; Located after the trampoline code + OSFILE block + filename at &0900.
-STAGING_BUF = &09E0
+; Located at &0E00 (boot loader area, reclaimed after boot).
+; Must be above &0D00 to avoid overwriting the DFS NMI handler.
+STAGING_BUF = &0E00
 
 ; ================================================================
 ; Active buffer — game code references these labels.
@@ -68,7 +69,7 @@ ALIGN 256
 ;
 ; Flow:
 ;   Phase 0: ensure correct pack is in LYNNE (may trigger DFS read)
-;   Phase 1: stage level data from LYNNE (&3000+) to STAGING_BUF (&09E0)
+;   Phase 1: stage level data from LYNNE (&3000+) to STAGING_BUF (&0E00)
 ;   Phase 2: parse staged data into active buffer + tilemap_buffers
 ;
 ; Input: current_level set (0..LEVEL_COUNT-1).
@@ -576,6 +577,7 @@ ALIGN 256
 ; Output: temp_sprite_ptr advanced past consumed data
 ; Clobbers: A,X,Y,temp
 .rle_decompress
+    SEI                         ; disable interrupts during decompression
     LDY #0                      ; output index (0..255)
 .rle_pair
     ; Read [count][tile] pair via temp index.
@@ -605,4 +607,5 @@ ALIGN 256
     BNE rle_fill
     BEQ rle_pair                ; unconditional — next pair
 .rle_done
+    CLI                         ; re-enable interrupts
     RTS

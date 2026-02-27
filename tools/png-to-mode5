@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Convert a PNG or SVG to a raw MODE 5 binary block.
+
+Usage:
+    tools/png-to-mode5 --in logo.svg --out .tmp/logo.bin \\
+        --width 128 --fg 0 --bg 2 --threshold 128
+
+Input:
+    Any image format ImageMagick can read (PNG, SVG, etc.).
+    Treated as greyscale: pixels below --threshold are foreground,
+    pixels at/above threshold are background.
+
+Output:
+    Raw binary in MODE 5 screen byte order:
+    - 4 pixels per byte, 2bpp BBC interleaved bitplanes
+    - 8-row stripe order (column-major within each 8-row band)
+    - Width fixed to --width (default 128) MODE 5 pixels = 32 bytes/row
+    - Height padded up to next multiple of 8
+    - Image centred horizontally if narrower than --width
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+
+
+def pack_mode5_byte(pixels4: list[int]) -> int:
+    """Pack 4 MODE 5 pixels (colour indices 0-3) into one byte.
+
+    BBC MODE 5 2bpp interleaved bitplane layout:
+      bit 7: pixel0 colour bit 1
+      bit 6: pixel1 colour bit 1
+      bit 5: pixel2 colour bit 1
+      bit 4: pixel3 colour bit 1
+      bit 3: pixel0 colour bit 0
+      bit 2: pixel1 colour bit 0
+      bit 1: pixel2 colour bit 0
+      bit 0: pixel3 colour bit 0
+    """
+    msb = [(v >> 1) & 1 for v in pixels4]
+    lsb = [v & 1 for v in pixels4]
+    hi = (msb[0] << 3) | (msb[1] << 2) | (msb[2] << 1) | msb[3]
+    lo = (lsb[0] << 3) | (lsb[1] << 2) | (lsb[2] << 1) | lsb[3]
+    return (hi << 4) | lo
+
+
+def to_screen_byte_order(
+    raster_bytes: list[int], *, rows: int, width_bytes: int
+) -> list[int]:
+    """Reorder raster-scan bytes into BBC screen byte order.
+
+    BBC screen RAM is organised in 8-row bands (character rows).
+    Within each band, bytes are stored column-major:
+      for each column byte, the 8 rows are consecutive.
+    """
+    if rows % 8 != 0:
+        raise ValueError(f"rows must be multiple of 8, got {rows}")
+    expected = rows * width_bytes
+    if len(raster_bytes) != expected:
+        raise ValueError(f"expected {expected} bytes, got {len(raster_bytes)}")
+
+    stripes = rows // 8
+    out: list[int] = []
+    for stripe in range(stripes):
+        base_row = stripe * 8
+        for col in range(width_bytes):
+            for row in range(8):
+                out.append(raster_bytes[(base_row + row) * width_bytes + col])
+    return out
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description="Convert PNG/SVG to raw MODE 5 binary block."
+    )
+    ap.add_argument("--in", dest="inp", required=True, help="Input image (PNG, SVG, etc.)")
+    ap.add_argument("--out", dest="outp", required=True, help="Output raw binary file")
+    ap.add_argument("--width", type=int, default=128, help="Output width in MODE 5 pixels (default: 128)")
+    ap.add_argument("--fg", type=int, default=0, help="Foreground colour index (default: 0)")
+    ap.add_argument("--bg", type=int, default=2, help="Background colour index (default: 2)")
+    ap.add_argument("--threshold", type=int, default=128, help="Greyscale threshold 0-255 (default: 128)")
+    args = ap.parse_args()
+
+    if args.width % 4 != 0:
+        raise SystemExit(f"--width must be a multiple of 4, got {args.width}")
+
+    width_bytes = args.width // 4
+
+    # Get source image dimensions.
+    wh = subprocess.check_output(
+        ["identify", "-format", "%w %h", args.inp], text=True
+    ).strip()
+    src_w, src_h = [int(x) for x in wh.split()]
+
+    # Scale the image to fit within args.width pixels wide, preserving aspect
+    # ratio.  Height is then padded up to a multiple of 8.
+    if src_w > args.width:
+        scale_w = args.width
+        scale_h = max(1, round(src_h * args.width / src_w))
+    else:
+        scale_w = src_w
+        scale_h = src_h
+
+    # Pad height to multiple of 8.
+    out_h = scale_h
+    if out_h % 8 != 0:
+        out_h += 8 - (out_h % 8)
+
+    # Use ImageMagick to render/resize to exact pixel dimensions, convert to
+    # greyscale, and output raw 8-bit grey.
+    raw = subprocess.check_output(
+        [
+            "convert",
+            args.inp,
+            "-resize", f"{scale_w}x{scale_h}!",
+            "-background", "white",
+            "-flatten",
+            "-colorspace", "Gray",
+            "-depth", "8",
+            "gray:-",
+        ]
+    )
+    expected = scale_w * scale_h
+    if len(raw) != expected:
+        raise SystemExit(
+            f"Unexpected convert output: got {len(raw)} bytes, expected {expected}"
+        )
+
+    # Build the full-width raster with the image centred horizontally.
+    x_offset = (args.width - scale_w) // 2
+    raster = [args.bg] * (args.width * out_h)
+
+    for y in range(scale_h):
+        for x in range(scale_w):
+            grey = raw[y * scale_w + x]
+            colour = args.fg if grey < args.threshold else args.bg
+            raster[y * args.width + x_offset + x] = colour
+
+    # Pack into MODE 5 bytes (4 pixels per byte).
+    raster_bytes: list[int] = []
+    for y in range(out_h):
+        for xb in range(width_bytes):
+            px = xb * 4
+            row_off = y * args.width
+            pixels4 = [
+                raster[row_off + px],
+                raster[row_off + px + 1],
+                raster[row_off + px + 2],
+                raster[row_off + px + 3],
+            ]
+            raster_bytes.append(pack_mode5_byte(pixels4))
+
+    # Reorder to BBC screen byte order.
+    screen_bytes = to_screen_byte_order(
+        raster_bytes, rows=out_h, width_bytes=width_bytes
+    )
+
+    with open(args.outp, "wb") as f:
+        f.write(bytes(screen_bytes))
+
+    sys.stderr.write(
+        f"OK: {args.inp} -> {args.outp}\n"
+        f"  source: {src_w}x{src_h}, scaled: {scale_w}x{scale_h}, "
+        f"output: {args.width}x{out_h}\n"
+        f"  fg={args.fg} bg={args.bg} threshold={args.threshold}\n"
+        f"  {len(screen_bytes)} bytes ({width_bytes} bytes/row x {out_h} rows)\n"
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write(f"ERROR running ImageMagick: {e}\n")
+        raise SystemExit(1)

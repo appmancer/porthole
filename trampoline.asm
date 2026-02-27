@@ -19,7 +19,7 @@
 ;   &0900-&09BF  Trampoline code (192B max)
 ;   &09C0-&09D1  OSFILE control block (18B)
 ;   &09D2-&09DA  Pack filename (9B)
-;   &09E0-&0DFF  Staging buffer (1056B)
+;   &0E00-&18FF  Staging buffer (2816B, in boot loader area)
 
 
 ; lynne_osfile: load a file to LYNNE via OSFILE with ACCCON X=1.

@@ -15,11 +15,10 @@ and restores X=0 before returning. All orchestration code runs with X=0.
 Tiles are in SWRAM bank 6. Both collision planes (`solid_tile_plane`,
 `solid_phys_plane`) are labeled allocations in `persistent_objects_data.asm`.
 
-Code blob: &1900..&744F (23,375 bytes). Ceiling &7800. Headroom 945 bytes.
+Code blob: &1900..&6F78 (22,136 bytes). Ceiling &7800. Headroom 2,184 bytes.
 
-Note: headroom is temporarily tight because 5 inline levels are padded
-to MAX_ROOMS=8 rooms each. Once levels move to disc packs (scaling plan
-steps 4-8), all inline level data is removed and ~3 KB is recovered.
+Level data is loaded from disc packs into LYNNE at &3000. The staging
+buffer at &0E00 is used for decompression at room-load time.
 
 ---
 
@@ -73,7 +72,7 @@ RAM. Blitter code (which runs with X=1) must live below &3000.
 |---------|-----:|-----:|--------------------------------------------------|
 | &00-&6F |   96 |   16 | Game state (pos, vel, flags, animation, portals)  |
 | &70-&82 |   19 |    0 | Fixed pointers (screen_ptr@&71, tilemap_ptr@&79, mask_ptr@&7B) |
-| &83-&8F |    0 |   13 | Available                                         |
+| &83-&8F |    0 |   13 | Available — turrets need ~4 ZP bytes              |
 | **Total** | **115** | **29** |                                           |
 | &90-&FF |    — |    — | **RESERVED: MOS/VDU/Econet**                     |
 
@@ -95,22 +94,22 @@ also works fine — it just isn't required to be here.
 | &0000-&00FF |   256 | Zero page                                       |
 | &0100-&01FF |   256 | 6502 stack                                      |
 | &0200-&08FF | 1,792 | MOS workspace                                   |
-| &0900-&0DFF | 1,280 | Available (trampolines, buffers)                |
-| &0E00-&18FF | 2,816 | Available (boot loader, reclaimable after boot)  |
+| &0900-&09DF |   224 | Trampoline code + OSFILE block + filename       |
+| &09E0-&0CFF |   800 | Available (below DFS NMI handler)                |
+| &0D00-&0DFF |   256 | DFS NMI handler — **do not overwrite**           |
+| &0E00-&18FF | 2,816 | Staging buffer + free (boot loader, reclaimable) |
 | &1900-&2FFF | 5,888 | Code: render-safe zone (visible when X=0 or X=1)|
 
 | Section               | Start  | End    | Used  | Budget | Purpose                           |
 |-----------------------|--------|--------|------:|-------:|-----------------------------------|
-| main.asm              | &1900  | &1BD3  |   723 |    850 | Init, main loop, render dispatch  |
-| render.asm            | &1BD3  | &234B  | 1,912 |  1,952 | Blit, save/restore, tilemap render |
-| render_state.asm      | &234B  | &247D  |   306 |    512 | draw_character_current, draw_reticle_current |
-| room_runtime.asm      | &247D  | &252C  |   175 |    256 | update_screen_ptr_from_char/reticle |
-| debug.asm             | &252C  | &25FA  |   206 |    256 | Debug box drawing                 |
-| lookup_tables.asm     | &25FA  | &262A  |    48 |    128 | times16_table                     |
-| sprites.asm           | &262A  | &2752  |   296 |    512 | Sprite pointer tables             |
-| masks.asm             | &2752  | &287A  |   296 |    512 | Mask pointer tables               |
-| **Total**             |        |        |**3,962**|**4,978**|                                |
-| **Remaining**         |        |        |       |**2,016**| Reserve for render growth       |
+| main.asm              | &1900  | &1BDB  |   731 |    850 | Init, main loop, render dispatch  |
+| render.asm            | &1BDB  | &2385  | 1,962 |  2,000 | Blit, save/restore, tilemap render, turret beam blit |
+| render_state.asm      | &2385  | &24B7  |   306 |    512 | draw_character_current, draw_reticle_current |
+| room_runtime.asm      | &24B7  | &2566  |   175 |    256 | update_screen_ptr_from_char/reticle |
+| debug.asm             | &2566  | &2634  |   206 |    256 | Debug box drawing                 |
+| lookup_tables.asm     | &2634  | &2664  |    48 |    128 | times16_table                     |
+| sprites.asm           | &2664  | &278C  |   296 |    512 | Sprite pointer tables             |
+| masks.asm             | &278C  | &28B4  |   296 |    512 | Mask pointer tables               |
 
 ### Above render-safe zone — update-only code
 
@@ -118,54 +117,49 @@ Game logic, physics, data. Runs only with X=0. Can extend up to &7800.
 
 | Section                    | Start  | End    | Used  | Budget | Purpose                           |
 |----------------------------|--------|--------|------:|-------:|-----------------------------------|
-| portal_teleport.asm        | &287A  | &2DCB  | 1,361 |  1,536 | Portal entry detection, teleport  |
-| room_exits.asm             | &2DCB  | &307C  |   689 |    768 | Room/screen transitions           |
-| reticle.asm                | &307C  | &3697  | 1,563 |  1,792 | Reticle movement, LOS, validation |
-| input.asm                  | &3697  | &37A0  |   265 |    512 | Keyboard sampling                 |
-| portal_place.asm           | &37A0  | &3C9E  | 1,278 |  1,280 | Portal placement logic            |
-| frame_update.asm           | &3C9E  | &40EE  | 1,104 |  1,152 | Per-frame update orchestration    |
-| persistent_objects.asm     | &40EE  | &4B44  | 2,646 |  2,688 | Buttons, pads, exits, cubes       |
-| ui.asm                     | &4B44  | &4B9A  |    86 |    256 | Cursor disable, palette           |
-| screens.asm                | &4B9A  | &537B  | 2,017 |  2,048 | Level cards, MODE 7 overlays      |
-| loaders.asm                | &537B  | &567F  |   772 |  1,024 | Shadow enable, SWRAM file I/O     |
-| timing.asm                 | &567F  | &5694  |    21 |     64 | VSync wait                        |
-| movement.asm               | &5694  | &59F2  |   862 |  1,024 | Walk, jump, collision, gravity    |
-| laser.asm                  | &59F2  | &5E69  | 1,143 |  1,280 | Beam tracing, signal driving      |
-| tilemap.asm                | &5E69  | &719D  | 4,916 |  5,792 | Level data, tilemap buffers, load |
-| objects.asm                | &719D  | &71B9  |    28 |    512 | Static object tables              |
-| persistent_objects_data.asm| &71B9  | &744F  |   662 |    768 | Object arrays, collision planes   |
-| **Total**                  |        |        |**19,413**|**23,496**|                              |
-
-**Free space above code (up to &7800 ceiling):** 945 bytes.
-
-Note: ~3 KB of this is inline level data padded to MAX_ROOMS=8. When
-levels move to disc packs (scaling plan steps 4-8), this space is
-recovered.
+| portal_teleport.asm        | &28B4  | &2E05  | 1,361 |  1,536 | Portal entry detection, teleport  |
+| room_exits.asm             | &2E05  | &30B6  |   689 |    768 | Room/screen transitions           |
+| reticle.asm                | &30B6  | &36D1  | 1,563 |  1,792 | Reticle movement, LOS, validation |
+| input.asm                  | &36D1  | &37DA  |   265 |    512 | Keyboard sampling                 |
+| portal_place.asm           | &37DA  | &3CD8  | 1,278 |  1,280 | Portal placement logic            |
+| frame_update.asm           | &3CD8  | &4128  | 1,104 |  1,152 | Per-frame update orchestration    |
+| persistent_objects.asm     | &4128  | &4BBD  | 2,709 |  3,264 | Buttons, pads, exits, cubes, **turrets** |
+| ui.asm                     | &4BBD  | &4C13  |    86 |    256 | Cursor disable, palette           |
+| **sound.asm (planned)**    |   —    |   —    |     0 |    384 | SN76489 direct writes, effect envelopes |
+| screens.asm                | &4C13  | &5516  | 2,307 |  2,560 | Level cards (MODE 5), MODE 7 overlays |
+| loaders.asm                | &5516  | &58AF  |   921 |  1,152 | Shadow enable, SWRAM file I/O, **multi-pack** |
+| timing.asm                 | &58AF  | &58C4  |    21 |     64 | VSync wait                        |
+| movement.asm               | &58C4  | &5C32  |   878 |  1,024 | Walk, jump, collision, gravity    |
+| laser.asm                  | &5C32  | &60A9  | 1,143 |  1,280 | Beam tracing, signal driving      |
+| tilemap.asm                | &60A9  | &6CC6  | 3,101 |  5,792 | Level data, tilemap buffers, load |
+| objects.asm                | &6CC6  | &6CE2  |    28 |    512 | Static object tables              |
+| persistent_obj_data.asm    | &6CE2  | &6F78  |   662 |  1,152 | Object arrays, collision planes, **turret state** |
 
 ### New feature budget
 
-| Feature              | Budget | Notes                                     |
-|----------------------|-------:|-------------------------------------------|
-| Sentry system        |  ~512  | AI, collision, rendering                  |
-| Sound engine         |  ~256  | Playback stubs (samples in SWRAM)         |
-| Growth reserve       |  ~177  | Headroom for existing sections            |
-| **Total available**  |  **945**| Tight until inline levels move to disc  |
+| Feature                   | Budget | Where                         | Notes                                       |
+|---------------------------|-------:|-------------------------------|---------------------------------------------|
+| Turret logic              |   ~400 | persistent_objects (+555)      | AI, carry, disable, collision               |
+| Turret state arrays       |   ~100 | persistent_obj_data (+490)     | pos, room, status, orientation per turret   |
+| Turret beam blit          |   ~150 | render.asm (+38 free)          | Save-under / draw / restore (below &3000)   |
+| Sound engine              |   ~300 | sound.asm (new, budget 384)    | SN76489 direct writes, envelope tables      |
+| Multi-pack loader         |   ~100 | loaders.asm (+231 free)        | Pack index mapping, auto-load on advance    |
+| Growth reserve            |   ~500 | Distributed                    | Headroom for existing sections              |
+| **Total reserved**        |**~1,550**|                              |                                             |
+| **Headroom after reserve**|  **634**| Of 2,184 current free         |                                             |
 
 ### Main RAM summary
 
 ```
-Render-safe zone (&1900-&287A):   3,962 bytes used of 5,888 available
-  Free: 2,016
+Render-safe zone (&1900-&28B4):   4,020 bytes used of 5,812 available
+  Free: 1,792
 
-Update-only zone (&287A-&744F):  19,413 bytes used
-  Ceiling: &7800    Free to ceiling: 945
+Update-only zone (&28B4-&6F78):  18,116 bytes used
+  Ceiling: &7800    Free to ceiling: 2,184
 
-Total code blob (&1900-&744F):   23,375 bytes
-Total main RAM (&1900-&7800):    24,320 bytes capacity
-  Free: 945
-
-Note: ~3 KB is inline level data (5 levels x 8-room padding).
-Once levels move to disc packs, headroom recovers to ~4 KB.
+Total code blob (&1900-&6F78):    22,136 bytes
+Total main RAM (&1900-&7800):     24,320 bytes capacity
+  Free: 2,184
 ```
 
 ---
@@ -186,27 +180,35 @@ Visible at &3000-&7FFF when ACCCON X=1. CRTC displays this when D=1.
 |---------------|-----:|-----------------------------------------------|
 | &7800-&787F   |  128 | Chell save-under buffer                       |
 | &7880-&78BF   |   64 | Reticle save-under buffer                     |
-| &78C0-&7FFF   | 1,856| Free render-phase scratch                     |
+| &78C0-&797F   |  192 | **Turret beam save-under (4 turrets x 32+16 bytes)** |
+| &7980-&7FFF   | 1,664| Free render-phase scratch                     |
 | **Total**     | **2,048** |                                          |
-| **Used**      |  192 | Save-under buffers only                       |
-| **Free**      | 1,856| Available for render-phase scratch            |
+| **Used**      |  384 | Save-under buffers (Chell + reticle + turrets)|
+| **Free**      | 1,664| Available for render-phase scratch            |
+
+Turret beam save-under: each turret saves one scanline (up to 32 bytes)
+plus 16 bytes of metadata (start col, length, screen row address). 4
+turrets max = 192 bytes. Beams are always horizontal, 1px tall, so
+save/draw/restore is a simple contiguous byte copy.
 
 Note: &7B00 (`CHELLDATA_BUF`) is used during boot as a SWRAM streaming
 buffer. After boot it is free.
 
 ### Data area (&3000-&57FF)
 
-10,240 bytes. Currently unused. Accessed by setting X=1 from code below
-&3000. Written at init or room-load time.
+10,240 bytes. Accessed by setting X=1 from code below &3000. Written at
+init or room-load time.
 
-| Address       | Size  | Purpose (planned)                            |
+| Address       | Size  | Purpose                                      |
 |---------------|------:|----------------------------------------------|
-| &3000-&37FF   | 2,048 | Level tilemap data (rooms 0-3)               |
-| &3800-&3FFF   | 2,048 | Portal layers + exit tables                  |
-| &4000-&47FF   | 2,048 | Sound effect sample data                     |
-| &4800-&4FFF   | 2,048 | Precomputed render lookup tables             |
-| &5000-&57FF   | 2,048 | Future rooms / additional level data         |
+| &3000-&47FF   | 6,144 | Level pack data (loaded from disc)           |
+| &4800-&4FFF   | 2,048 | Available (future level packs / lookup tables)|
+| &5000-&57FF   | 2,048 | Available                                    |
 | **Total**     |**10,240**|                                            |
+
+Level packs: with 4-5 levels per pack at ~1000 bytes each, a pack is
+~4-5 KB. 6,144 bytes at &3000 comfortably fits any single pack. Packs
+are swapped on level advance when crossing a pack boundary.
 
 ---
 
@@ -221,14 +223,15 @@ access. Always write &F4 before &FE30; use SEI around bank switches.
 | 4    | ~16,000 |    ~384 | Chell sprite+mask bitmaps (CHDATA)          |
 | 5    |   6,784 |   9,600 | Object sprite+mask bitmaps (OBJDAT)         |
 | 6    |   1,836 |  14,548 | Tileset data (tile pixel bitmaps)           |
-| 7    |       0 |  16,384 | Available (untested)                        |
+| 7    |       0 |  16,384 | Available                                   |
 
 ### Bank 5 — object sprites
 
 | Allocation              | Size  | Notes                               |
 |-------------------------|------:|-------------------------------------|
 | Portal sprites + cube   | 6,784 | Vertical, horizontal, back portals + cube |
-| **Free**                | **9,600** | Additional object sprites (fizzler, laser, acid) |
+| **Turret sprites (planned)** | **~420** | 6 frames x ~70 bytes (idle, fire, knocked) |
+| **Free**                | **~9,180** | Additional object sprites        |
 
 ### Bank 6 — tileset data
 
@@ -243,8 +246,10 @@ Capacity for ~480 tiles (16KB).
 
 ### Bank 7 — available
 
-16,384 bytes. Potential uses: additional level data, music data, level
-streaming buffers. Not yet tested in B2.
+16,384 bytes. Potential uses:
+- Additional level pack cache (preload next pack while current plays)
+- Music / sound data
+- Extended sprite data if bank 5 fills up
 
 ---
 
@@ -258,6 +263,9 @@ streaming buffers. Not yet tested in B2.
 Both are needed: portals/LOS must ignore cubes; collision must not.
 `solid_phys_plane` copies `solid_tile_plane` then stamps cube positions.
 
+Turrets will also stamp into `solid_phys_plane` (they block movement)
+but NOT `solid_tile_plane` (portals can pass over them, like cubes).
+
 ---
 
 ## Boot Loader (PROGRAM, &0E00-&18FF)
@@ -268,8 +276,75 @@ TILDAT, PORTHLE, then jumps to game. Memory is reclaimable after boot.
 | Range       | Size  | Post-boot use                              |
 |-------------|------:|--------------------------------------------|
 | &0900-&0DFF | 1,280 | Trampolines, staging buffers               |
-| &0E00-&18FF | 2,816 | General-purpose buffers, decompression workspace |
+| &0E00-&18FF | 2,816 | Staging buffer (STAGING_BUF at &0E00)      |
 | **Total**   | **4,096** |                                        |
+
+---
+
+## DFS Disc Layout
+
+DFS limit: 31 catalogue entries. Current usage:
+
+| File    | Size   | Purpose                              |
+|---------|-------:|--------------------------------------|
+| !Boot   |   ~50  | Auto-boot BASIC loader               |
+| PROGRAM |  ~800  | BASIC boot loader                    |
+| PORTHLE | ~22 KB | Main game binary                     |
+| CHDATA  |  16 KB | Chell sprites (SWRAM bank 4)         |
+| OBJDAT  |  16 KB | Object sprites (SWRAM bank 5)        |
+| TILDAT  |  16 KB | Tile data (SWRAM bank 6)             |
+| LOADSCR |  20 KB | Loading screen (MODE 2)              |
+| STRTSCR |  1 KB  | Start screen (MODE 7)                |
+| TEMPLTE |  1 KB  | Level card template (MODE 7, legacy) |
+| APLOGO  |  ~2 KB | Aperture logo (MODE 5)               |
+| LVLS01  |  ~4 KB | Level pack 1 (levels 1-5)            |
+| LVLS02  |  ~4 KB | Level pack 2 (levels 6-10)           |
+| LVLS03  |  ~4 KB | Level pack 3 (levels 11-15)          |
+| LVLS04  |  ~4 KB | Level pack 4 (levels 16-20)          |
+| **Total** | **14 files** | 17 remaining catalogue slots  |
+
+With 20 levels in 4 packs of 5, we use 14 DFS entries — well within the
+31-slot limit. Room for additional data files if needed.
+
+---
+
+## Planned Features — Resource Summary
+
+### Turret sentries
+
+- **Logic**: ~400 bytes in persistent_objects.asm. Modelled on cube
+  carry/drop mechanics plus firing AI. Turret fires horizontally when
+  Chell is in the same tile row and LOS is clear (no solid tiles or
+  cubes blocking). Carrying disables. Cube drop knocks over permanently.
+- **Beam rendering**: ~150 bytes in render.asm (below &3000). Save-under
+  of one scanline (up to 32 bytes), overdraw red then yellow pixels,
+  restore on cease-fire. Buffer in LYNNE scratch at &78C0.
+- **State**: ~100 bytes in persistent_obj_data.asm. Per-turret: tile pos,
+  room, orientation (L/R), status (active/disabled/carried/knocked).
+  Max 4 turrets per level.
+- **Sprites**: ~420 bytes in SWRAM bank 5. Idle, firing, knocked-over
+  frames (left/right mirrored).
+- **ZP**: ~4 bytes in &83-&8F range for turret processing temporaries.
+
+### Sound engine
+
+- **Engine**: ~300 bytes in new sound.asm section. Direct SN76489 writes
+  via &FE41. Simple envelope state machine called once per frame from
+  the main loop. No MOS SOUND interaction during gameplay.
+- **Effect tables**: ~80 bytes inline. Pitch/volume/duration for each
+  effect (portal fire, placement, cube pickup, turret fire, death, etc.).
+- **Card/menu sounds**: Continue using OSWORD &07 where timing isn't
+  critical (typewriter tick, etc.).
+
+### GLaDOS boss fight (final level)
+
+- Uses existing mechanics: portals, turrets, lasers, cubes, acid bath.
+- Scripted sequence: redirect turret fire at GLaDOS target via portals.
+  GLaDOS disables turrets after a few seconds (scripted timer).
+  Multiple phases. Final phase: portal GLaDOS core into acid.
+- GLaDOS sprite: ~200 bytes in SWRAM bank 5 (static target graphic).
+- Script data: ~100 bytes in level pack (special object type or metadata).
+- No new engine mechanics required — purely level design + scripting.
 
 ---
 
@@ -278,15 +353,14 @@ TILDAT, PORTHLE, then jumps to game. Memory is reclaimable after boot.
 | Region                    | Capacity | Used    | Free    |
 |---------------------------|----------:|--------:|--------:|
 | Zero page (&00-&8F)      |       144 |     115 |      29 |
-| Main RAM (&1900-&7800)   |    24,320 |  23,375 |     945 |
+| Main RAM (&1900-&7800)   |    24,320 |  22,136 |   2,184 |
 | LYNNE (&3000-&7FFF)      |    20,480 |   8,384 |  12,096 |
 | SWRAM Bank 4              |    16,384 | ~16,000 |    ~384 |
 | SWRAM Bank 5              |    16,384 |   6,784 |   9,600 |
 | SWRAM Bank 6              |    16,384 |   1,836 |  14,548 |
 | SWRAM Bank 7              |    16,384 |       0 |  16,384 |
 | Reclaimable (&0900-&18FF) |     4,096 |       0 |   4,096 |
-| **Total**                 |**114,576**|**56,494**|**58,082**|
+| **Total**                 |**114,576**|**55,255**|**59,321**|
 
-Main RAM free: 945 bytes (temporarily tight — inline level data pads to
-MAX_ROOMS=8). Plus 12,096 LYNNE + 9,600 bank 5 + 14,548 bank 6 +
-16,384 bank 7 = **52,628 bytes** of usable non-main-RAM space.
+Main RAM after planned reservations: ~634 bytes headroom. Comfortable
+with room for iteration. LYNNE + SWRAM provide >50 KB for data growth.

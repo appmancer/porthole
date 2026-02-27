@@ -74,9 +74,13 @@ mkdir -p .tmp
   --in "sprites/NewTiles - Grid.csv" \
   --out "sprites/generated_tiles.asm"
 
+# --- Aperture logo (MODE 5 level card) ---
+./tools/png-to-mode5 --in aperture.png --out .tmp/aperture_logo.bin \
+  --width 128 --fg 0 --bg 2 --threshold 128
+
 # --- Binary level pack (LYNNE-loaded) ---
 ./tools/gen-level --binary-pack \
-  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 \
+  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 levels/level6 levels/level7 \
   --out ".tmp/LVLS01.dat"
 
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)
@@ -95,7 +99,18 @@ if [[ "${GEN_LOADSCR_PREVIEW:-}" == "1" ]]; then
   python3 tools/mode2-unpack.py --in .tmp/loadscr_mode2.bin --out .tmp/loadscr_preview.png
 fi
 
-BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTHOLE" -boot PROGRAM)
+# Use beebasm v1.11+ (has fixes for DFS catalog corruption bugs in v1.10).
+# Prefer locally-built v1.11 over system beebasm (snap is still on v1.10).
+# Allow override via BEEBASM_PATH environment variable.
+if [[ -n "${BEEBASM_PATH:-}" ]]; then
+  BEEBASM="${BEEBASM_PATH}"
+elif [[ -f .tmp/beebasm-repo/beebasm ]]; then
+  BEEBASM=".tmp/beebasm-repo/beebasm"
+else
+  BEEBASM="beebasm"
+fi
+
+BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTAL" -boot PROGRAM)
 
 # Always emit a symbols file for tooling.
 BEEBASM_ARGS+=( -dd -labels .tmp/beebasm.labels )
@@ -105,7 +120,7 @@ if [[ "${VERBOSE}" == "1" ]]; then
   BEEBASM_ARGS+=( -v )
 fi
 
-beebasm "${BEEBASM_ARGS[@]}"
+"${BEEBASM}" "${BEEBASM_ARGS[@]}"
 
 # Build-time safety checks against label layout regressions.
 ./tools/check-build-invariants .tmp/beebasm.labels

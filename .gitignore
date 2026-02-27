@@ -4,6 +4,7 @@
 sprites/generated_tiles.asm
 sprites/generated_objects_sprites.asm
 sprites/generated_objects_masks.asm
+levels/generated_level*.asm
 
 # Build outputs (keep porthole.ssd)
 CHDATA

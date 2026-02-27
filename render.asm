@@ -422,6 +422,53 @@
     JSR shadow_screen_off
     RTS
 
+
+; --- fill_yellow_from_row12 ---
+; Fill shadow screen char rows 12-31 with yellow (colour 3 = &FF).
+; Char row 12 = &5800 + 12*256 = &6400.  20 rows = 20 pages.
+; Must live below &3000 because it sets ACCCON X=1.
+; Clobbers: A, X, Y, temp_mask_ptr
+.fill_yellow_from_row12
+    JSR shadow_screen_on
+    LDA #<(&6400)
+    STA temp_mask_ptr
+    LDA #>(&6400)
+    STA temp_mask_ptr+1
+    LDX #20                         ; 20 pages (char rows 12-31)
+    LDA #&FF                        ; colour 3 = yellow
+.fylr_page
+    LDY #0
+.fylr_byte
+    STA (temp_mask_ptr),Y
+    INY
+    BNE fylr_byte
+    INC temp_mask_ptr+1
+    DEX
+    BNE fylr_page
+    JSR shadow_screen_off
+    RTS
+
+
+; --- write_char_to_shadow ---
+; Copy 8 bytes from CHAR_BUF to shadow screen RAM at (screen_ptr).
+; Must live below &3000 because it sets ACCCON X=1.
+; Input: screen_ptr = destination in shadow screen RAM.
+;        CHAR_BUF (&09C9..&09D0) = 8 bytes of MODE 5 character data.
+; Clobbers: A, Y
+CHAR_BUF = &09C9
+.write_char_to_shadow
+    JSR shadow_screen_on
+    LDY #0
+.wcts_loop
+    LDA CHAR_BUF,Y
+    STA (screen_ptr),Y
+    INY
+    CPY #8
+    BNE wcts_loop
+    JSR shadow_screen_off
+    RTS
+
+
 .render_cell8x16
     ; Store tile type
     STA temp
