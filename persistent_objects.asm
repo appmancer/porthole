@@ -32,6 +32,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 2                 ; exit   (16x32)
     EQUB 0                 ; spawner (tile-based, no sprite)
     EQUB 1                 ; barrier (8x32, 1 tile wide x 2 tall)
+    EQUB 2                 ; sentry  (16x16)
 
 .obj_redraw_h_tiles
     EQUB 0                 ; type 0 (unused)
@@ -41,6 +42,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 2                 ; exit
     EQUB 0                 ; spawner (tile-based, no sprite)
     EQUB 2                 ; barrier (2 tiles tall)
+    EQUB 1                 ; sentry
 
 ; Initialize per-object runtime arrays from generated obj_defs.
 ; Clobbers: A,X,Y,temp,temp_y
@@ -1350,6 +1352,8 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
   .spo_chk_exit
     CMP #OBJ_TYPE_EXIT
     BEQ spo_done
+    CMP #OBJ_TYPE_SENTRY
+    BEQ spo_sentry
     JMP spo_done
 
 
@@ -1363,6 +1367,39 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA #>obj_cube_x0_mask
     STA mask_ptr+1
     ; 16x16
+    LDA #2
+    LDX #32
+    LDY #32
+    JSR stamp_striped_masked
+    PLA
+    TAY
+    RTS
+
+  .spo_sentry
+    ; Select sprite based on direction (obj_state bit 0).
+    LDA obj_state,Y
+    AND #SENTRY_DIR_LEFT
+    BNE spo_sentry_left
+    LDA #<obj_sentry_r_x0
+    STA sprite_ptr
+    LDA #>obj_sentry_r_x0
+    STA sprite_ptr+1
+    LDA #<obj_sentry_r_x0_mask
+    STA mask_ptr
+    LDA #>obj_sentry_r_x0_mask
+    STA mask_ptr+1
+    JMP spo_sentry_stamp
+  .spo_sentry_left
+    LDA #<obj_sentry_l_x0
+    STA sprite_ptr
+    LDA #>obj_sentry_l_x0
+    STA sprite_ptr+1
+    LDA #<obj_sentry_l_x0_mask
+    STA mask_ptr
+    LDA #>obj_sentry_l_x0_mask
+    STA mask_ptr+1
+  .spo_sentry_stamp
+    ; 16x16 (same geometry as cube)
     LDA #2
     LDX #32
     LDY #32
@@ -1415,11 +1452,6 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA col_counter
     BNE pad_done               ; already pressed by Chell
 
-    ; Pad must be in current room.
-    LDA obj_room,Y
-    CMP current_room
-    BNE pad_done
-
     ; above_y = pad_y - 1
     LDA obj_y,Y
     BEQ pad_done
@@ -1439,7 +1471,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     AND #OBJ_STATE_CARRIED
     BNE pad_cube_next
     LDA obj_room,X
-    CMP current_room
+    CMP obj_room,Y             ; cube in same room as pad (works cross-room)
     BNE pad_cube_next
     ; Cube at above_y?
     LDA obj_y,X
@@ -1895,9 +1927,13 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
 
   .rpobj_chk_exit
     CMP #OBJ_TYPE_EXIT
-    BNE rpobj_not_exit
+    BNE rpobj_chk_sentry
     JMP rpobj_next
-  .rpobj_not_exit
+  .rpobj_chk_sentry
+    CMP #OBJ_TYPE_SENTRY
+    BNE rpobj_not_sentry
+    JMP rpobj_sentry
+  .rpobj_not_sentry
     JMP rpobj_next
 
   .rpobj_cube
@@ -1912,6 +1948,41 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     TYA
     PHA
     ; 16x16
+    LDA #2
+    LDX #32
+    LDY #32
+    JSR stamp_striped_masked
+    PLA
+    TAY
+    JMP rpobj_next
+
+  .rpobj_sentry
+    ; Select sprite based on direction (obj_state bit 0).
+    LDA obj_state,Y
+    AND #SENTRY_DIR_LEFT
+    BNE rpobj_sentry_left
+    LDA #<obj_sentry_r_x0
+    STA sprite_ptr
+    LDA #>obj_sentry_r_x0
+    STA sprite_ptr+1
+    LDA #<obj_sentry_r_x0_mask
+    STA mask_ptr
+    LDA #>obj_sentry_r_x0_mask
+    STA mask_ptr+1
+    JMP rpobj_sentry_stamp
+  .rpobj_sentry_left
+    LDA #<obj_sentry_l_x0
+    STA sprite_ptr
+    LDA #>obj_sentry_l_x0
+    STA sprite_ptr+1
+    LDA #<obj_sentry_l_x0_mask
+    STA mask_ptr
+    LDA #>obj_sentry_l_x0_mask
+    STA mask_ptr+1
+  .rpobj_sentry_stamp
+    TYA
+    PHA
+    ; 16x16 (same geometry as cube)
     LDA #2
     LDX #32
     LDY #32

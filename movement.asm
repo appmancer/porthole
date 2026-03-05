@@ -87,6 +87,9 @@
       BNE ucm_vx_key_held
 
       ; No key held: grounded → kill vx; airborne → preserve momentum.
+      ; Preserve fling momentum during post-teleport cooldown window.
+      LDA teleport_cooldown
+      BNE ucm_vx_done
       LDA char_grounded
       BEQ ucm_vx_done
       LDA #0
@@ -408,9 +411,48 @@
 ;
 ; Returns: C=1 if position changed (needs redraw).
 .apply_gravity
-    ; Remember pre-step vy so portal entry can trigger on landing.
+    ; Remember pre-step vy and fall distance so portal teleport can
+    ; read momentum even after gravity resets them on landing.
     LDA char_vy
     STA char_prev_vy
+    LDA fall_distance
+    STA char_prev_fall_dist
+
+    ; --- PORTAL RISE (momentum launch from portal exit) ---
+    LDA portal_rise_timer
+    BEQ ag_not_portal_rise
+
+    ; First step up (always).
+    JSR step_up_8
+    BCC ag_portal_rise_blocked
+
+    ; Fast-rise when timer >= threshold (mirrors fast-fall at same threshold).
+    LDA portal_rise_timer
+    CMP #FALL_FAST_THRESHOLD
+    BCC ag_portal_rise_step_done
+
+    ; Second step up (fast-rise).
+    JSR step_up_8
+    BCC ag_portal_rise_step_done   ; ceiling on 2nd step — still moved one step
+
+  .ag_portal_rise_step_done
+    DEC portal_rise_timer
+    LDA #&FF
+    STA char_vy                    ; vy = -1 (rising)
+    LDA #0
+    STA char_grounded
+    SEC                            ; position changed
+    RTS
+
+  .ag_portal_rise_blocked
+    ; Ceiling on 1st step: cancel portal rise entirely.
+    LDA #0
+    STA portal_rise_timer
+    STA char_vy
+    CLC                            ; no movement
+    RTS
+
+  .ag_not_portal_rise
 
     ; --- RISING ---
     LDA jump_timer

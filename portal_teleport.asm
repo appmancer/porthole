@@ -375,9 +375,31 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         JSR clamp_char_vx
         JSR clamp_char_vy
 
-        ; Reset fall_distance so wall/ceiling exits don't inherit fast-fall.
+        ; Portal rise: if exiting upward through a FLOOR portal, convert
+        ; fall distance to rise budget.  Wall/ceiling exits may have a small
+        ; negative vy from the tangential component — that's not a real launch.
+        LDA row_counter
+        CMP #PORTAL_ORIENT_FLOOR
+        BNE mt_not_upward_exit
+        LDA char_vy
+        BPL mt_not_upward_exit
+
+        ; Upward exit — launch with accumulated fall momentum.
+        ; Use char_prev_fall_dist because apply_gravity already reset
+        ; fall_distance to 0 on the landing frame.
+        LDA char_prev_fall_dist
+        STA portal_rise_timer
         LDA #0
         STA fall_distance
+        STA jump_timer
+        STA peak_timer
+        JMP mt_no_fast_fall
+
+  .mt_not_upward_exit
+        ; Non-upward exit: clear portal rise and fall state.
+        LDA #0
+        STA fall_distance
+        STA portal_rise_timer
 
         ; If exiting downward (vy >= 2), engage fast-fall immediately.
         LDA char_vy
@@ -563,8 +585,8 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         STA action_pressed        ; consume SPACE so cube drop doesn't fire
         LDA #PORTAL_COOLDOWN_FRAMES
         STA teleport_cooldown
-        LDA #8
-        STA exit_cooldown
+        LDA #0
+        STA exit_cooldown         ; allow edge exits immediately (teleport_cooldown handles portal anti-bounce)
 
         ; Mark for redraw.
         LDA #1
@@ -605,9 +627,10 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
 ; Divide signed A (pixels/frame-ish) by (1<<PORTAL_VY_TO_PX_SHIFT) to produce a
 ; vy stripes/frame value. Rounds toward 0.
 .portal_div_px_to_vy
+        CMP #&80                    ; test A's sign before LDX clobbers flags
+        BCS pdv_neg
         LDX #PORTAL_VY_TO_PX_SHIFT
         BEQ pdv_done
-        BMI pdv_neg
  .pdv_pos_loop
         LSR A
         DEX
@@ -617,6 +640,7 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
  .pdv_neg
         ; abs
         JSR neg_a
+        LDX #PORTAL_VY_TO_PX_SHIFT
  .pdv_neg_loop
         LSR A
         DEX

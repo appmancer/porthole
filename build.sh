@@ -68,7 +68,9 @@ mkdir -p .tmp
   --spec "portal_h_red_ceil:sprites/Portal H - Red (Ceil).csv" \
   --spec "portal_h_yel_floor:sprites/Portal H - Yellow (Floor).csv" \
   --spec "portal_h_yel_ceil:sprites/Portal H - Yellow (Ceil).csv" \
-  --spec "obj_cube:sprites/Objects - Cube.csv"
+  --spec "obj_cube:sprites/Objects - Cube.csv" \
+  --spec "obj_sentry_r@1:sprites/Objects - Sentry.csv" \
+  --spec "obj_sentry_l^@1:sprites/Objects - Sentry.csv"
 
 ./tools/gen-tiles \
   --in "sprites/NewTiles - Grid.csv" \
@@ -80,7 +82,7 @@ mkdir -p .tmp
 
 # --- Binary level pack (LYNNE-loaded) ---
 ./tools/gen-level --binary-pack \
-  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 levels/level6 levels/level7 \
+  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 levels/level6 levels/level7 levels/level8 \
   --out ".tmp/LVLS01.dat"
 
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)

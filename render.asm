@@ -1342,6 +1342,7 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
     LDA (room_fizzler_ptr),Y : INY   ; y1 px (exclusive)
     LSR A : LSR A : LSR A : LSR A    ; /16 → tile_y1 (exclusive in tiles)
     STA temp
+    INY                              ; skip channel byte (5 bytes per fizzler record)
     STY hstep_rem                    ; save data offset
     STX hstep_moved                  ; save outer counter
 

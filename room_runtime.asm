@@ -140,7 +140,7 @@
     RTS
 
 
-; Set room_fizzler_count and room_fizzler_ptr from current_room.
+; Set room_fizzler_count/ptr and room_killzone_count/ptr from current_room.
 .set_room_fizzlers
     LDA current_room
     ASL A
@@ -149,9 +149,15 @@
     STA room_fizzler_ptr
     LDA fizzler_room_ptrs+1,X
     STA room_fizzler_ptr+1
+    LDA killzone_room_ptrs,X
+    STA room_killzone_ptr
+    LDA killzone_room_ptrs+1,X
+    STA room_killzone_ptr+1
     LDX current_room
     LDA fizzler_room_counts,X
     STA room_fizzler_count
+    LDA killzone_room_counts,X
+    STA room_killzone_count
     RTS
 
 

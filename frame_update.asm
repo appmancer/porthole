@@ -42,18 +42,6 @@
     LDA #1
     STA reticle_active
 
-    ; Debug toggle: SPACE edge while in reticle mode.
-    ; (Avoids interfering with SPACE actions in normal gameplay.)
-    LDA action_pressed
-    BEQ murm_debug_done
-    LDA debug_flags
-    EOR #1
-    STA debug_flags
-    LDA #1
-    STA chell_dirty
-    STA reticle_dirty
-  .murm_debug_done
-
     JSR poll_reticle_keys
     BCC murm_reticle_no_dirty
     LDA #1
@@ -214,6 +202,12 @@
     LDA #1
     STA dirty_flag
 
+    ; Sentry bullets on screen need render cycle to erase/redraw.
+    LDA bullet_count
+    BEQ df_done
+    LDA #1
+    STA dirty_flag
+
  .df_done
      RTS
 
@@ -288,6 +282,92 @@
     STA keys_prev
     LDA action_held
     STA action_prev
+    RTS
+
+
+; Check if Chell overlaps any active killzone in the current room.
+; Each killzone record is 5 bytes: x0, y0, x1, y1, sentry_obj_index.
+; A killzone only kills if its linked sentry is active (not carried/disabled).
+;
+; Uses LOS scratch ZP (safe — LOS not active during normal update).
+; Clobbers: A,X,Y,los_x0,los_y0,los_x1,los_y1,los_dx,los_dy,los_err
+.check_killzones
+    LDA room_killzone_count
+    BEQ ckz_none
+
+    ; Copy non-ZP pointer into ZP for indirect addressing.
+    LDA room_killzone_ptr
+    STA temp_sprite_ptr
+    LDA room_killzone_ptr+1
+    STA temp_sprite_ptr+1
+
+    ; Compute Chell pixel position.
+    JSR calc_char_x           ; A = pixel_x (0..115)
+    STA los_x0                ; chell_left_x
+    JSR calc_char_y           ; A = pixel_y (0..248)
+    STA los_y0                ; chell_top_y
+
+    LDY #0
+    LDX room_killzone_count
+.ckz_loop
+    ; Load killzone bounds from (temp_sprite_ptr),Y
+    ; Format: x0, y0, x1, y1, sentry_obj_index (5 bytes)
+    LDA (temp_sprite_ptr),Y : INY : STA los_x1   ; kz_x0
+    LDA (temp_sprite_ptr),Y : INY : STA los_y1   ; kz_y0
+    LDA (temp_sprite_ptr),Y : INY : STA los_dx   ; kz_x1
+    LDA (temp_sprite_ptr),Y : INY : STA los_dy   ; kz_y1
+    LDA (temp_sprite_ptr),Y : INY                 ; sentry_obj_index
+    STY los_err                                      ; save Y
+
+    ; Check if sentry is active: skip if carried or disabled (state != 0
+    ; apart from direction bit 0).
+    TAY
+    LDA obj_state,Y
+    AND #&FE                  ; mask out direction bit
+    BNE ckz_next              ; non-zero = carried/disabled, skip
+
+    ; AABB: Chell (x, y, x+15, y+31) vs killzone (x0, y0, x1, y1)
+    ; x1/y1 are exclusive.
+
+    ; Test 1: chell_right (x+15) >= kz_x0
+    LDA los_x0
+    CLC
+    ADC #15
+    CMP los_x1
+    BCC ckz_next
+
+    ; Test 2: chell_left < kz_x1
+    LDA los_x0
+    CMP los_dx
+    BCS ckz_next
+
+    ; Test 3: chell_bottom (y+31) >= kz_y0
+    LDA los_y0
+    CLC
+    ADC #31
+    CMP los_y1
+    BCC ckz_next
+
+    ; Test 4: chell_top < kz_y1
+    LDA los_y0
+    CMP los_dy
+    BCS ckz_next
+
+    ; --- OVERLAP: kill Chell ---
+    LDA #1
+    STA char_dead
+    STA chell_dirty
+    LDA keys_held
+    STA keys_prev
+    LDA action_held
+    STA action_prev
+    RTS
+
+.ckz_next
+    LDY los_err
+    DEX
+    BNE ckz_loop
+.ckz_none
     RTS
 
 

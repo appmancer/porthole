@@ -9,9 +9,9 @@
 ; buffer, which persists until the next level load.
 
 ; Global constants (max across all levels).
-LEVEL_COUNT = 7
+LEVEL_COUNT = 8
 MAX_ROOMS = 8
-OBJ_COUNT = 6
+OBJ_COUNT = 16
 OBJ_DEF_SIZE = 6
 LASER_COUNT = 1
 LASER_DEF_SIZE = 7
@@ -47,6 +47,12 @@ STAGING_BUF = &0E00
 .target_defs            SKIP TARGET_COUNT * TARGET_DEF_SIZE
 .fizzler_room_counts    SKIP MAX_ROOMS
 .fizzler_room_ptrs      SKIP MAX_ROOMS * 2
+.killzone_room_counts   SKIP MAX_ROOMS
+.killzone_room_ptrs     SKIP MAX_ROOMS * 2
+
+; Current-room killzone state (not in ZP — not hot-path).
+.room_killzone_count    SKIP 1
+.room_killzone_ptr      SKIP 2
 
 ; Room index counter used by the per-room parser loop.
 ; Stored here (not ZP) to avoid adding another ZP variable.
@@ -381,6 +387,35 @@ ALIGN 256
     ADC temp                    ; A*5
     JSR ll_advance_src
 
+    ; --- Parse killzone records ---
+    LDX ll_room_idx
+    LDY #0
+    LDA (temp_sprite_ptr),Y    ; killzone_count
+    STA killzone_room_counts,X
+    ; Advance past count byte.
+    INC temp_sprite_ptr
+    BNE ll_kzc_no_c
+    INC temp_sprite_ptr+1
+.ll_kzc_no_c
+    ; Store pointer to killzone data.
+    TXA
+    ASL A
+    TAX
+    LDA temp_sprite_ptr
+    STA killzone_room_ptrs,X
+    LDA temp_sprite_ptr+1
+    STA killzone_room_ptrs+1,X
+    ; Advance temp_sprite_ptr by killzone_count * 5.
+    LDX ll_room_idx
+    LDA killzone_room_counts,X
+    ; Multiply by 5: A*5 = A*4 + A.
+    STA temp
+    ASL A
+    ASL A                       ; A*4
+    CLC
+    ADC temp                    ; A*5
+    JSR ll_advance_src
+
     ; Next room.
     INC ll_room_idx
     JMP ll_room_loop
@@ -425,6 +460,7 @@ ALIGN 256
     STA exit_down_counts,X
     STA obj_room_counts,X
     STA fizzler_room_counts,X
+    STA killzone_room_counts,X
 
     ; Set pointers to a safe address (STAGING_BUF, won't be dereferenced).
     TXA
@@ -437,6 +473,7 @@ ALIGN 256
     STA exit_down_ptrs,X
     STA obj_room_ptrs,X
     STA fizzler_room_ptrs,X
+    STA killzone_room_ptrs,X
     LDA #>STAGING_BUF
     STA exit_left_ptrs+1,X
     STA exit_right_ptrs+1,X
@@ -444,6 +481,7 @@ ALIGN 256
     STA exit_down_ptrs+1,X
     STA obj_room_ptrs+1,X
     STA fizzler_room_ptrs+1,X
+    STA killzone_room_ptrs+1,X
 
     INC ll_room_idx
     JMP ll_unused_rooms

@@ -263,3 +263,33 @@
     ADC char_pixel_offset
     STA chell_overlay_index
     RTS
+
+
+; XOR horizontal line across cells (sentry bullet visual effect).
+; Must live below &3000 for shadow screen access.
+; Input: screen_ptr = left byte of first cell at target scanline
+;        col_counter = number of cells to span
+;        temp_y = color byte (&0F or &FF)
+; Clobbers: A, Y, screen_ptr, col_counter
+.xor_hline
+    JSR shadow_screen_on
+.xhl_loop
+    LDY #0
+    LDA (screen_ptr),Y
+    EOR temp_y
+    STA (screen_ptr),Y
+    LDY #8
+    LDA (screen_ptr),Y
+    EOR temp_y
+    STA (screen_ptr),Y
+    ; Next cell: +16 bytes
+    LDA screen_ptr
+    CLC : ADC #16
+    STA screen_ptr
+    BCC xhl_nc
+    INC screen_ptr+1
+.xhl_nc
+    DEC col_counter
+    BNE xhl_loop
+    JSR shadow_screen_off
+    RTS

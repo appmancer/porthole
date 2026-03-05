@@ -167,6 +167,9 @@ ORG &00
   .room_fizzler_count   SKIP 1    ; fizzlers in current room (0..4)
   .room_fizzler_ptr     SKIP 2    ; pointer to current room's fizzler_defs data
 
+  .portal_rise_timer    SKIP 1    ; Frames of portal-launch rise remaining (0 = inactive)
+  .char_prev_fall_dist  SKIP 1    ; fall_distance snapshot for portal momentum
+
  ORG &1900
 
 
@@ -246,6 +249,10 @@ OBJ_TYPE_PAD                 = 3
 OBJ_TYPE_EXIT                = 4
 OBJ_TYPE_SPAWNER             = 5
 OBJ_TYPE_BARRIER             = 6
+OBJ_TYPE_SENTRY              = 7
+
+; Sentry direction flag stored in obj_state bit 0.
+SENTRY_DIR_LEFT              = 1
 
 ; Hazard tile IDs. Touching any of these kills Chell.
 TILE_ACID                    = 11
@@ -400,6 +407,7 @@ CHELL_DEAD_BASE              = 48
     STA jump_timer
     STA peak_timer
     STA fall_distance
+    STA portal_rise_timer
     STA room_dirty
     STA objects_pending
     STA exit_cooldown
@@ -520,6 +528,11 @@ CHELL_DEAD_BASE              = 48
 
        ; Render previous frame immediately after VSYNC.
        ; Incremental: redraw only what changed (Chell + reticle).
+       ; Force render when sentry bullets are on screen.
+        LDA bullet_count
+        BEQ main_no_bullet_force
+        LDA #1 : STA dirty_flag
+   .main_no_bullet_force
         LDA dirty_flag
         BEQ main_skip_render
         JSR render_frame_simple
@@ -630,6 +643,7 @@ CHELL_DEAD_BASE              = 48
         STA room_dirty
         STA chell_has_under
         STA reticle_has_under
+        STA bullet_count
 
         ; Background redraw wipes sprites; force them to re-save-under and redraw.
         LDA #1
@@ -640,6 +654,18 @@ CHELL_DEAD_BASE              = 48
         STA reticle_dirty
 
    .render_no_room_redraw
+        ; Sentry bullets: force full sprite cycle when bullets are active,
+        ; then erase old bullets so save-under captures clean background.
+        LDA bullet_count
+        BEQ render_no_bullet_erase
+        LDA #1 : STA chell_dirty
+        LDA reticle_active
+        BEQ render_bullet_erase
+        STA reticle_dirty
+   .render_bullet_erase
+        JSR erase_sentry_bullets
+   .render_no_bullet_erase
+
         ; Portal/object background patches are now handled pre-vsync in
         ; pre_render_bg_patch (called at end of update_chell), so the
         ; post-vsync window only does sprite restore/save/draw.
@@ -725,6 +751,7 @@ CHELL_DEAD_BASE              = 48
        STA reticle_has_under
 
  .render_frame_done
+       JSR draw_sentry_bullets
        RTS
 
 
@@ -766,6 +793,9 @@ CHELL_DEAD_BASE              = 48
 
        ; Hazard check: acid/goo kills Chell on contact.
        JSR check_acid_death
+
+       ; Sentry killzone check: active sentries kill Chell in their LOS.
+       JSR check_killzones
 
        ; Fizzler contact: clears portals and drops carried cube.
        JSR check_fizzler_contact
