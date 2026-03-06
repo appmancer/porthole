@@ -253,6 +253,7 @@ OBJ_TYPE_SENTRY              = 7
 
 ; Sentry direction flag stored in obj_state bit 0.
 SENTRY_DIR_LEFT              = 1
+SENTRY_STATE_DISABLED        = 2
 
 ; Hazard tile IDs. Touching any of these kills Chell.
 TILE_ACID                    = 11
@@ -409,6 +410,7 @@ CHELL_DEAD_BASE              = 48
     STA fall_distance
     STA portal_rise_timer
     STA room_dirty
+    STA bullet_count
     STA objects_pending
     STA exit_cooldown
     STA exit_probe0
@@ -507,8 +509,7 @@ CHELL_DEAD_BASE              = 48
     LDA chell_new_ptr+1
     STA screen_ptr+1
 
-       JSR save_chell_under
-        JSR draw_character_current
+       JSR save_and_draw_character_current
         JSR debug_draw_chell_box
 
     LDA screen_ptr
@@ -714,8 +715,7 @@ CHELL_DEAD_BASE              = 48
        STA screen_ptr
        LDA chell_new_ptr+1
        STA screen_ptr+1
-        JSR save_chell_under
-        JSR draw_character_current
+        JSR save_and_draw_character_current
         JSR debug_draw_chell_box
 
         ; Record new previous pointer.
@@ -837,6 +837,7 @@ CHELL_DEAD_BASE              = 48
          ; reticle mode is active (update_normal_mode is skipped then).
          JSR update_cubes_physics
          JSR check_offscreen_cube_portals
+         JSR check_sentry_collisions
 
         ; While in reticle mode we ignore aim-based redraws.
         LDA reticle_active

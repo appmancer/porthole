@@ -4,32 +4,110 @@
 .run_frame_seq
     EQUB 0,1,0,2
 
-; Draw current body + overlay at screen_ptr.
-.draw_character_current
-    ; Keep ROMSEL stable during blit (B2/MOS IRQs may page ROMs).
-    ; Preserve caller IRQ state (nested callers may already be SEI).
+; Save background + draw body + overlay at screen_ptr (merged).
+;
+; Merges save_chell_under + masked body blit into one pass, saving an
+; entire 128-byte screen traversal (~2,600 cycles / ~20 scanlines).
+; Then draws the overlay using the existing render_overlay_sprite.
+;
+; Input: screen_ptr = Chell top-left screen address
+;        chell_body_index, chell_overlay_index = precomputed
+; Preserves: screen_ptr
+.save_and_draw_character_current
     PHP
     SEI
     LDA &F4 : PHA             ; save MOS ROMSEL shadow
-
-    ; Ensure Chell SWRAM bank is visible for reads.
     LDA chell_bank
-    STA &F4 : STA ROMSEL      ; update both shadow and register
+    STA &F4 : STA ROMSEL
 
-    ; Body
+    ; Save buffer pointer.
+    LDA #<(CHELL_SAVE_UNDER_BASE)
+    STA temp_mask_ptr
+    LDA #>(CHELL_SAVE_UNDER_BASE)
+    STA temp_mask_ptr+1
+
+    ; Body sprite + mask pointers (from SWRAM bank).
     LDA chell_body_index
-    JSR render_character_sprite
+    ASL A : TAX
+    LDA character_sprite_table,X   : STA sprite_ptr
+    LDA character_sprite_table+1,X : STA sprite_ptr+1
+    LDA character_mask_table,X     : STA mask_ptr
+    LDA character_mask_table+1,X   : STA mask_ptr+1
 
-    ; Skip overlay when dead.
+    JSR shadow_screen_on
+
+    ; --- Merged save-under + masked body blit (4 stripes × 32 bytes) ---
+    LDX #0
+.sadc_stripe
+    LDY #0
+.sadc_byte
+    ; Save screen byte to buffer.
+    LDA (screen_ptr),Y
+    STA (temp_mask_ptr),Y
+
+    ; Masked blit: same logic as plot_sprite12x32_masked_striped.
+    LDA (mask_ptr),Y
+    BEQ sadc_opaque
+    CMP #&FF
+    BEQ sadc_maybe_transparent
+
+    ; Partial mask: screen = (screen AND mask) OR sprite.
+    STA temp
+    LDA (screen_ptr),Y
+    AND temp
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP sadc_next
+
+.sadc_opaque
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP sadc_next
+
+.sadc_maybe_transparent
+    LDA (sprite_ptr),Y
+    BEQ sadc_next
+    ORA (screen_ptr),Y
+    STA (screen_ptr),Y
+
+.sadc_next
+    INY
+    CPY #32
+    BNE sadc_byte
+
+    ; Advance to next stripe.
+    INC screen_ptr+1
+
+    LDA sprite_ptr
+    CLC : ADC #32 : STA sprite_ptr
+    BCC sadc_sp_ok : INC sprite_ptr+1
+.sadc_sp_ok
+    LDA mask_ptr
+    CLC : ADC #32 : STA mask_ptr
+    BCC sadc_mp_ok : INC mask_ptr+1
+.sadc_mp_ok
+    LDA temp_mask_ptr
+    CLC : ADC #32 : STA temp_mask_ptr
+    BCC sadc_bp_ok : INC temp_mask_ptr+1
+.sadc_bp_ok
+    INX
+    CPX #4
+    BNE sadc_stripe
+
+    ; Restore screen_ptr (advanced 4 stripes).
+    LDA screen_ptr+1
+    SEC : SBC #4
+    STA screen_ptr+1
+
+    JSR shadow_screen_off
+
+    ; --- Overlay (reuses existing routine; toggles shadow internally) ---
     LDA char_dead
-    BNE dcc_no_overlay
-
-    ; Overlay
+    BNE sadc_no_overlay
     LDA chell_overlay_index
     JSR render_overlay_sprite
-  .dcc_no_overlay
+.sadc_no_overlay
 
-    ; Restore previous ROM selection and caller IRQ state.
     PLA : STA &F4 : STA ROMSEL
     PLP
     RTS

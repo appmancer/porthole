@@ -371,6 +371,120 @@
     RTS
 
 
+; Check if Chell or any cube collides with an active sentry.
+; On collision: disable the sentry (set SENTRY_STATE_DISABLED).
+; Uses tile-based AABB overlap (both sides 2 tiles wide).
+; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
+.check_sentry_collisions
+    LDY #0
+.csc_loop
+    CPY #OBJ_COUNT
+    BCC csc_not_done
+    RTS
+.csc_not_done
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_SENTRY
+    BEQ csc_is_sentry
+    JMP csc_next
+.csc_is_sentry
+    LDA obj_state,Y
+    AND #&FE              ; mask direction
+    BEQ csc_active        ; zero = active
+    JMP csc_next
+.csc_active
+    LDA obj_room,Y
+    CMP current_room
+    BEQ csc_in_room
+    JMP csc_next
+.csc_in_room
+
+    ; --- Active sentry in current room ---
+    ; Check Chell overlap (tile-based).
+    ; Chell tile pos: cx = char_tile_pos AND 15, cy = char_tile_pos >> 4
+    ; Chell footprint: 2 wide, 2 tall => tiles (cx..cx+1, cy..cy+1)
+    ; Sentry footprint: 2 wide, 1 tall => tiles (sx..sx+1, sy)
+    LDA char_tile_pos
+    AND #15
+    STA temp              ; chell_tx
+    LDA char_tile_pos
+    LSR A : LSR A : LSR A : LSR A
+    STA temp_y            ; chell_ty
+
+    ; X overlap: |cx - sx| <= 1
+    LDA obj_x,Y
+    SEC : SBC temp
+    BPL csc_cx_abs
+    EOR #&FF : CLC : ADC #1
+.csc_cx_abs
+    CMP #2 : BCS csc_check_cubes
+
+    ; Y overlap: chell_ty <= sy <= chell_ty+1
+    LDA obj_y,Y
+    CMP temp_y : BCC csc_check_cubes
+    LDA temp_y
+    CLC : ADC #2
+    CMP obj_y,Y : BCC csc_check_cubes
+    BEQ csc_check_cubes
+
+    ; Chell hit sentry — disable it.
+    JMP csc_disable
+
+.csc_check_cubes
+    ; Check all cubes in current room vs this sentry.
+    STY row_counter       ; save sentry index
+    LDX #0
+.csc_cube_loop
+    CPX #OBJ_COUNT
+    BCS csc_cube_done
+    LDA obj_type,X
+    CMP #OBJ_TYPE_CUBE
+    BNE csc_cube_next
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE csc_cube_next
+    LDA obj_room,X
+    CMP current_room
+    BNE csc_cube_next
+
+    ; Cube at same y as sentry?
+    LDA obj_y,X
+    CMP obj_y,Y
+    BNE csc_cube_next
+
+    ; X overlap: |cube_x - sentry_x| <= 1
+    LDA obj_x,X
+    SEC : SBC obj_x,Y
+    BPL csc_cube_abs
+    EOR #&FF : CLC : ADC #1
+.csc_cube_abs
+    CMP #2 : BCS csc_cube_next
+
+    ; Cube hit sentry — disable it.
+    LDY row_counter
+    JMP csc_disable
+
+.csc_cube_next
+    INX
+    JMP csc_cube_loop
+.csc_cube_done
+    LDY row_counter       ; restore sentry index
+
+.csc_next
+    INY
+    JMP csc_loop
+.csc_done
+    RTS
+
+.csc_disable
+    LDA obj_state,Y
+    ORA #SENTRY_STATE_DISABLED
+    STA obj_state,Y
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+    JMP csc_next
+
+
 ; Check if Chell overlaps any fizzler region in the current room.
 ; On contact: clear both portals, destroy carried cube.
 ; Skips entirely if there's nothing to fizzle (no portals, no cube).

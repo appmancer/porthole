@@ -86,10 +86,21 @@
       LDA move_held
       BNE ucm_vx_key_held
 
-      ; No key held: grounded → kill vx; airborne → preserve momentum.
-      ; Preserve fling momentum during post-teleport cooldown window.
+      ; No key held: normally kill vx when grounded.
+      ; During teleport cooldown, preserve only fling-speed momentum
+      ; (|vx| > WALK_VELOCITY) so walking through portals feels natural.
       LDA teleport_cooldown
-      BNE ucm_vx_done
+      BEQ ucm_no_fling
+      LDA char_vx
+      BEQ ucm_no_fling           ; vx=0, nothing to preserve
+      BMI ucm_fling_neg
+      CMP #(WALK_VELOCITY+1)
+      BCS ucm_vx_done            ; positive fling: preserve
+      JMP ucm_no_fling
+    .ucm_fling_neg
+      CMP #(256-WALK_VELOCITY)
+      BCC ucm_vx_done            ; negative fling: preserve
+    .ucm_no_fling
       LDA char_grounded
       BEQ ucm_vx_done
       LDA #0

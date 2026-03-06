@@ -1103,57 +1103,10 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
 ; Save-under helpers.
 ;
 ; These copy raw screen bytes into a contiguous buffer and restore them later.
-; This is intentionally separate from sprite masking.
+; save_chell_under is merged into save_and_draw_character_current (render_state.asm).
 ;
 ; Chell: 16x32 -> 4 stripes x 32 bytes.
 ; Reticle: 16x16 -> 2 stripes x 32 bytes.
-
-; Save 16x32 under screen_ptr into CHELL_SAVE_UNDER_BASE.
-.save_chell_under
-    PHP
-    SEI
-    JSR shadow_screen_on
-    ; temp_mask_ptr := source screen
-    LDA screen_ptr
-    STA temp_mask_ptr
-    LDA screen_ptr+1
-    STA temp_mask_ptr+1
-
-    ; sprite_ptr := dest buffer
-    LDA #<(CHELL_SAVE_UNDER_BASE)
-    STA sprite_ptr
-    LDA #>(CHELL_SAVE_UNDER_BASE)
-    STA sprite_ptr+1
-
-    LDY #0
-    STY temp
-.save_chell_stripe
-    LDY #0
-.save_chell_bytes
-    LDA (temp_mask_ptr),Y
-    STA (sprite_ptr),Y
-    INY
-    CPY #32
-    BNE save_chell_bytes
-
-    INC temp_mask_ptr+1
-
-    LDA sprite_ptr
-    CLC
-    ADC #32
-    STA sprite_ptr
-    BCC save_chell_next
-    INC sprite_ptr+1
-.save_chell_next
-
-    INC temp
-    LDA temp
-    CMP #4
-    BNE save_chell_stripe
-
-    JSR shadow_screen_off
-    PLP
-    RTS
 
 ; Restore 16x32 from CHELL_SAVE_UNDER_BASE to chell_prev_ptr.
 .restore_chell_under

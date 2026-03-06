@@ -345,9 +345,11 @@ MAX_BEAM_STEPS = 32
     LDA #0
     STA trace_steps
 
-    ; CEIL/FLOOR exits: the stored position is the empty space tile.
-    ; Step back one so the first advance in the loop lands on it.
-    ; WALL exits have horizontal dir (0 or 1) — no adjustment needed.
+    ; WALL exits: portal pos is the solid wall tile; first advance moves
+    ; into the open space past the portal — no adjustment needed.
+    ; CEIL/FLOOR exits: portal pos is the empty space tile; step back one
+    ; so the first advance in the loop lands on it (needed for crossroads
+    ; detection when the portal sits on a perpendicular static beam).
     LDA trace_dir
     CMP #2
     BCC tdb_no_adj             ; horizontal → WALL, skip

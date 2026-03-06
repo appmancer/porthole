@@ -131,9 +131,17 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
   .ucp_loop
     CPY #OBJ_COUNT
     BCS ucp_done
+    ; Process cubes and disabled sentries (same physics).
     LDA obj_type,Y
     CMP #OBJ_TYPE_CUBE
+    BEQ ucp_type_ok
+    CMP #OBJ_TYPE_SENTRY
     BNE ucp_next
+    ; Sentry: only if disabled (state bits 1-6 set), not if active.
+    LDA obj_state,Y
+    AND #&7E
+    BEQ ucp_next
+  .ucp_type_ok
     LDA obj_state,Y
     AND #OBJ_STATE_CARRIED
     BNE ucp_next
@@ -1297,10 +1305,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     TYA
     PHA
 
-    ; Skip carried cubes (they're represented by Chell's overlay while held).
-    LDA obj_type,Y
-    CMP #OBJ_TYPE_CUBE
-    BNE spo_not_carried
+    ; Skip carried objects (represented by Chell's overlay while held).
     LDA obj_state,Y
     AND #OBJ_STATE_CARRIED
     BEQ spo_not_carried
@@ -1351,7 +1356,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
 
   .spo_chk_exit
     CMP #OBJ_TYPE_EXIT
-    BEQ spo_done
+    BNE spo_chk_sentry
+    JMP spo_done
+  .spo_chk_sentry
     CMP #OBJ_TYPE_SENTRY
     BEQ spo_sentry
     JMP spo_done
@@ -1376,28 +1383,35 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     RTS
 
   .spo_sentry
-    ; Select sprite based on direction (obj_state bit 0).
+    ; Select sprite: direction (bit 0) x active/disabled (bits 1+).
     LDA obj_state,Y
-    AND #SENTRY_DIR_LEFT
-    BNE spo_sentry_left
-    LDA #<obj_sentry_r_x0
-    STA sprite_ptr
-    LDA #>obj_sentry_r_x0
-    STA sprite_ptr+1
-    LDA #<obj_sentry_r_x0_mask
-    STA mask_ptr
-    LDA #>obj_sentry_r_x0_mask
-    STA mask_ptr+1
+    STA temp
+    AND #&FE : BNE spo_sentry_dis
+    ; Active
+    LDA temp : AND #SENTRY_DIR_LEFT : BNE spo_sentry_al
+    LDA #<obj_sentry_r_x0 : STA sprite_ptr
+    LDA #>obj_sentry_r_x0 : STA sprite_ptr+1
+    LDA #<obj_sentry_r_x0_mask : STA mask_ptr
+    LDA #>obj_sentry_r_x0_mask : STA mask_ptr+1
     JMP spo_sentry_stamp
-  .spo_sentry_left
-    LDA #<obj_sentry_l_x0
-    STA sprite_ptr
-    LDA #>obj_sentry_l_x0
-    STA sprite_ptr+1
-    LDA #<obj_sentry_l_x0_mask
-    STA mask_ptr
-    LDA #>obj_sentry_l_x0_mask
-    STA mask_ptr+1
+  .spo_sentry_al
+    LDA #<obj_sentry_l_x1 : STA sprite_ptr
+    LDA #>obj_sentry_l_x1 : STA sprite_ptr+1
+    LDA #<obj_sentry_l_x1_mask : STA mask_ptr
+    LDA #>obj_sentry_l_x1_mask : STA mask_ptr+1
+    JMP spo_sentry_stamp
+  .spo_sentry_dis
+    LDA temp : AND #SENTRY_DIR_LEFT : BNE spo_sentry_dl
+    LDA #<obj_sentry_r_x1 : STA sprite_ptr
+    LDA #>obj_sentry_r_x1 : STA sprite_ptr+1
+    LDA #<obj_sentry_r_x1_mask : STA mask_ptr
+    LDA #>obj_sentry_r_x1_mask : STA mask_ptr+1
+    JMP spo_sentry_stamp
+  .spo_sentry_dl
+    LDA #<obj_sentry_l_x0 : STA sprite_ptr
+    LDA #>obj_sentry_l_x0 : STA sprite_ptr+1
+    LDA #<obj_sentry_l_x0_mask : STA mask_ptr
+    LDA #>obj_sentry_l_x0_mask : STA mask_ptr+1
   .spo_sentry_stamp
     ; 16x16 (same geometry as cube)
     LDA #2
@@ -1464,9 +1478,17 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
   .pad_cube_loop
     CPX #OBJ_COUNT
     BCS pad_done
+    ; Check cubes and disabled sentries on pad.
     LDA obj_type,X
     CMP #OBJ_TYPE_CUBE
+    BEQ pad_obj_type_ok
+    CMP #OBJ_TYPE_SENTRY
     BNE pad_cube_next
+    ; Sentry: must be disabled
+    LDA obj_state,X
+    AND #&7E
+    BEQ pad_cube_next
+  .pad_obj_type_ok
     LDA obj_state,X
     AND #OBJ_STATE_CARRIED
     BNE pad_cube_next
@@ -1579,9 +1601,17 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     ; --- Pickup ---
     LDY #0
   .hcpd_pick_loop
+    ; Pickable: cubes (always) or disabled sentries.
     LDA obj_type,Y
     CMP #OBJ_TYPE_CUBE
+    BEQ hcpd_type_ok
+    CMP #OBJ_TYPE_SENTRY
     BNE hcpd_pick_next
+    ; Sentry: must be disabled (bits 1-6 set)
+    LDA obj_state,Y
+    AND #&7E
+    BEQ hcpd_pick_next
+  .hcpd_type_ok
     LDA obj_state,Y
     AND #OBJ_STATE_CARRIED
     BNE hcpd_pick_next
@@ -1742,14 +1772,17 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     JMP tpc_fail
   .tpc_tile1_ok
 
-    ; Reject if another non-carried cube overlaps at same y.
+    ; Reject if another non-carried 2-wide object overlaps at same y.
     LDX #0
   .tpc_cube_scan
     CPX carried_cube_idx
     BEQ tpc_cube_next
     LDA obj_type,X
     CMP #OBJ_TYPE_CUBE
+    BEQ tpc_obj_check
+    CMP #OBJ_TYPE_SENTRY
     BNE tpc_cube_next
+  .tpc_obj_check
     LDA obj_state,X
     AND #OBJ_STATE_CARRIED
     BNE tpc_cube_next
@@ -1874,10 +1907,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     JMP rpobj_next
 
   .rpobj_in_room
-    ; Skip carried cubes (they're represented by Chell's overlay while held).
-    LDA obj_type,Y
-    CMP #OBJ_TYPE_CUBE
-    BNE rpobj_not_carried
+    ; Skip carried objects (they're represented by Chell's overlay while held).
     LDA obj_state,Y
     AND #OBJ_STATE_CARRIED
     BEQ rpobj_not_carried
@@ -1957,28 +1987,35 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     JMP rpobj_next
 
   .rpobj_sentry
-    ; Select sprite based on direction (obj_state bit 0).
+    ; Select sprite: direction (bit 0) x active/disabled (bits 1+).
     LDA obj_state,Y
-    AND #SENTRY_DIR_LEFT
-    BNE rpobj_sentry_left
-    LDA #<obj_sentry_r_x0
-    STA sprite_ptr
-    LDA #>obj_sentry_r_x0
-    STA sprite_ptr+1
-    LDA #<obj_sentry_r_x0_mask
-    STA mask_ptr
-    LDA #>obj_sentry_r_x0_mask
-    STA mask_ptr+1
+    STA temp
+    AND #&FE : BNE rpobj_sentry_dis
+    ; Active
+    LDA temp : AND #SENTRY_DIR_LEFT : BNE rpobj_sentry_al
+    LDA #<obj_sentry_r_x0 : STA sprite_ptr
+    LDA #>obj_sentry_r_x0 : STA sprite_ptr+1
+    LDA #<obj_sentry_r_x0_mask : STA mask_ptr
+    LDA #>obj_sentry_r_x0_mask : STA mask_ptr+1
     JMP rpobj_sentry_stamp
-  .rpobj_sentry_left
-    LDA #<obj_sentry_l_x0
-    STA sprite_ptr
-    LDA #>obj_sentry_l_x0
-    STA sprite_ptr+1
-    LDA #<obj_sentry_l_x0_mask
-    STA mask_ptr
-    LDA #>obj_sentry_l_x0_mask
-    STA mask_ptr+1
+  .rpobj_sentry_al
+    LDA #<obj_sentry_l_x1 : STA sprite_ptr
+    LDA #>obj_sentry_l_x1 : STA sprite_ptr+1
+    LDA #<obj_sentry_l_x1_mask : STA mask_ptr
+    LDA #>obj_sentry_l_x1_mask : STA mask_ptr+1
+    JMP rpobj_sentry_stamp
+  .rpobj_sentry_dis
+    LDA temp : AND #SENTRY_DIR_LEFT : BNE rpobj_sentry_dl
+    LDA #<obj_sentry_r_x1 : STA sprite_ptr
+    LDA #>obj_sentry_r_x1 : STA sprite_ptr+1
+    LDA #<obj_sentry_r_x1_mask : STA mask_ptr
+    LDA #>obj_sentry_r_x1_mask : STA mask_ptr+1
+    JMP rpobj_sentry_stamp
+  .rpobj_sentry_dl
+    LDA #<obj_sentry_l_x0 : STA sprite_ptr
+    LDA #>obj_sentry_l_x0 : STA sprite_ptr+1
+    LDA #<obj_sentry_l_x0_mask : STA mask_ptr
+    LDA #>obj_sentry_l_x0_mask : STA mask_ptr+1
   .rpobj_sentry_stamp
     TYA
     PHA
@@ -2017,9 +2054,16 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
   .cocp_loop
     CPY #OBJ_COUNT
     BCS cocp_done
+    ; Process cubes and disabled sentries.
     LDA obj_type,Y
     CMP #OBJ_TYPE_CUBE
+    BEQ cocp_type_ok
+    CMP #OBJ_TYPE_SENTRY
     BNE cocp_next
+    LDA obj_state,Y
+    AND #&7E
+    BEQ cocp_next         ; active sentry, skip
+  .cocp_type_ok
     LDA obj_state,Y
     AND #OBJ_STATE_CARRIED
     BNE cocp_next
