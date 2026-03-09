@@ -112,7 +112,7 @@ else
   BEEBASM="beebasm"
 fi
 
-BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTAL" -boot PROGRAM)
+BEEBASM_ARGS=(-i mode5/main.asm -do "${OUT_SSD}" -title "PORTAL" -boot PROGRAM)
 
 # Always emit a symbols file for tooling.
 BEEBASM_ARGS+=( -dd -labels .tmp/beebasm.labels )

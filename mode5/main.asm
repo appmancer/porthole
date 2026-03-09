@@ -1,4 +1,4 @@
-INCLUDE "oscalls.asm"
+INCLUDE "shared/oscalls.asm"
 
 ; Zero page variables.
 ;
@@ -889,32 +889,32 @@ CHELL_DEAD_BASE              = 48
 
 
 ; === Render-safe zone: visible when X=0 or X=1 ===
-INCLUDE "render.asm"
-INCLUDE "render_state.asm"
-INCLUDE "room_runtime.asm"
-INCLUDE "debug.asm"
-INCLUDE "lookup_tables.asm"
-INCLUDE "sprites.asm"
-INCLUDE "masks.asm"
+INCLUDE "mode5/render.asm"
+INCLUDE "mode5/render_state.asm"
+INCLUDE "mode5/room_runtime.asm"
+INCLUDE "mode5/debug.asm"
+INCLUDE "mode5/lookup_tables.asm"
+INCLUDE "mode5/sprites.asm"
+INCLUDE "mode5/masks.asm"
 ; === End render-safe zone ===
 
 ; === Update-only zone: visible only when X=0 ===
-INCLUDE "portal_teleport.asm"
-INCLUDE "room_exits.asm"
-INCLUDE "reticle.asm"
-INCLUDE "input.asm"
-INCLUDE "portal_place.asm"
-INCLUDE "frame_update.asm"
-INCLUDE "persistent_objects.asm"
-INCLUDE "ui.asm"
-INCLUDE "screens.asm"
-INCLUDE "loaders.asm"
-INCLUDE "timing.asm"
-INCLUDE "movement.asm"
-INCLUDE "laser.asm"
-INCLUDE "tilemap.asm"
-INCLUDE "objects.asm"
-INCLUDE "persistent_objects_data.asm"
+INCLUDE "shared/portal_teleport.asm"
+INCLUDE "shared/room_exits.asm"
+INCLUDE "shared/reticle.asm"
+INCLUDE "shared/input.asm"
+INCLUDE "shared/portal_place.asm"
+INCLUDE "shared/frame_update.asm"
+INCLUDE "shared/persistent_objects.asm"
+INCLUDE "mode5/ui.asm"
+INCLUDE "mode5/screens.asm"
+INCLUDE "mode5/loaders.asm"
+INCLUDE "shared/timing.asm"
+INCLUDE "shared/movement.asm"
+INCLUDE "shared/laser.asm"
+INCLUDE "shared/tilemap.asm"
+INCLUDE "shared/objects.asm"
+INCLUDE "shared/persistent_objects_data.asm"
 
 .end
 
@@ -926,7 +926,7 @@ SAVE "PORTHLE", entry, end
 ; Loaded by boot_loader to &0900 before the game starts.
 ORG &0900
 .trampoline_start
-INCLUDE "trampoline.asm"
+INCLUDE "shared/trampoline.asm"
 .trampoline_end
 SAVE "TRAMPLN", trampoline_start, trampoline_end
 
@@ -936,7 +936,7 @@ SAVE "TRAMPLN", trampoline_start, trampoline_end
 CLEAR &0E00, &1900
 ORG &0E00
 .program_start
-INCLUDE "boot_loader.asm"
+INCLUDE "mode5/boot_loader.asm"
 .program_end
 SAVE "PROGRAM", program_start, program_end
 
