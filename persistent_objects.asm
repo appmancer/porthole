@@ -1395,17 +1395,17 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA #>obj_sentry_r_x0_mask : STA mask_ptr+1
     JMP spo_sentry_stamp
   .spo_sentry_al
-    LDA #<obj_sentry_l_x1 : STA sprite_ptr
-    LDA #>obj_sentry_l_x1 : STA sprite_ptr+1
-    LDA #<obj_sentry_l_x1_mask : STA mask_ptr
-    LDA #>obj_sentry_l_x1_mask : STA mask_ptr+1
+    LDA #<obj_sentry_l_x0 : STA sprite_ptr
+    LDA #>obj_sentry_l_x0 : STA sprite_ptr+1
+    LDA #<obj_sentry_l_x0_mask : STA mask_ptr
+    LDA #>obj_sentry_l_x0_mask : STA mask_ptr+1
     JMP spo_sentry_stamp
   .spo_sentry_dis
     LDA temp : AND #SENTRY_DIR_LEFT : BNE spo_sentry_dl
-    LDA #<obj_sentry_r_x1 : STA sprite_ptr
-    LDA #>obj_sentry_r_x1 : STA sprite_ptr+1
-    LDA #<obj_sentry_r_x1_mask : STA mask_ptr
-    LDA #>obj_sentry_r_x1_mask : STA mask_ptr+1
+    LDA #<obj_sentry_r_x0 : STA sprite_ptr
+    LDA #>obj_sentry_r_x0 : STA sprite_ptr+1
+    LDA #<obj_sentry_r_x0_mask : STA mask_ptr
+    LDA #>obj_sentry_r_x0_mask : STA mask_ptr+1
     JMP spo_sentry_stamp
   .spo_sentry_dl
     LDA #<obj_sentry_l_x0 : STA sprite_ptr
@@ -1999,17 +1999,17 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDA #>obj_sentry_r_x0_mask : STA mask_ptr+1
     JMP rpobj_sentry_stamp
   .rpobj_sentry_al
-    LDA #<obj_sentry_l_x1 : STA sprite_ptr
-    LDA #>obj_sentry_l_x1 : STA sprite_ptr+1
-    LDA #<obj_sentry_l_x1_mask : STA mask_ptr
-    LDA #>obj_sentry_l_x1_mask : STA mask_ptr+1
+    LDA #<obj_sentry_l_x0 : STA sprite_ptr
+    LDA #>obj_sentry_l_x0 : STA sprite_ptr+1
+    LDA #<obj_sentry_l_x0_mask : STA mask_ptr
+    LDA #>obj_sentry_l_x0_mask : STA mask_ptr+1
     JMP rpobj_sentry_stamp
   .rpobj_sentry_dis
     LDA temp : AND #SENTRY_DIR_LEFT : BNE rpobj_sentry_dl
-    LDA #<obj_sentry_r_x1 : STA sprite_ptr
-    LDA #>obj_sentry_r_x1 : STA sprite_ptr+1
-    LDA #<obj_sentry_r_x1_mask : STA mask_ptr
-    LDA #>obj_sentry_r_x1_mask : STA mask_ptr+1
+    LDA #<obj_sentry_r_x0 : STA sprite_ptr
+    LDA #>obj_sentry_r_x0 : STA sprite_ptr+1
+    LDA #<obj_sentry_r_x0_mask : STA mask_ptr
+    LDA #>obj_sentry_r_x0_mask : STA mask_ptr+1
     JMP rpobj_sentry_stamp
   .rpobj_sentry_dl
     LDA #<obj_sentry_l_x0 : STA sprite_ptr
