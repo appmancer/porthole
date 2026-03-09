@@ -9,7 +9,7 @@
 ; buffer, which persists until the next level load.
 
 ; Global constants (max across all levels).
-LEVEL_COUNT = 8
+LEVEL_COUNT = 9
 MAX_ROOMS = 8
 OBJ_COUNT = 16
 OBJ_DEF_SIZE = 6
@@ -243,7 +243,7 @@ ALIGN 256
     INC temp_sprite_ptr+1
 .ll_laser_adv
 .ll_laser_zero_fill
-    LDA #0
+    LDA #&FF                        ; sentinel: &FF room = unused laser slot
 .ll_laser_zf_loop
     CPY #LASER_COUNT * LASER_DEF_SIZE
     BCS ll_laser_done

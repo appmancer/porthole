@@ -112,6 +112,8 @@ MAX_BEAM_STEPS = 32
 
     ; Load laser fields into local storage.
     LDA laser_defs,X           ; room
+    CMP #&FF                   ; &FF = unused slot (no laser on this level)
+    BEQ rab_next_laser
     STA trace_room
     LDA laser_defs+1,X        ; wall_x
     STA trace_wall_x

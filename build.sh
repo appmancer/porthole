@@ -82,7 +82,7 @@ mkdir -p .tmp
 
 # --- Binary level pack (LYNNE-loaded) ---
 ./tools/gen-level --binary-pack \
-  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 levels/level6 levels/level7 levels/level8 \
+  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 levels/level6 levels/level7 levels/level8 levels/level9 \
   --out ".tmp/LVLS01.dat"
 
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)

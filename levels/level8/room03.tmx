@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="14">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,
+33,33,33,33,33,33,33,33,37,1,1,38,33,33,33,33,
+44,35,35,35,35,35,35,35,40,1,1,39,35,35,35,43,
+34,24,17,17,17,17,17,17,17,17,17,17,17,17,17,36,
+34,1,1,0,0,0,0,0,1,1,1,1,1,1,1,36,
+34,0,1,0,1,0,0,1,1,1,1,1,1,1,1,36,
+41,33,33,37,1,1,38,33,33,33,33,33,33,33,33,42,
+44,35,35,40,1,1,39,35,35,35,35,35,35,35,35,43,
+34,20,0,0,0,1,1,1,1,1,1,1,1,1,1,36,
+34,1,1,0,0,0,1,0,1,1,1,1,1,1,1,36,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+41,33,33,33,37,1,1,1,1,1,1,38,33,33,33,42
+</data>
+ </layer>
+ <objectgroup id="2" name="objects"/>
+ <objectgroup id="3" name="meta">
+  <object id="9" name="edge_exit_08" type="edge_exit" x="0" y="16" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_08"/>
+    <property name="to" value="room00"/>
+   </properties>
+  </object>
+  <object id="10" name="edge_exit_10" type="edge_exit" x="80" y="240" width="96" height="16">
+   <properties>
+    <property name="id" value="edge_exit_10"/>
+    <property name="to" value="room02"/>
+   </properties>
+  </object>
+  <object id="11" name="edge_exit_09" type="edge_exit" x="240" y="16" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_09"/>
+    <property name="to" value="room04"/>
+   </properties>
+  </object>
+  <object id="12" name="laser_01" type="laser" x="240" y="96" width="16" height="16">
+   <properties>
+    <property name="dir" value="right"/>
+    <property name="id" value="laser_01"/>
+   </properties>
+  </object>
+  <object id="13" name="target" type="target" x="16" y="176" width="16" height="16">
+   <properties>
+    <property name="channel" value="2"/>
+    <property name="id" value="target"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

@@ -43,26 +43,12 @@
     <property name="to" value="room01"/>
    </properties>
   </object>
-  <object id="18" name="killzone" type="killzone" x="128" y="48" width="112" height="16">
-   <properties>
-    <property name="id" value="killzone"/>
-    <property name="sentry" value="sentry"/>
-   </properties>
-  </object>
-  <object id="19" x="320" y="272"/>
  </objectgroup>
  <objectgroup id="3" name="objects">
   <object id="9" name="exit" type="exit" x="16" y="32">
    <properties>
     <property name="channel" value="0"/>
     <property name="id" value="exit_0"/>
-   </properties>
-   <point/>
-  </object>
-  <object id="17" name="sentry" type="sentry" x="96" y="48">
-   <properties>
-    <property name="dir" value="right"/>
-    <property name="id" value="sentry"/>
    </properties>
    <point/>
   </object>
