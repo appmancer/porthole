@@ -62,13 +62,30 @@ mkdir -p .tmp
   --spec "portal_v_red_l^:sprites/Portal V - Red (Right).csv" \
   --spec "portal_v_yel_r:sprites/Portal V - Yellow (Right).csv" \
   --spec "portal_v_yel_l^:sprites/Portal V - Yellow (Right).csv" \
-  --spec "portal_b_red:sprites/Portal B - Red.csv" \
-  --spec "portal_b_yel:sprites/Portal B - Yellow.csv" \
   --spec "portal_h_red_floor:sprites/Portal H - Red (Floor).csv" \
   --spec "portal_h_red_ceil:sprites/Portal H - Red (Ceil).csv" \
   --spec "portal_h_yel_floor:sprites/Portal H - Yellow (Floor).csv" \
   --spec "portal_h_yel_ceil:sprites/Portal H - Yellow (Ceil).csv" \
-  --spec "obj_cube:sprites/Objects - Cube.csv"
+  --spec "obj_cube:sprites/Objects - Cube.csv" \
+  --spec "obj_sentry_r@2:sprites/Objects - Sentry.csv" \
+  --spec "obj_sentry_l^@2:sprites/Objects - Sentry.csv" \
+  --spec "obj_spark@2/2:sprites/Objects - Spark.csv" \
+  --spec "obj_sparkv%4/2:sprites/Objects - Spark.csv"
+
+# Music event streams (assembled into SWRAM bank 6).
+if [[ ! -f "sound/gymnopedie_split.mid" ]]; then
+  python3 tools/midi-split.py \
+    --midi "sound/Erik Satie - Gymnopedie No. 1 [Perfect MIDI].mid" \
+    --track 1 --channel 1 --split-note 50 \
+    --out "sound/gymnopedie_split.mid"
+fi
+python3 tools/gen-music.py \
+  --midi "sound/gymnopedie_split.mid" \
+  --out sound/gymnopedie_data.asm \
+  --title 'Satie "Gymnopedie No. 1"' \
+  --spec 'gymno_melody,0,0,999999,trim,high,m50' \
+  --spec 'gymno_bass,2,1,999999' \
+  --spec 'gymno_chord,3,1,999999,high'
 
 ./tools/gen-tiles \
   --in "sprites/NewTiles - Grid.csv" \
@@ -80,7 +97,7 @@ mkdir -p .tmp
 
 # --- Binary level pack (LYNNE-loaded) ---
 ./tools/gen-level --binary-pack \
-  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 levels/level6 levels/level7 \
+  --levels levels/level1 levels/level2 levels/level3 levels/level4 levels/level5 levels/level6 levels/level7 levels/level8 levels/level9 levels/level10 levels/level11 levels/level12 levels/level13 \
   --out ".tmp/LVLS01.dat"
 
 LOADSCR_WH=$(identify -format "%w %h" loading.png 2>/dev/null || true)
@@ -110,7 +127,7 @@ else
   BEEBASM="beebasm"
 fi
 
-BEEBASM_ARGS=(-i main.asm -do "${OUT_SSD}" -title "PORTAL" -boot PROGRAM)
+BEEBASM_ARGS=(-i mode5/main.asm -do "${OUT_SSD}" -title "PORTAL" -boot PROGRAM)
 
 # Always emit a symbols file for tooling.
 BEEBASM_ARGS+=( -dd -labels .tmp/beebasm.labels )

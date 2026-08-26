@@ -1,0 +1,72 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="16">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx" />
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+54,54,54,54,54,34,1,1,1,1,36,54,54,54,54,54,
+54,54,54,54,54,34,1,1,1,1,36,54,54,54,54,54,
+54,54,54,54,54,41,37,1,1,38,42,54,54,54,54,54,
+44,35,35,35,35,35,40,1,1,39,35,43,54,54,54,54,
+34,1,1,1,1,1,1,1,1,1,1,36,54,54,54,54,
+34,1,1,1,1,1,1,1,1,1,1,36,54,54,54,54,
+34,1,1,38,33,33,33,33,33,37,1,36,54,54,54,54,
+34,1,1,36,54,54,54,54,54,40,1,39,54,54,54,54,
+34,1,1,36,54,1,1,31,1,1,1,1,13,4,5,54,
+34,1,1,36,54,1,1,32,1,1,1,1,14,6,7,54,
+34,1,1,36,54,54,54,54,54,54,54,54,54,54,54,54,
+40,1,1,39,35,35,35,35,35,35,35,35,35,35,35,35,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="9" name="sentry_5" type="sentry" x="80" y="144">
+   <properties>
+    <property name="dir" value="right" />
+    <property name="id" value="sentry_5" />
+   </properties>
+   <point />
+  </object>
+  <object id="14" name="barrier_01" type="barrier" x="112" y="128" width="16" height="32">
+   <properties>
+    <property name="channel" value="0" />
+    <property name="id" value="barrier_01" />
+   </properties>
+  </object>
+  <object id="15" name="exit" type="exit" x="208" y="128">
+   <properties>
+    <property name="channel" value="1" />
+    <property name="id" value="exit" />
+   </properties>
+   <point />
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="10" name="killzone_5" type="killzone" x="96" y="144" width="112" height="16">
+   <properties>
+    <property name="id" value="killzone_5" />
+    <property name="sentry" value="sentry_5" />
+   </properties>
+  </object>
+  <object id="11" name="edge_exit_02" type="edge_exit" x="96" y="0" width="64" height="16">
+   <properties>
+    <property name="id" value="edge_exit_02" />
+    <property name="to" value="room00" />
+   </properties>
+  </object>
+  <object id="12" name="edge_exit_03" type="edge_exit" x="0" y="192" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_03" />
+    <property name="to" value="room08" />
+   </properties>
+  </object>
+  <object id="13" name="edge_exit_04" type="edge_exit" x="240" y="192" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_04" />
+    <property name="to" value="room02" />
+   </properties>
+  </object>
+ </objectgroup>
+</map>

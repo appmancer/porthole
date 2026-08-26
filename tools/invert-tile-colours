@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Swap two MODE 5 colour indices throughout a tile CSV.
+
+Used to flip a tile sheet between "mostly colour A, colour B for detail"
+and "mostly colour B, colour A for detail" without redrawing anything -
+e.g. after a palette change makes the previously-dominant background
+colour the wrong one to flood with.
+
+Input format matches tools/gen-tiles:
+- CSV contains one or more tile blocks separated by blank rows.
+- Each block's rows start with pixel values '.'/'0'..'3' (only the
+  first 8 columns are pixels; extra columns are passed through as-is).
+- Label lines starting with 'T' (e.g. "T01 - ...") are passed through
+  unchanged.
+
+The swap is its own inverse: running it twice restores the original.
+
+Example:
+  ./tools/invert-tile-colours --in "sprites/NewTiles - Grid.csv" --in-place
+  ./tools/invert-tile-colours --in "sprites/NewTiles - Grid.csv" \
+      --out "sprites/NewTiles - Grid (inverted).csv" --pair 0,2
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+
+def invert_line(line: str, *, a: str, b: str) -> str:
+    if line.lstrip().startswith("T"):
+        return line
+    if not line.strip(","):
+        return line
+
+    tokens = line.split(",")
+    for i in range(min(8, len(tokens))):
+        t = tokens[i].strip()
+        if t == a:
+            tokens[i] = b
+        elif t == b:
+            tokens[i] = a
+        elif t == "." and a == "0":
+            tokens[i] = b
+    return ",".join(tokens)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--in", dest="in_path", required=True, type=Path)
+    ap.add_argument("--out", dest="out_path", type=Path)
+    ap.add_argument("--in-place", action="store_true")
+    ap.add_argument(
+        "--pair",
+        default="0,2",
+        help="Comma-separated pair of colour indices to swap (default: 0,2)",
+    )
+    args = ap.parse_args()
+
+    if bool(args.out_path) == bool(args.in_place):
+        raise SystemExit("specify exactly one of --out or --in-place")
+
+    a, b = args.pair.split(",")
+    lines = args.in_path.read_text().splitlines()
+    out_lines = [invert_line(line, a=a, b=b) for line in lines]
+    text = "\n".join(out_lines) + "\n"
+
+    out_path = args.in_path if args.in_place else args.out_path
+    out_path.write_text(text)
+    print(f"wrote {out_path} (swapped {a} <-> {b})")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,61 +1,45 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="15">
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="12">
  <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
  <layer id="1" name="Tile Layer 1" width="16" height="16">
   <data encoding="csv">
-35,35,54,35,35,35,35,35,35,35,35,35,35,35,35,35,
-1,1,15,1,1,1,1,1,1,1,1,1,1,1,1,1,
-1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,
-1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,
-33,33,33,33,33,33,33,33,37,0,0,38,33,33,33,33,
-44,35,35,35,35,35,35,35,40,1,0,39,35,35,35,43,
-34,1,1,0,0,0,0,0,1,1,1,1,1,1,1,36,
-54,24,17,17,17,17,17,17,17,17,17,17,17,17,17,36,
-34,0,1,0,0,0,0,1,1,1,1,1,1,1,1,36,
-54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,36,
-54,1,0,38,33,33,33,33,33,33,33,33,37,1,1,36,
-54,1,0,39,35,35,35,35,35,35,35,35,40,1,1,36,
-34,1,1,0,0,0,0,0,1,1,1,1,1,1,1,36,
-34,1,1,1,1,1,1,1,1,1,1,1,1,1,21,54,
-34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
-41,33,33,33,33,33,33,33,33,33,33,33,33,33,33,42
+35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,43,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,36,
+1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,36,
+33,37,0,0,0,0,0,38,33,33,33,33,33,33,33,42,
+54,34,0,0,0,0,0,36,54,54,54,54,54,54,54,54,
+54,34,1,0,0,0,0,36,54,54,54,54,54,54,54,54,
+54,34,1,0,0,0,0,36,54,54,54,54,54,54,54,54,
+54,34,1,0,0,0,0,36,54,54,54,54,54,54,54,54,
+54,34,1,0,0,0,0,39,54,54,54,54,54,54,54,54,
+54,34,0,0,0,0,0,0,1,1,1,1,1,1,1,36,
+54,34,0,0,0,0,0,0,1,1,1,1,1,1,1,36,
+54,34,1,0,0,0,0,0,1,1,1,1,2,1,1,36,
+54,34,1,1,1,1,1,38,54,54,54,54,54,54,54,54,
+54,34,1,1,1,1,1,36,54,54,54,54,54,54,54,54,
+54,34,1,1,1,1,1,36,54,54,54,54,54,54,54,54
 </data>
  </layer>
- <objectgroup id="2" name="objects">
-   <object id="14" name="spawner" type="spawner" x="32" y="16">
-    <properties>
-     <property name="channel" value="1"/>
-     <property name="id" value="spawner"/>
-    </properties>
-    <point/>
-   </object>
-  </objectgroup>
+ <objectgroup id="2" name="objects"/>
  <objectgroup id="3" name="meta">
-   <object id="9" name="laser_00" type="laser" x="240" y="112" width="16" height="16">
-    <properties>
-     <property name="channel" value="1"/>
-     <property name="dir" value="right"/>
-     <property name="id" value="laser_00"/>
-    </properties>
-   </object>
-  <object id="10" name="edge_exit_10" type="edge_exit" x="240" y="16" width="16" height="48">
+  <object id="9" name="edge_exit_11" type="edge_exit" x="0" y="16" width="16" height="48">
    <properties>
-    <property name="id" value="edge_exit_10"/>
+    <property name="id" value="edge_exit_11"/>
     <property name="to" value="room03"/>
    </properties>
   </object>
-  <object id="11" name="edge_exit_11" type="edge_exit" x="0" y="16" width="16" height="48">
+  <object id="10" name="edge_exit_12" type="edge_exit" x="32" y="240" width="80" height="16">
    <properties>
-    <property name="id" value="edge_exit_11"/>
+    <property name="id" value="edge_exit_12"/>
     <property name="to" value="room05"/>
    </properties>
   </object>
-  <object id="12" name="target_00" type="target" x="224" y="208" width="16" height="16">
+  <object id="11" name="button_01" type="button" x="192" y="192" width="16" height="16">
    <properties>
-    <property name="channel" value="1"/>
-    <property name="id" value="target_00"/>
+    <property name="channel" value="0"/>
+    <property name="id" value="button_01"/>
    </properties>
   </object>
-
  </objectgroup>
 </map>

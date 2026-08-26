@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="16">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+44,35,35,35,35,35,35,35,35,35,35,35,35,54,54,43,
+34,1,1,1,1,1,1,1,1,1,1,1,1,15,1,36,
+34,1,1,1,1,1,1,1,1,1,1,2,1,1,1,36,
+34,1,1,38,33,33,33,33,33,33,33,33,37,1,1,36,
+34,1,1,39,35,35,35,35,35,35,43,44,40,1,1,36,
+34,1,1,1,1,1,1,1,1,1,36,34,1,1,1,36,
+34,1,1,1,1,1,1,1,1,1,36,34,1,1,1,36,
+41,33,33,33,33,33,33,37,1,1,36,41,33,33,33,42,
+35,35,35,35,35,35,43,34,1,1,39,35,35,35,35,43,
+1,1,1,1,1,1,36,34,1,1,1,1,1,1,1,36,
+1,1,1,1,1,1,36,34,1,1,1,1,1,1,1,36,
+33,33,33,37,1,1,36,41,33,33,33,33,37,1,1,36,
+44,35,35,40,1,1,39,35,35,35,35,35,40,1,1,39,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+34,1,1,38,33,33,33,33,33,33,33,33,33,33,33,33
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="12" name="spawner_0" type="spawner" x="208" y="16">
+   <properties>
+    <property name="channel" value="3"/>
+    <property name="id" value="spawner_0"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="14" name="button_0" type="button" x="176" y="32" width="16" height="16">
+   <properties>
+    <property name="channel" value="3"/>
+    <property name="id" value="button_0"/>
+   </properties>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="10" name="edge_exit_04" type="edge_exit" x="0" y="144" width="16" height="32">
+   <properties>
+    <property name="id" value="edge_exit_04"/>
+    <property name="to" value="room01"/>
+   </properties>
+  </object>
+  <object id="11" name="edge_exit_05" type="edge_exit" x="240" y="208" width="16" height="32">
+   <properties>
+    <property name="id" value="edge_exit_05"/>
+    <property name="to" value="room03"/>
+   </properties>
+  </object>
+  <object id="15" name="edge_exit_09" type="edge_exit" x="16" y="240" width="32" height="16">
+   <properties>
+    <property name="id" value="edge_exit_09"/>
+    <property name="to" value="room05"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="22">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+34,1,2,1,1,1,1,1,1,1,1,1,1,1,1,36,
+54,54,54,37,1,1,1,1,1,1,1,1,1,1,1,36,
+44,35,35,40,1,1,1,1,1,1,1,1,1,38,33,42,
+34,1,1,1,1,1,1,1,1,1,1,1,1,36,54,54,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,54,
+34,1,1,1,1,1,1,1,1,1,1,1,1,39,35,43,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+41,33,37,1,1,1,1,1,1,1,1,1,1,1,1,36,
+54,54,34,1,1,1,1,1,1,1,1,1,1,1,1,36,
+54,54,34,1,1,1,1,1,1,1,1,1,1,1,1,36,
+35,35,40,1,1,1,1,1,1,1,1,1,1,1,1,39,
+1,1,1,1,1,45,46,48,49,46,47,1,1,1,1,1,
+1,1,1,1,1,1,1,36,34,1,1,1,1,1,1,1,
+54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,54
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="18" name="sentry_3" type="sentry" x="224" y="96">
+   <properties>
+    <property name="dir" value="left"/>
+    <property name="id" value="sentry_3"/>
+   </properties>
+   <point/>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="15" name="killzone_2" type="killzone" x="16" y="96" width="208" height="16">
+   <properties>
+    <property name="id" value="killzone_2"/>
+    <property name="sentry" value="sentry_3"/>
+   </properties>
+  </object>
+  <object id="19" name="edge_exit_13" type="edge_exit" x="240" y="208" width="16" height="32">
+   <properties>
+    <property name="id" value="edge_exit_13"/>
+    <property name="to" value="room05"/>
+   </properties>
+  </object>
+  <object id="20" name="edge_exit_14" type="edge_exit" x="0" y="208" width="16" height="32">
+   <properties>
+    <property name="id" value="edge_exit_14"/>
+    <property name="to" value="room07"/>
+   </properties>
+  </object>
+  <object id="21" name="button_3" type="button" x="32" y="32" width="16" height="16">
+   <properties>
+    <property name="channel" value="6"/>
+    <property name="id" value="button_3"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

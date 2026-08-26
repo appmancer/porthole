@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="15">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+35,35,35,35,35,54,54,54,54,54,54,54,54,54,54,54,
+1,1,1,1,1,55,1,1,1,1,1,1,1,1,36,54,
+1,1,1,1,1,56,1,1,1,1,1,1,1,1,36,54,
+1,2,1,1,1,57,1,1,1,1,1,1,1,1,36,54,
+33,54,33,33,33,54,54,54,54,37,1,1,1,1,36,54,
+54,54,54,54,54,54,54,54,54,34,1,1,1,1,36,54,
+54,54,54,54,54,54,54,54,54,54,58,59,59,60,54,54,
+54,54,54,54,54,54,54,54,54,34,1,1,1,1,36,54,
+54,54,54,54,54,54,54,54,54,34,1,1,1,1,36,54,
+54,54,54,54,54,54,54,54,54,34,1,1,1,1,36,54,
+54,54,54,54,54,54,54,54,54,34,1,1,1,1,36,54,
+35,35,35,35,35,54,35,35,35,40,1,1,1,1,36,54,
+1,1,1,1,1,55,1,1,1,1,1,1,1,1,36,54,
+1,1,1,1,1,56,1,1,1,1,1,1,1,1,36,54,
+1,1,1,1,1,57,1,1,1,1,1,1,1,1,36,54,
+33,33,33,33,33,54,33,33,33,33,33,33,33,33,42,54
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="11" name="barrier_08" type="barrier" x="80" y="16" width="16" height="48">
+   <properties>
+    <property name="channel" value="4"/>
+    <property name="id" value="barrier_08"/>
+   </properties>
+  </object>
+  <object id="12" name="barrier_07" type="barrier" x="80" y="192" width="16" height="48">
+   <properties>
+    <property name="channel" value="4"/>
+    <property name="id" value="barrier_07"/>
+    <property name="invert" value="1"/>
+   </properties>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="9" name="edge_exit_11" type="edge_exit" x="0" y="16" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_11"/>
+    <property name="to" value="room02"/>
+   </properties>
+  </object>
+  <object id="10" name="edge_exit_12" type="edge_exit" x="0" y="192" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_12"/>
+    <property name="to" value="room02"/>
+   </properties>
+  </object>
+  <object id="13" name="zapper_03" type="zapper" x="160" y="96" width="64" height="16">
+   <properties>
+    <property name="channel" value="4"/>
+    <property name="id" value="zapper_03"/>
+    <property name="invert" value="1"/>
+   </properties>
+  </object>
+  <object id="14" name="button_5" type="button" x="16" y="48" width="16" height="16">
+   <properties>
+    <property name="channel" value="4"/>
+    <property name="id" value="button_5"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="11">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+35,35,35,35,35,35,35,35,35,35,35,43,54,54,54,54,
+1,1,1,1,1,1,1,1,1,1,1,36,54,54,54,54,
+1,1,1,1,1,1,1,1,1,1,1,36,54,54,54,54,
+1,1,1,1,1,1,1,1,1,1,1,36,54,54,54,54,
+1,1,1,1,1,1,1,1,1,1,1,36,54,54,54,54,
+33,33,33,33,33,37,1,1,1,1,1,36,54,54,54,54,
+54,54,54,54,54,34,1,1,1,1,1,36,54,54,54,54,
+54,54,54,54,54,34,1,1,1,1,1,36,54,54,54,54,
+54,54,54,54,54,34,1,1,1,1,1,36,54,54,54,54,
+54,54,54,54,54,34,1,1,1,1,1,36,54,54,54,54,
+54,54,54,54,54,34,1,1,1,1,1,39,35,35,35,35,
+54,54,54,54,54,34,1,1,1,1,1,1,1,1,1,1,
+54,54,54,54,54,34,1,1,1,1,1,1,1,1,1,1,
+54,54,54,54,54,34,1,1,1,1,1,1,1,1,1,1,
+54,54,54,54,54,34,1,1,1,1,1,1,1,1,1,1,
+54,54,54,54,54,41,33,33,33,33,33,33,33,33,33,33
+</data>
+ </layer>
+ <objectgroup id="2" name="objects"/>
+ <objectgroup id="3" name="meta">
+  <object id="9" name="edge_exit_03" type="edge_exit" x="0" y="16" width="16" height="64">
+   <properties>
+    <property name="id" value="edge_exit_03"/>
+    <property name="to" value="room01"/>
+   </properties>
+  </object>
+  <object id="10" name="edge_exit_04" type="edge_exit" x="240" y="176" width="16" height="64">
+   <properties>
+    <property name="id" value="edge_exit_04"/>
+    <property name="to" value="room03"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

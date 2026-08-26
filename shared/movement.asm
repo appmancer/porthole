@@ -1,0 +1,855 @@
+.movement_start
+; movement.asm
+; Chell movement, collision sampling, and gravity stepping.
+
+ ; Horizontal movement pipeline (replaces poll_move_keys).
+ ;
+ ; Pipeline:
+ ;   1. update_grounded_state    — ground probe (skip during jump arc)
+ ;   2. update_facing_and_intent — keys → anim_dir, move_held, redraw flag
+ ;   3. resolve_horizontal_vx    — single vx writer
+ ;   4. apply_horizontal_velocity — pixel stepping with collision (unchanged)
+ ;   5. update_run_animation     — anim_cooldown + frame advance
+ ;   6. sync last_anim_dir
+ ;
+ ; Output: C=1 if sprite needs redraw.
+.update_chell_movement
+      LDA move_held
+      STA last_move_held
+
+      LDA #0
+      STA temp                  ; redraw flag
+      STA move_held             ; clear each frame; set below if key held
+
+      ; --- 1. Update grounded state (skip during jump rise/peak) ---
+      LDA jump_timer
+      BNE ucm_ground_done
+      LDA peak_timer
+      BNE ucm_ground_done
+      JSR is_char_grounded
+      BCC ucm_ground_clear
+      LDA #1
+      STA char_grounded
+      JMP ucm_ground_done
+    .ucm_ground_clear
+      LDA #0
+      STA char_grounded
+    .ucm_ground_done
+      ; is_char_grounded clobbers temp; re-clear redraw flag.
+      LDA #0
+      STA temp
+
+      ; --- 2. Update facing and intent ---
+      LDA keys_held
+      AND #1
+      BEQ ucm_check_right
+      LDA #0
+      STA anim_dir
+      JMP ucm_have_dir
+
+    .ucm_check_right
+      LDA keys_held
+      AND #2
+      BEQ ucm_no_dir
+      LDA #1
+      STA anim_dir
+
+    .ucm_have_dir
+      LDA #1
+      STA move_held
+
+      ; If direction changed, force a redraw so we flip immediately.
+      LDA anim_dir
+      CMP last_anim_dir
+      BEQ ucm_dir_ok
+      LDA #1
+      STA temp
+    .ucm_dir_ok
+      JMP ucm_resolve_vx
+
+    .ucm_no_dir
+      ; No key held this frame.
+      ; If we just released movement keys while grounded, redraw to idle.
+      LDA last_move_held
+      BEQ ucm_resolve_vx
+      LDA char_grounded
+      BEQ ucm_resolve_vx
+      LDA #1
+      STA temp
+
+      ; --- 3. Resolve horizontal velocity (single vx writer) ---
+    .ucm_resolve_vx
+      ; Fast-falling → no lateral movement.
+      LDA fall_distance
+      CMP #FALL_FAST_THRESHOLD
+      BCS ucm_vx_done
+      LDA move_held
+      BNE ucm_vx_key_held
+
+      ; No key held: normally kill vx when grounded.
+      ; During teleport cooldown, preserve only fling-speed momentum
+      ; (|vx| > WALK_VELOCITY) so walking through portals feels natural.
+      LDA teleport_cooldown
+      BEQ ucm_no_fling
+      LDA char_vx
+      BEQ ucm_no_fling           ; vx=0, nothing to preserve
+      BMI ucm_fling_neg
+      CMP #(WALK_VELOCITY+1)
+      BCS ucm_vx_done            ; positive fling: preserve
+      JMP ucm_no_fling
+    .ucm_fling_neg
+      CMP #(256-WALK_VELOCITY)
+      BCC ucm_vx_done            ; negative fling: preserve
+    .ucm_no_fling
+      LDA char_grounded
+      BEQ ucm_vx_done
+      LDA #0
+      STA char_vx
+      JMP ucm_vx_done
+
+    .ucm_vx_key_held
+      ; Key held + grounded: always set walk vx.
+      LDA char_grounded
+      BNE ucm_set_walk_vx
+
+      ; Key held + airborne: only override if |vx| <= WALK_VELOCITY.
+      ; Preserve fling momentum when |vx| > WALK_VELOCITY.
+      LDA char_vx
+      BEQ ucm_set_walk_vx
+      BMI ucm_air_abs_neg
+      CMP #(WALK_VELOCITY+1)
+      BCC ucm_set_walk_vx
+      JMP ucm_vx_done
+    .ucm_air_abs_neg
+      EOR #&FF
+      CLC
+      ADC #1
+      CMP #(WALK_VELOCITY+1)
+      BCC ucm_set_walk_vx
+      JMP ucm_vx_done
+
+    .ucm_set_walk_vx
+      LDA anim_dir
+      BEQ ucm_set_vx_left
+      LDA #WALK_VELOCITY
+      STA char_vx
+      JMP ucm_vx_done
+    .ucm_set_vx_left
+      LDA #(256-WALK_VELOCITY) ; -WALK_VELOCITY
+      STA char_vx
+    .ucm_vx_done
+
+      ; --- 4. Apply horizontal velocity ---
+      JSR apply_horizontal_velocity
+      STA temp_y               ; moved pixels this frame
+      BEQ ucm_after_move
+
+      LDA #1
+      STA temp
+
+      ; --- 5. Update run animation ---
+      LDA anim_cooldown
+      AND #3
+      CLC
+      ADC temp_y
+      STA anim_cooldown
+      CMP #4
+      BCC ucm_after_move
+      SEC
+      SBC #4
+      STA anim_cooldown
+      JSR step_anim
+
+    .ucm_after_move
+      ; --- 6. Sync last_anim_dir ---
+      LDA anim_dir
+      STA last_anim_dir
+
+      LDA temp
+      BEQ ucm_no_redraw
+      SEC
+      RTS
+    .ucm_no_redraw
+      CLC
+      RTS
+ 
+ .step_anim
+    INC anim_frame
+    LDA anim_frame
+    AND #3
+    STA anim_frame
+    RTS
+
+
+; Apply horizontal velocity using `char_vx` magnitude.
+; - `char_vx` is signed pixels/frame.
+; - Clamps per-frame stepping to `TERMINAL_VELOCITY_X` to bound frame time.
+; - On collision, zeroes `char_vx`.
+; Output: A = moved pixels (0..TERMINAL_VELOCITY_X)
+.apply_horizontal_velocity
+    LDA char_vx
+    BEQ ahv_none
+    BMI ahv_left
+
+ .ahv_right
+     ; speed = min(vx, TERMINAL_VELOCITY_X)
+     CMP #TERMINAL_VELOCITY_X
+     BCC ahv_have_speed
+     LDA #TERMINAL_VELOCITY_X
+  .ahv_have_speed
+     STA hstep_rem            ; steps remaining
+     LDA #0
+     STA hstep_moved          ; moved
+ .ahv_r_loop
+     JSR step_right_pixel
+     BCS ahv_r_moved
+     ; blocked
+     LDA #0
+     STA char_vx
+     LDA hstep_moved
+     RTS
+ .ahv_r_moved
+     INC hstep_moved
+     DEC hstep_rem
+     BNE ahv_r_loop
+     LDA hstep_moved
+     RTS
+
+ .ahv_left
+     ; speed = min(|vx|, TERMINAL_VELOCITY_X)
+     EOR #&FF
+     CLC
+     ADC #1
+     CMP #TERMINAL_VELOCITY_X
+     BCC ahv_l_have_speed
+     LDA #TERMINAL_VELOCITY_X
+ .ahv_l_have_speed
+     STA hstep_rem            ; steps remaining
+     LDA #0
+     STA hstep_moved          ; moved
+ .ahv_l_loop
+     JSR step_left_pixel
+     BCS ahv_l_moved
+     ; blocked
+     LDA #0
+     STA char_vx
+     LDA hstep_moved
+     RTS
+ .ahv_l_moved
+     INC hstep_moved
+     DEC hstep_rem
+     BNE ahv_l_loop
+     LDA hstep_moved
+     RTS
+
+ .ahv_none
+     LDA #0
+     RTS
+ 
+ ; Step left by 1 pixel.
+ ; Output: C=1 if moved.
+ .step_left_pixel
+    ; If at absolute left bound, do nothing.
+    LDA char_tile_pos
+    AND #15
+    BNE can_step_left
+    LDA char_byte_offset
+    ORA char_pixel_offset
+    BEQ step_left_blocked
+
+ .can_step_left
+     ; Collision check at new left edge.
+     JSR will_collide_left
+     BCS step_left_blocked
+ 
+ .step_left_do_step
+     LDA char_pixel_offset
+
+    BNE step_left_dec_sub
+ 
+    ; Wrap subpixel 0 -> 3 and move base left by 4px.
+    LDA #3
+    STA char_pixel_offset
+ 
+    LDA char_byte_offset
+    BNE step_left_byte_to0
+ 
+    ; byte_offset 0: go to previous cell and use byte_offset 8.
+    LDA #8
+    STA char_byte_offset
+    DEC char_tile_pos
+    SEC
+    RTS
+ 
+ .step_left_byte_to0
+    LDA #0
+    STA char_byte_offset
+    SEC
+    RTS
+ 
+ .step_left_dec_sub
+    DEC char_pixel_offset
+    SEC
+    RTS
+ 
+ .step_left_blocked
+    CLC
+    RTS
+
+
+; Compute current character X (left edge) in pixels.
+; Output: A = x (0..127)
+.calc_char_x
+    LDA char_tile_pos
+    AND #15
+    ASL A
+    ASL A
+    ASL A
+    STA temp
+
+    ; char_byte_offset is 0 or 8 (i.e. 0 or 4 pixels)
+    LDA char_byte_offset
+    LSR A
+    CLC
+    ADC temp
+    ADC char_pixel_offset
+    RTS
+
+
+; Compute current character Y (top edge) in pixels.
+; Output: A = y (0..255)
+.calc_char_y
+    ; y = tile_y*16 + char_y_offset
+    LDA char_tile_pos
+    AND #&F0
+    CLC
+    ADC char_y_offset
+    RTS
+
+
+; Check if moving left 1px would collide.
+; Output: C=1 if collision.
+.will_collide_left
+    JSR calc_char_x
+
+    ; Centerline walls: allow 4px overlap into solid tiles.
+    ; Instead of testing the pixel just outside the left edge (x-1), test
+    ; 4px inside it: (x-1)+4 = x+3.
+    CLC
+    ADC #3
+    TAX
+
+    ; Sample near vertical centerlines of the wall tiles.
+    ; (This avoids foot/head edge jitter when straddling stripes.)
+    JSR calc_char_y
+    CLC
+    ADC #8
+    STA temp_y
+
+    ; test at y+8 (top tile centerline)
+    LDY temp_y
+    JSR is_solid_physics
+    BCS collide_left
+
+    ; test at y+24 (bottom tile centerline)
+    LDY temp_y
+    TYA
+    CLC
+    ADC #16
+    TAY
+    JSR is_solid_physics
+    BCS collide_left
+
+    CLC
+    RTS
+.collide_left
+    SEC
+    RTS
+
+
+; Check if moving right 1px would collide.
+; Output: C=1 if collision.
+.will_collide_right
+    JSR calc_char_x
+
+    ; Centerline walls:
+    ; Allow a small overlap into solid tiles (4px) so collision feels less
+    ; "boxy" without letting the feet samples enter the wall column.
+    ;
+    ; Instead of testing just outside the right edge (x+16), test 4px inside it.
+    CLC
+    ADC #12              ; test point 4px inside right edge
+    BCS collide_right    ; overflow => beyond 255 (treat as solid)
+    CMP #128
+    BCS collide_right
+    TAX
+
+    ; Sample near vertical centerlines of the wall tiles.
+    ; (This avoids foot/head edge jitter when straddling stripes.)
+    JSR calc_char_y
+    CLC
+    ADC #8
+    STA temp_y
+
+    ; test at y+8 (top tile centerline)
+    LDY temp_y
+    JSR is_solid_physics
+    BCS collide_right
+
+    ; test at y+24 (bottom tile centerline)
+    LDY temp_y
+    TYA
+    CLC
+    ADC #16
+    TAY
+    JSR is_solid_physics
+    BCS collide_right
+
+    CLC
+    RTS
+.collide_right
+    SEC
+    RTS
+  
+
+; Vertical movement state machine.
+;
+; Four states driven by jump_timer + peak_timer:
+;   RISING:   jump_timer > 0 → step_up_8, dec timer, vy=-1
+;   PEAK:     jump_timer = 0, peak_timer > 0 → no movement, dec peak_timer, vy=0
+;   FALLING:  jump_timer = 0, peak_timer = 0, not grounded → step_down_8, vy=+1
+;   GROUNDED: on ground → check RETURN for jump start, vy=0
+;
+; Returns: C=1 if position changed (needs redraw).
+.apply_gravity
+    ; Remember pre-step vy and fall distance so portal teleport can
+    ; read momentum even after gravity resets them on landing.
+    LDA char_vy
+    STA char_prev_vy
+    LDA fall_distance
+    STA char_prev_fall_dist
+
+    ; --- PORTAL RISE (momentum launch from portal exit) ---
+    LDA portal_rise_timer
+    BEQ ag_not_portal_rise
+
+    ; First step up (always).
+    JSR step_up_8
+    BCC ag_portal_rise_blocked
+
+    ; Fast-rise when timer >= threshold (mirrors fast-fall at same threshold).
+    LDA portal_rise_timer
+    CMP #FALL_FAST_THRESHOLD
+    BCC ag_portal_rise_step_done
+
+    ; Second step up (fast-rise).
+    JSR step_up_8
+    BCC ag_portal_rise_step_done   ; ceiling on 2nd step — still moved one step
+
+  .ag_portal_rise_step_done
+    DEC portal_rise_timer
+    LDA #&FF
+    STA char_vy                    ; vy = -1 (rising)
+    LDA #0
+    STA char_grounded
+    SEC                            ; position changed
+    RTS
+
+  .ag_portal_rise_blocked
+    ; Ceiling on 1st step: cancel portal rise entirely.
+    LDA #0
+    STA portal_rise_timer
+    STA char_vy
+    CLC                            ; no movement
+    RTS
+
+  .ag_not_portal_rise
+
+    ; --- RISING ---
+    LDA jump_timer
+    BEQ ag_not_rising
+
+    ; Rising: step up 8px.
+    LDA #&FF
+    STA char_vy               ; vy = -1 (rising)
+    JSR step_up_8
+    BCC ag_hit_ceiling
+
+    ; Moved up successfully.
+    DEC jump_timer
+    BNE ag_still_rising
+    ; Rise finished: start peak hang time.
+    LDA #JUMP_PEAK_FRAMES
+    STA peak_timer
+  .ag_still_rising
+    LDA #0
+    STA char_grounded
+    SEC
+    RTS
+
+  .ag_hit_ceiling
+    ; Blocked: cancel rise, skip peak, begin falling next frame.
+    LDA #0
+    STA jump_timer
+    STA peak_timer
+    STA char_vy
+    CLC
+    RTS
+
+  .ag_not_rising
+    ; --- PEAK (apex hang time) ---
+    LDA peak_timer
+    BEQ ag_not_peak
+
+    DEC peak_timer
+    LDA #0
+    STA char_vy               ; vy = 0 (floating at apex)
+    STA char_grounded
+    CLC                       ; no position change
+    RTS
+
+  .ag_not_peak
+    ; --- GROUNDED check ---
+    ; If already fast-falling, skip grounded check to avoid spurious
+    ; landing after room transitions. step_down_8 handles real collisions.
+    LDA fall_distance
+    CMP #FALL_FAST_THRESHOLD
+    BCS ag_fall
+    JSR is_char_grounded
+    BCC ag_fall
+
+    ; On ground.
+    LDA #1
+    STA char_grounded
+    LDA #0
+    STA char_vy
+    STA fall_distance
+
+    ; Check RETURN for jump start.
+    LDA keys_pressed
+    AND #4
+    BEQ ag_grounded_done
+
+    ; Start jump: set timer, clear grounded, step up immediately.
+    LDA #JUMP_RISE_FRAMES
+    STA jump_timer
+    LDA #0
+    STA peak_timer
+    STA char_grounded
+    LDA #&FF
+    STA char_vy               ; vy = -1 (rising)
+    JSR step_up_8
+    BCC ag_jump_start_blocked
+    DEC jump_timer
+    SEC
+    RTS
+
+  .ag_jump_start_blocked
+    ; Ceiling right above: cancel jump.
+    LDA #0
+    STA jump_timer
+    STA peak_timer
+    STA char_vy
+  .ag_grounded_done
+    CLC
+    RTS
+
+  .ag_fall
+    ; --- FALLING ---
+    ; fall_distance drives speed: < threshold = 1 step, >= threshold = 2 steps.
+    ; char_vy is set for portal/pose systems but not used as input here.
+    LDA #0
+    STA char_grounded
+
+    ; Always one step down.
+    JSR step_down_8
+    BCC ag_fall_landed
+    INC fall_distance
+
+    ; Past threshold → fast fall: second step + kill lateral.
+    LDA fall_distance
+    CMP #FALL_FAST_THRESHOLD
+    BCC ag_fall_normal
+
+    LDA #0
+    STA char_vx
+    LDA #TERMINAL_VELOCITY_DOWN
+    STA char_vy
+    JSR step_down_8
+    BCC ag_fall_landed
+    SEC
+    RTS
+
+  .ag_fall_normal
+    LDA #1
+    STA char_vy
+    SEC
+    RTS
+
+  .ag_fall_landed
+    LDA #1
+    STA char_grounded
+    LDA #0
+    STA char_vy
+    STA fall_distance
+    SEC
+    RTS
+
+
+; Return C=1 if character is standing on solid.
+.is_char_grounded
+    ; x = left and right sample points (x+4 and x+11)
+    JSR calc_char_x
+    CLC
+    ADC #4
+    STA temp
+
+    ; y_test = (y + 32) (just below feet edge)
+    ; If y+32 overflows, we're past the bottom of the room — not grounded
+    ; (let her fall through to trigger a down-edge exit).
+    JSR calc_char_y
+    CLC
+    ADC #32
+    BCS grounded_false
+    TAY
+
+    ; left foot center
+    LDX temp
+    JSR is_solid_physics
+    BCS grounded_true
+
+    ; right foot center (x+7)
+    LDA temp
+    CLC
+    ADC #7
+    CMP #128
+    BCS grounded_true
+    TAX
+    JSR is_solid_physics
+    BCS grounded_true
+
+.grounded_false
+    CLC
+    RTS
+.grounded_true
+    SEC
+    RTS
+
+
+; Step down by 8 pixels (one stripe).
+; Output: C=1 if moved.
+.step_down_8
+    JSR will_collide_down_8
+    BCS step_down_blocked
+
+    LDA char_y_offset
+    BEQ step_down_to8
+
+    ; Was at +8: wrap to +0 and advance to next cell row.
+    ; If tile_y is already 15, clamp here (don't wrap to y=0).
+    ; The exit check will fire on this frame at y=15.
+    LDA char_tile_pos
+    AND #&F0
+    CMP #&F0
+    BEQ step_down_blocked       ; tile_y=15, offset=8 — can't go lower
+    LDA #0
+    STA char_y_offset
+    LDA char_tile_pos
+    CLC
+    ADC #16
+    STA char_tile_pos
+    SEC
+    RTS
+
+.step_down_to8
+    LDA #8
+    STA char_y_offset
+    SEC
+    RTS
+
+.step_down_blocked
+    CLC
+    RTS
+
+
+; Step up by 8 pixels (one stripe).
+; Output: C=1 if moved.
+.step_up_8
+    JSR will_collide_up_8
+    BCS step_up_blocked
+
+    LDA char_y_offset
+    BNE step_up_to0
+
+    ; Was at +0: wrap to +8 and move to previous cell row.
+    ; If tile_y is already 0, clamp — don't wrap to y=15.
+    ; Return C=1 so gravity doesn't cancel the jump; the exit
+    ; check will see y=0 and fire if an exit exists.
+    LDA char_tile_pos
+    AND #&F0
+    BEQ step_up_clamped         ; tile_y=0, offset=0 — at ceiling
+    LDA #8
+    STA char_y_offset
+    LDA char_tile_pos
+    SEC
+    SBC #16
+    STA char_tile_pos
+    SEC
+    RTS
+
+.step_up_to0
+    LDA #0
+    STA char_y_offset
+    SEC
+    RTS
+
+.step_up_clamped
+    SEC                         ; report "moved" so jump isn't cancelled
+    RTS
+
+.step_up_blocked
+    CLC
+    RTS
+
+
+; Return C=1 if moving down 8px would collide.
+.will_collide_down_8
+    ; x sample points (x+4 and x+11)
+    JSR calc_char_x
+    CLC
+    ADC #4
+    STA temp
+
+    ; y_test = (y + 8) + 31 (just below feet edge after stepping down)
+    ; Keep vertical landing aligned to the 8px stripe grid.
+    ; If y+39 overflows, we're past the room bottom — no collision
+    ; (allow falling through to trigger a down-edge exit).
+    JSR calc_char_y
+    CLC
+    ADC #39
+    BCS collide_down_false
+    TAY
+
+    ; left foot center
+    LDX temp
+    JSR is_solid_physics
+    BCS collide_down
+
+    ; right foot center (x+7)
+    LDA temp
+    CLC
+    ADC #7
+    CMP #128
+    BCS collide_down
+    TAX
+    JSR is_solid_physics
+    BCS collide_down
+
+.collide_down_false
+    CLC
+    RTS
+.collide_down
+    SEC
+    RTS
+
+
+; Return C=1 if moving up 8px would collide.
+.will_collide_up_8
+    ; x sample points (x+4 and x+11)
+    JSR calc_char_x
+    CLC
+    ADC #4
+    STA temp
+
+    ; y_test = (y - 8) (top edge after stepping up)
+    ; (Ceiling contact still needs to match the stripe grid.)
+    ; If y < 8, we're at the top of the room — no collision
+    ; (allow moving up to trigger an up-edge exit).
+    JSR calc_char_y
+    CMP #8
+    BCC collide_up_false
+    SEC
+    SBC #8
+    TAY
+
+    ; left head center
+    LDX temp
+    JSR is_solid_physics
+    BCS collide_up
+
+    ; right head center (x+7)
+    LDA temp
+    CLC
+    ADC #7
+    CMP #128
+    BCS collide_up
+    TAX
+    JSR is_solid_physics
+    BCS collide_up
+
+.collide_up_false
+    CLC
+    RTS
+ .collide_up
+    SEC
+    RTS
+
+
+; Step right by 1 pixel.
+; Output: C=1 if moved.
+.step_right_pixel
+    ; Clamp/limit to max X so sprite stays on-screen.
+    ; Max position is tile_x=14, byte_offset=0, pixel_offset=0 (x=112 for 16px sprite).
+    LDA char_tile_pos
+    AND #15
+    CMP #14
+    BNE can_step_right
+    LDA char_byte_offset
+    ORA char_pixel_offset
+    BEQ step_right_blocked
+ 
+    ; If we ever got beyond max, clamp back.
+    LDA #0
+    STA char_byte_offset
+    STA char_pixel_offset
+    CLC
+    RTS
+ 
+.can_step_right
+    ; Collision check at new right edge.
+    JSR will_collide_right
+    BCS step_right_blocked
+
+.step_right_do_step
+    LDA char_pixel_offset
+    CMP #3
+    BNE step_right_inc_sub
+ 
+    ; Wrap subpixel 3 -> 0 and move base right by 4px.
+    LDA #0
+    STA char_pixel_offset
+ 
+    LDA char_byte_offset
+    BEQ step_right_byte_to8
+ 
+    ; byte_offset 8: move to next cell and clear byte_offset.
+    LDA #0
+    STA char_byte_offset
+    INC char_tile_pos
+    SEC
+    RTS
+ 
+.step_right_byte_to8
+    LDA #8
+    STA char_byte_offset
+    SEC
+    RTS
+ 
+.step_right_inc_sub
+    INC char_pixel_offset
+    SEC
+    RTS
+ 
+.step_right_blocked
+    CLC
+    RTS

@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+"""Generate a labelled sprite sheet PNG from the project's sprite CSVs.
+
+Reads every sprite spec (same names/files as build.sh gen-sprites calls) and
+renders each sprite block at a configurable scale with a label underneath.
+Multi-block CSVs (e.g. the sentry with two frames) get one cell per block.
+
+Output is a single PNG laid out in a grid — hand it to a designer as a
+reference sheet showing every sprite at actual pixel proportions.
+
+MODE 5 palette:  . = transparent, 0 = black, 1 = red, 2 = cyan, 3 = yellow
+MODE 5 pixels are 2:1 aspect ratio (wide), so scale-x defaults to 2× scale-y.
+
+Usage:
+  ./tools/sprite-sheet --out sprite_sheet.png
+  ./tools/sprite-sheet --out sprite_sheet.png --scale 8
+  ./tools/sprite-sheet --out sprite_sheet.png --group chell --group objects
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import struct
+import sys
+import zlib
+from pathlib import Path
+
+
+# --- MODE 5 palette ---
+# . = transparent (shown as light grey on the sheet)
+# 0 = black, 1 = red, 2 = cyan, 3 = yellow
+
+def rgba_for_pixel(ch: str) -> tuple[int, int, int, int]:
+    if ch == ".":
+        return (200, 200, 200, 255)  # light grey for transparent
+    v = int(ch)
+    if v == 0: return (0, 0, 0, 255)
+    if v == 1: return (255, 0, 0, 255)
+    if v == 2: return (0, 255, 255, 255)
+    if v == 3: return (255, 255, 0, 255)
+    return (255, 0, 255, 255)  # magenta = error
+
+
+# --- PNG writer (no Pillow, same as gen-tileset-png) ---
+
+def write_png_rgba(path: Path, *, width: int, height: int, buf: bytearray) -> None:
+    def chunk(typ: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(typ)
+        crc = zlib.crc32(data, crc)
+        return struct.pack(">I", len(data)) + typ + data + struct.pack(">I", crc & 0xFFFFFFFF)
+
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+
+    stride = width * 4
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)  # filter byte
+        raw.extend(buf[y * stride : (y + 1) * stride])
+    idat = zlib.compress(bytes(raw), level=9)
+
+    out = bytearray()
+    out += sig
+    out += chunk(b"IHDR", ihdr)
+    out += chunk(b"IDAT", idat)
+    out += chunk(b"IEND", b"")
+    path.write_bytes(bytes(out))
+
+
+# --- CSV parser (matches gen-sprites logic) ---
+
+PIXEL_CELL_RE = re.compile(r"^[0-3.]+$")
+
+
+def pixels_from_line(line: str, max_pixels: int = 16) -> list[str]:
+    tokens: list[str] = []
+    for cell in line.split(","):
+        cell = cell.strip()
+        if not cell:
+            continue
+        if not PIXEL_CELL_RE.match(cell):
+            continue
+        tokens.extend(list(cell))
+        if len(tokens) >= max_pixels:
+            break
+    if not tokens:
+        return []
+    if len(tokens) < max_pixels:
+        tokens = tokens + ["."] * (max_pixels - len(tokens))
+    return tokens[:max_pixels]
+
+
+def read_blocks(path: Path, max_pixels: int = 16) -> list[list[list[str]]]:
+    blocks: list[list[list[str]]] = []
+    current: list[list[str]] = []
+    for line in path.read_text().splitlines():
+        pixels = pixels_from_line(line, max_pixels)
+        if not pixels:
+            if current:
+                blocks.append(current)
+                current = []
+            continue
+        current.append(pixels)
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+TILE_PIXEL_RE = re.compile(r"^[0-3.]+$")
+
+
+def read_tile_blocks(path: Path) -> list[tuple[str, list[list[str]]]]:
+    """Read tile blocks from the tile CSV. Returns (label, pixel_rows) pairs.
+    Tiles are 8 pixels wide, 16 rows tall, separated by 'T' label rows."""
+    results: list[tuple[str, list[list[str]]]] = []
+    current_label = ""
+    current: list[list[str]] = []
+
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.lstrip().startswith("T"):
+            if current:
+                results.append((current_label, current))
+                current = []
+            # Extract label: "T01 - Pedestal Button" -> "T01"
+            parts = stripped.split(None, 1)
+            current_label = parts[0] if parts else ""
+            continue
+
+        tokens: list[str] = []
+        for cell in line.split(","):
+            cell = cell.strip()
+            if not cell:
+                continue
+            if not TILE_PIXEL_RE.match(cell):
+                continue
+            tokens.extend(list(cell))
+        if not tokens:
+            if current:
+                results.append((current_label, current))
+                current = []
+            continue
+
+        # Tiles are 8 pixels wide.
+        if len(tokens) < 8:
+            tokens = tokens + ["."] * (8 - len(tokens))
+        current.append(tokens[:8])
+
+    if current:
+        results.append((current_label, current))
+    return results
+
+
+# --- Simple bitmap font for labels (5×7 uppercase + digits) ---
+
+FONT_GLYPHS: dict[str, list[int]] = {
+    "A": [0x04,0x0A,0x11,0x1F,0x11,0x11,0x11], "B": [0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],
+    "C": [0x0E,0x11,0x10,0x10,0x10,0x11,0x0E], "D": [0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],
+    "E": [0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F], "F": [0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],
+    "G": [0x0E,0x11,0x10,0x17,0x11,0x11,0x0F], "H": [0x11,0x11,0x11,0x1F,0x11,0x11,0x11],
+    "I": [0x0E,0x04,0x04,0x04,0x04,0x04,0x0E], "J": [0x07,0x02,0x02,0x02,0x02,0x12,0x0C],
+    "K": [0x11,0x12,0x14,0x18,0x14,0x12,0x11], "L": [0x10,0x10,0x10,0x10,0x10,0x10,0x1F],
+    "M": [0x11,0x1B,0x15,0x15,0x11,0x11,0x11], "N": [0x11,0x19,0x15,0x13,0x11,0x11,0x11],
+    "O": [0x0E,0x11,0x11,0x11,0x11,0x11,0x0E], "P": [0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],
+    "Q": [0x0E,0x11,0x11,0x11,0x15,0x12,0x0D], "R": [0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],
+    "S": [0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E], "T": [0x1F,0x04,0x04,0x04,0x04,0x04,0x04],
+    "U": [0x11,0x11,0x11,0x11,0x11,0x11,0x0E], "V": [0x11,0x11,0x11,0x11,0x0A,0x0A,0x04],
+    "W": [0x11,0x11,0x11,0x15,0x15,0x15,0x0A], "X": [0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],
+    "Y": [0x11,0x11,0x0A,0x04,0x04,0x04,0x04], "Z": [0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
+    "0": [0x0E,0x11,0x13,0x15,0x19,0x11,0x0E], "1": [0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],
+    "2": [0x0E,0x11,0x01,0x06,0x08,0x10,0x1F], "3": [0x0E,0x11,0x01,0x06,0x01,0x11,0x0E],
+    "4": [0x02,0x06,0x0A,0x12,0x1F,0x02,0x02], "5": [0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E],
+    "6": [0x06,0x08,0x10,0x1E,0x11,0x11,0x0E], "7": [0x1F,0x01,0x02,0x04,0x08,0x08,0x08],
+    "8": [0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E], "9": [0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
+    "_": [0x00,0x00,0x00,0x00,0x00,0x00,0x1F], " ": [0x00,0x00,0x00,0x00,0x00,0x00,0x00],
+    "-": [0x00,0x00,0x00,0x0E,0x00,0x00,0x00],
+}
+GLYPH_W, GLYPH_H = 5, 7
+
+
+def draw_text(buf: bytearray, img_w: int, x: int, y: int, text: str,
+              r: int = 40, g: int = 40, b: int = 40) -> None:
+    """Render text into the RGBA buffer using the built-in bitmap font."""
+    for ch in text.upper():
+        glyph = FONT_GLYPHS.get(ch)
+        if glyph is None:
+            x += GLYPH_W + 1
+            continue
+        for gy in range(GLYPH_H):
+            for gx in range(GLYPH_W):
+                if glyph[gy] & (1 << (4 - gx)):
+                    px = x + gx
+                    py = y + gy
+                    o = (py * img_w + px) * 4
+                    if 0 <= o < len(buf) - 3:
+                        buf[o] = r; buf[o+1] = g; buf[o+2] = b; buf[o+3] = 255
+        x += GLYPH_W + 1
+
+
+def text_width(text: str) -> int:
+    return len(text) * (GLYPH_W + 1) - 1 if text else 0
+
+
+# --- Sprite groups (mirrors build.sh gen-sprites specs) ---
+
+# Tuple: (label, csv_path, flip, max_blocks, pixel_width, skip_blocks).
+# pixel_width: number of pixel columns in the sprite (8 or 16).
+# skip_blocks: how many leading blocks to skip (e.g. visual references).
+# Most sprites have sub-pixel shift variants as blocks 1+; we only want block 0.
+# The sentry has 2 real animation frames, so we take 2.
+GROUPS: dict[str, list[tuple[str, str, bool, int, int, int]]] = {
+    "chell": [
+        ("chell_idle", "sprites/Chell Idle - Reference.csv", False, 1, 16, 0),
+        ("chell_run1", "sprites/Chell Run Right - Frame 1.csv", False, 1, 16, 0),
+        ("chell_run2", "sprites/Chell Run Right - Frame 2.csv", False, 1, 16, 0),
+        ("chell_run3", "sprites/Chell Run Right - Frame 3.csv", False, 1, 16, 0),
+        ("chell_jump", "sprites/Chell Jump - Reference.csv", False, 1, 16, 0),
+        ("chell_fall", "sprites/Chell Falling - Reference.csv", False, 1, 16, 0),
+        ("chell_dead", "sprites/Chell Dead - Reference.csv", False, 1, 16, 0),
+    ],
+    "overlays": [
+        ("chell_rgun1", "sprites/Chell Running Overlays - R-Gun Frame 1.csv", False, 1, 16, 1),
+        ("chell_rgun2", "sprites/Chell Running Overlays - R-Gun Frame 2.csv", False, 1, 16, 1),
+        ("chell_rgun3", "sprites/Chell Running Overlays - R-Gun Frame 3.csv", False, 1, 16, 1),
+        ("chell_carry", "sprites/Chell Overlays - Carrying.csv", False, 1, 16, 1),
+        ("reticle", "sprites/Reticles - Reference.csv", False, 2, 16, 0),
+    ],
+    "portals": [
+        ("portal_v_red", "sprites/Portal V - Red (Right).csv", False, 1, 8, 0),
+        ("portal_v_yel", "sprites/Portal V - Yellow (Right).csv", False, 1, 8, 0),
+        ("portal_h_red_floor", "sprites/Portal H - Red (Floor).csv", False, 1, 16, 0),
+        ("portal_h_red_ceil", "sprites/Portal H - Red (Ceil).csv", False, 1, 16, 0),
+        ("portal_h_yel_floor", "sprites/Portal H - Yellow (Floor).csv", False, 1, 16, 0),
+        ("portal_h_yel_ceil", "sprites/Portal H - Yellow (Ceil).csv", False, 1, 16, 0),
+    ],
+    "objects": [
+        ("obj_cube", "sprites/Objects - Cube.csv", False, 1, 16, 0),
+        ("obj_sentry", "sprites/Objects - Sentry.csv", False, 2, 16, 0),
+    ],
+}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate labelled sprite sheet PNG")
+    parser.add_argument("--out", required=True, help="Output PNG path")
+    parser.add_argument("--scale", type=int, default=4, help="Vertical pixel scale (default 4). Horizontal is 2x this for MODE 5 aspect ratio.")
+    parser.add_argument("--group", action="append", help="Only include these groups (default: all). Options: " + ", ".join(GROUPS.keys()))
+    args = parser.parse_args()
+
+    base = Path(__file__).resolve().parent.parent
+    scale_y = args.scale
+    scale_x = scale_y * 2  # MODE 5 pixels are 2:1 wide
+
+    all_groups = list(GROUPS.keys()) + ["tiles"]
+    groups_to_render = args.group if args.group else all_groups
+
+    # --- Collect sprite cells ---
+    cells: list[tuple[str, str, list[list[str]]]] = []  # (group, label, pixel rows)
+
+    for group_name in groups_to_render:
+        if group_name == "tiles":
+            tile_path = base / "sprites" / "NewTiles - Grid.csv"
+            if not tile_path.exists():
+                print(f"Warning: {tile_path} not found, skipping tiles", file=sys.stderr)
+                continue
+            for label, block in read_tile_blocks(tile_path):
+                cells.append(("tiles", label, block))
+            continue
+
+        if group_name not in GROUPS:
+            print(f"Unknown group: {group_name}. Available: {', '.join(all_groups)}", file=sys.stderr)
+            sys.exit(1)
+        for label, csv_rel, flip, max_blocks, pixel_width, skip_blocks in GROUPS[group_name]:
+            csv_path = base / csv_rel
+            if not csv_path.exists():
+                print(f"Warning: {csv_path} not found, skipping", file=sys.stderr)
+                continue
+            blocks = read_blocks(csv_path, pixel_width)
+            if not blocks:
+                continue
+            blocks = blocks[skip_blocks:]
+            for bi, block in enumerate(blocks[:max_blocks]):
+                blabel = label if len(blocks) == 1 else f"{label}_f{bi}"
+                if flip:
+                    block = [list(reversed(row)) for row in block]
+                cells.append((group_name, blabel, block))
+
+    if not cells:
+        print("No sprites found!", file=sys.stderr)
+        sys.exit(1)
+
+    # --- Layout ---
+    padding = 8
+    label_gap = 4
+    label_h = GLYPH_H + 2
+    section_header_h = GLYPH_H + 6
+
+    # Per-group column count: tiles are narrow, so fit more per row.
+    def group_cols(gname: str) -> int:
+        return 16 if gname == "tiles" else 8
+
+    # Cell pixel width depends on sprite width in the block.
+    def cell_pixel_w(block: list[list[str]]) -> int:
+        return (len(block[0]) if block else 16) * scale_x
+
+    # Cell stride per group (based on max sprite width in group).
+    # For uniform groups this is constant.
+    def group_cell_stride(gname: str) -> int:
+        max_w = 0
+        for g, lbl, blk in cells:
+            if g == gname:
+                max_w = max(max_w, cell_pixel_w(blk))
+        return max_w + padding if max_w else 16 * scale_x + padding
+
+    # Cache strides.
+    stride_cache: dict[str, int] = {}
+    for gname in {g for g, _, _ in cells}:
+        stride_cache[gname] = group_cell_stride(gname)
+
+    # First pass: compute image dimensions.
+    current_group = None
+    total_h = padding
+    max_row_h = 0
+    col = 0
+
+    layout: list[tuple[int, int, int]] = []  # (x, y, cell_index) for each cell
+
+    for ci, (group_name, label, block) in enumerate(cells):
+        sprite_h = len(block) * scale_y
+        cell_h = sprite_h + label_gap + label_h
+        cols_per_row = group_cols(group_name)
+        cell_stride = stride_cache[group_name]
+
+        if group_name != current_group:
+            # New section: finish previous row, add header.
+            if current_group is not None:
+                total_h += max_row_h + padding
+            total_h += section_header_h
+            current_group = group_name
+            col = 0
+            max_row_h = 0
+
+        if col >= cols_per_row:
+            total_h += max_row_h + padding
+            col = 0
+            max_row_h = 0
+
+        x = padding + col * cell_stride
+        layout.append((x, total_h, ci))
+        max_row_h = max(max_row_h, cell_h)
+        col += 1
+
+    total_h += max_row_h + padding
+    # Image width: widest row across all groups.
+    max_w = 0
+    for gname in stride_cache:
+        max_w = max(max_w, padding + group_cols(gname) * stride_cache[gname] + padding)
+    img_w = max(max_w, 400)
+    img_h = total_h
+
+    # --- Render ---
+    buf = bytearray([255, 255, 255, 255] * img_w * img_h)  # white background
+
+    # Draw section headers.
+    current_group = None
+    header_y_map: dict[str, int] = {}
+    tmp_total_h = padding
+    tmp_max_row_h = 0
+    tmp_col = 0
+
+    for ci, (group_name, label, block) in enumerate(cells):
+        sprite_h = len(block) * scale_y
+        cell_h = sprite_h + label_gap + label_h
+        tmp_cols_per_row = group_cols(group_name)
+
+        if group_name != current_group:
+            if current_group is not None:
+                tmp_total_h += tmp_max_row_h + padding
+            header_y_map[group_name] = tmp_total_h
+            tmp_total_h += section_header_h
+            current_group = group_name
+            tmp_col = 0
+            tmp_max_row_h = 0
+
+        if tmp_col >= tmp_cols_per_row:
+            tmp_total_h += tmp_max_row_h + padding
+            tmp_col = 0
+            tmp_max_row_h = 0
+
+        tmp_max_row_h = max(tmp_max_row_h, cell_h)
+        tmp_col += 1
+
+    # Draw headers.
+    for group_name, hy in header_y_map.items():
+        draw_text(buf, img_w, padding, hy + 1, group_name.upper(), r=80, g=80, b=80)
+        # Underline.
+        line_y = hy + GLYPH_H + 3
+        for x in range(padding, img_w - padding):
+            o = (line_y * img_w + x) * 4
+            if 0 <= o < len(buf) - 3:
+                buf[o] = 180; buf[o+1] = 180; buf[o+2] = 180; buf[o+3] = 255
+
+    # Draw sprites and labels.
+    for (x, y, ci) in layout:
+        group_name, label, block = cells[ci]
+        sprite_h = len(block) * scale_y
+
+        # Render sprite pixels.
+        for row_i, row in enumerate(block):
+            for col_i, ch in enumerate(row):
+                r, g, b, a = rgba_for_pixel(ch)
+                for sy in range(scale_y):
+                    for sx in range(scale_x):
+                        px = x + col_i * scale_x + sx
+                        py = y + row_i * scale_y + sy
+                        o = (py * img_w + px) * 4
+                        if 0 <= o < len(buf) - 3:
+                            buf[o] = r; buf[o+1] = g; buf[o+2] = b; buf[o+3] = a
+
+        # Label centred below sprite.
+        tw = text_width(label)
+        tx = x + max(0, (cell_pixel_w(block) - tw) // 2)
+        ty = y + sprite_h + label_gap
+        draw_text(buf, img_w, tx, ty, label)
+
+    # --- Write PNG ---
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    write_png_rgba(out_path, width=img_w, height=img_h, buf=buf)
+    print(f"Sprite sheet: {out_path} ({img_w}x{img_h})")
+
+
+if __name__ == "__main__":
+    main()

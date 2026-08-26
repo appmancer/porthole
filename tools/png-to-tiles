@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Convert a PNG into tile CSV blocks (same format as `sprites/NewTiles - Grid.csv`).
+
+Reduces the image to two MODE 5 colour indices by luminance threshold, then cuts
+it into 8x16 tiles in row-major order.
+
+Aspect note:
+    MODE 5 pixels are twice as wide as they are tall, so an 8x16 tile is square
+    on screen. Art drawn in a square-pixel editor is therefore 2x too wide and
+    is squashed horizontally by default; pass --no-squash to map source pixels
+    1:1 onto MODE 5 pixels instead.
+
+Usage:
+    tools/png-to-tiles --in vines.png --out "sprites/GreenTiles - Grid.csv" \
+        --name Vine --fg 2 --bg 0 --threshold 60
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from PIL import Image
+
+
+TILE_W = 8
+TILE_H = 16
+
+
+def luminance(rgb: tuple[int, int, int]) -> float:
+    r, g, b = rgb
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def to_grid(path: Path, *, squash: bool, threshold: float, invert: bool) -> list[list[bool]]:
+    im = Image.open(path).convert("RGB")
+    w, h = im.size
+    px = im.load()
+
+    if squash:
+        if w % 2:
+            raise ValueError(f"{path}: width {w} must be even to squash")
+        w //= 2
+        lum = lambda x, y: (luminance(px[2 * x, y]) + luminance(px[2 * x + 1, y])) / 2
+    else:
+        lum = lambda x, y: luminance(px[x, y])
+
+    if w % TILE_W or h % TILE_H:
+        raise ValueError(
+            f"{path}: {w}x{h} MODE 5 pixels is not a whole number of {TILE_W}x{TILE_H} tiles"
+        )
+
+    return [[(lum(x, y) >= threshold) != invert for x in range(w)] for y in range(h)]
+
+
+def cut_tiles(grid: list[list[bool]]) -> list[tuple[int, int, list[list[bool]]]]:
+    cols = len(grid[0]) // TILE_W
+    rows = len(grid) // TILE_H
+    tiles = []
+    for ty in range(rows):
+        for tx in range(cols):
+            block = [
+                grid[ty * TILE_H + y][tx * TILE_W : (tx + 1) * TILE_W]
+                for y in range(TILE_H)
+            ]
+            tiles.append((tx, ty, block))
+    return tiles
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--in", dest="src", required=True, type=Path)
+    ap.add_argument("--out", dest="dst", required=True, type=Path)
+    ap.add_argument("--name", default="Tile", help="base label for the emitted tiles")
+    ap.add_argument("--fg", type=int, default=2, help="colour index for lit pixels")
+    ap.add_argument("--bg", type=int, default=0, help="colour index for dark pixels")
+    ap.add_argument("--threshold", type=float, default=60.0)
+    ap.add_argument("--invert", action="store_true")
+    ap.add_argument("--squash", dest="squash", action="store_true", default=True)
+    ap.add_argument("--no-squash", dest="squash", action="store_false")
+    ap.add_argument("--start-index", type=int, default=1, help="first tile number in labels")
+    ap.add_argument("--append", action="store_true", help="append to --out instead of replacing")
+    args = ap.parse_args()
+
+    grid = to_grid(args.src, squash=args.squash, threshold=args.threshold, invert=args.invert)
+    tiles = cut_tiles(grid)
+    multi = len(tiles) > 1
+
+    out: list[str] = []
+    for i, (tx, ty, block) in enumerate(tiles):
+        suffix = f" (col {tx}, row {ty})" if multi else ""
+        out.append(f"T{args.start_index + i:02d} - {args.name}{suffix}" + "," * 9)
+        for row in block:
+            cells = [str(args.fg if on else args.bg) for on in row]
+            out.append(",".join(cells) + ",,")
+        out.append("," * 9)
+
+    text = "\n".join(out) + "\n"
+    if args.append and args.dst.exists():
+        with args.dst.open("a", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        args.dst.write_text(text, encoding="utf-8")
+
+    print(f"{args.src} -> {args.dst}: {len(tiles)} tile(s), fg={args.fg} bg={args.bg}")
+
+
+if __name__ == "__main__":
+    main()

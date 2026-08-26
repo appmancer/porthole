@@ -34,3 +34,16 @@ levels/room00.txt
 levels/level1/Level1txt
 tools/b2-scan-zp.py
 tools/b2-watch-key.py
+
+# Music test disc output (as with CHDATA/TILDAT above)
+MUSICT
+
+# Scratch images and working exports
+scratch_sheet.png
+sprite_sheet.png
+screen1.png
+vine_horizontal
+
+# Asset archives (the extracted directories are what the build uses)
+sprites/*.zip
+sprites/backup/

@@ -3,8 +3,8 @@
 ; Builds a small SSD that boots a BASIC loader and runs MUSICT.
 ; Uses MOS SOUND (OSWORD &07) for fast iteration.
 
-INCLUDE "oscalls.asm"
-INCLUDE "timing.asm"
+INCLUDE "shared/oscalls.asm"
+INCLUDE "shared/timing.asm"
 
 ORG &1900
 
@@ -132,13 +132,15 @@ ORG &1900
     RTS
 
 .banner_txt
-    EQUS "PORTHOLE music test: Habanera"
+    EQUS "PORTHOLE music test: Gymnopedie No. 1"
     EQUB 0
 
 
 ; ZP workspace for the music test player.
 ; Keep it in the same "language workspace" range as the main game.
-MUSIC_ZP_BASE = &70
+; Test harness has all of ZP to itself: put both blocks there.
+MUSIC_ZP_BASE  = &70
+MUSIC_VAR_BASE = &76
 
 ; OSWORD &07 (SOUND) control block (8 bytes).
 .sound_block
@@ -190,9 +192,10 @@ MUSIC_ZP_BASE = &70
     RTS
 
 
-; Define two envelopes:
-; - env 1: melody (gentle attack, medium decay)
-; - env 2: bass (snappy attack, quick decay)
+; Define three envelopes:
+; - env 1: melody (gentle attack, long sustain)
+; - env 2: bass (solid attack, medium sustain)
+; - env 3: chord (sharp attack, quick decay)
 ;
 ; We keep pitch envelope flat (0 deltas) and only shape amplitude.
 .setup_envelopes
@@ -207,40 +210,70 @@ MUSIC_ZP_BASE = &70
     LDX #<env_bass
     LDY #>env_bass
     JSR OSWORD
+
+    ; Chord envelope 3
+    LDA #8
+    LDX #<env_chord
+    LDY #>env_chord
+    JSR OSWORD
     RTS
 
 
 ; OSWORD &08 control blocks (14 bytes each).
 ; See OSWORD &08 docs for field meanings.
+;
+; Byte layout:
+;   0: envelope number (1-16)
+;   1: step length (centiseconds per step)
+;   2,3,4: pitch change per step in sections 1,2,3
+;   5,6,7: number of steps in pitch sections 1,2,3
+;   8: amplitude attack delta per step (+)
+;   9: amplitude decay delta per step (-)
+;  10: amplitude sustain delta per step
+;  11: amplitude release delta per step (-)
+;  12: attack target amplitude (0-126, or -1..-127)
+;  13: decay target amplitude
 
 .env_melody
     EQUB 1          ; envelope number
-    EQUB 3          ; step length
+    EQUB 4          ; step length (slower)
     EQUB 0,0,0      ; pitch change steps 1..3
-    EQUB 1,10,0     ; pitch sections steps (unused)
-    EQUB 6          ; amp attack delta
-    EQUB -1         ; amp decay delta
+    EQUB 1,20,0     ; pitch section lengths
+    EQUB 15         ; amp attack delta (instant)
+    EQUB -1         ; amp decay delta (gentle fade)
     EQUB 0          ; amp sustain delta
-    EQUB -2         ; amp release delta
-    EQUB 15         ; attack target amp
-    EQUB 10         ; decay target amp
+    EQUB -3         ; amp release delta
+    EQUB 12         ; attack target amp
+    EQUB 8          ; decay target amp (sustains longer)
 
 .env_bass
     EQUB 2          ; envelope number
-    EQUB 2          ; step length
+    EQUB 6          ; step length (very slow steps)
     EQUB 0,0,0      ; pitch change steps 1..3
-    EQUB 1,6,0      ; pitch sections steps (unused)
-    EQUB 8          ; amp attack delta
-    EQUB -5         ; amp decay delta
+    EQUB 1,30,0     ; pitch section lengths
+    EQUB 15         ; amp attack delta (instant)
+    EQUB -1         ; amp decay delta (barely fades)
     EQUB 0          ; amp sustain delta
-    EQUB -3         ; amp release delta
-    EQUB 15         ; attack target amp
-    EQUB 4          ; decay target amp
+    EQUB -1         ; amp release delta (slow release)
+    EQUB 8          ; attack target amp (quieter)
+    EQUB 6          ; decay target amp (sits underneath)
+
+.env_chord
+    EQUB 3          ; envelope number
+    EQUB 6          ; step length (same as bass)
+    EQUB 0,0,0      ; pitch change steps 1..3
+    EQUB 1,30,0     ; pitch section lengths
+    EQUB 15         ; amp attack delta (instant)
+    EQUB -1         ; amp decay delta (barely fades)
+    EQUB 0          ; amp sustain delta
+    EQUB -1         ; amp release delta (slow release)
+    EQUB 8          ; attack target amp (same as bass)
+    EQUB 6          ; decay target amp (same as bass)
 
 
 INCLUDE "music/player.asm"
-INCLUDE "music/habanera.asm"
+INCLUDE "music/gymnopedie.asm"
 
 .end
 
-SAVE "PROGRAM", start, end
+SAVE "MUSICT", start, end

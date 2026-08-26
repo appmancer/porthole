@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="12">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,43,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+54,37,1,1,38,54,54,54,54,54,54,37,1,1,1,36,
+54,54,1,1,54,54,54,54,54,54,54,54,1,1,1,36,
+54,54,1,1,39,54,54,54,54,54,54,40,1,1,1,36,
+54,54,1,1,1,13,1,1,1,1,1,1,1,1,1,36,
+54,54,1,1,1,14,1,1,1,1,1,1,1,1,1,36,
+54,54,54,54,54,54,37,1,38,54,54,54,54,54,54,54,
+54,54,54,54,54,54,34,1,39,54,54,54,54,54,54,54,
+54,54,54,54,54,54,34,1,1,1,1,1,1,1,1,54,
+54,54,54,54,54,54,34,1,1,1,1,1,1,1,1,54,
+54,54,54,54,54,54,54,54,54,54,54,54,37,1,1,54,
+54,54,54,54,54,54,54,54,54,54,54,54,54,1,1,54,
+54,54,54,54,54,54,54,54,54,54,54,54,54,1,1,54,
+54,54,54,54,54,54,54,54,54,54,54,54,54,50,51,54
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="11" name="pad_2" type="pad" x="208" y="240" width="32" height="16">
+   <properties>
+    <property name="channel" value="2"/>
+    <property name="id" value="pad_2"/>
+   </properties>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="9" name="edge_exit_08" type="edge_exit" x="0" y="16" width="16" height="32">
+   <properties>
+    <property name="id" value="edge_exit_08"/>
+    <property name="to" value="room03"/>
+   </properties>
+  </object>
+  <object id="10" name="fizzler_3" type="fizzler" x="80" y="96" width="16" height="32"/>
+ </objectgroup>
+</map>

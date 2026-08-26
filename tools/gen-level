@@ -61,10 +61,48 @@ OBJECT_TYPE_TO_ID: dict[str, int] = {
     "exit": 4,
     "spawner": 5,
     "barrier": 6,
+    "sentry": 7,
+    "zapper": 8,
 }
 
 
 OBJ_DEF_SIZE = 6
+
+
+def _parse_channel_mask(text: str, *, path: Path, what: str) -> int:
+    """Parse a channel property value into a bitmask.
+
+    Accepts a single channel number (0-7) or a comma-separated list (e.g. "0,2,5").
+    Returns a bitmask with the corresponding bits set.
+    """
+    text = text.strip()
+    if not text:
+        return 1  # default: channel 0 -> bit 0
+    parts = [p.strip() for p in text.split(",")]
+    mask = 0
+    for p in parts:
+        try:
+            ch = int(p)
+        except ValueError:
+            raise ValueError(f"{path}: {what} has non-integer channel={p!r}")
+        if not (0 <= ch <= 7):
+            raise ValueError(f"{path}: {what} channel out of range (0..7), got {ch}")
+        mask |= (1 << ch)
+    return mask
+
+
+def _parse_channel_index(text: str, *, path: Path, what: str) -> int:
+    """Parse a single channel number (0-7). Used by signal drivers (lasers, targets, buttons)."""
+    text = text.strip()
+    if not text:
+        return 0
+    try:
+        ch = int(text)
+    except ValueError:
+        raise ValueError(f"{path}: {what} has non-integer channel={text!r}")
+    if not (0 <= ch <= 7):
+        raise ValueError(f"{path}: {what} channel out of range (0..7), got {ch}")
+    return ch
 
 
 TILED_FLIP_FLAGS = 0xE0000000
@@ -216,7 +254,8 @@ def _parse_exits_and_objects_from_tmx(
     bool,
     list[tuple[int, int, int, int, str]],
     list[tuple[int, int, int, str]],
-    list[tuple[int, int, int, int]],
+    list[tuple[int, int, int, int, int]],
+    list[tuple[int, int, int, int, str]],
 ]:
     exits = {"left": [], "right": [], "up": [], "down": []}
     objects: list[tuple[str, int, int, str, int, int]] = []
@@ -224,6 +263,7 @@ def _parse_exits_and_objects_from_tmx(
     lasers: list[tuple[int, int, int, int, str]] = []    # (tile_x, tile_y, dir, channel, id)
     targets: list[tuple[int, int, int, str]] = []         # (tile_x, tile_y, channel, id)
     fizzlers: list[tuple[int, int, int, int, int]] = []    # (game_x0, game_y0, game_x1, game_y1, channel)
+    killzones: list[tuple[int, int, int, int, str]] = []  # (game_x0, game_y0, game_x1, game_y1, sentry_id)
 
     has_exit_group = False
     has_objects_group = False
@@ -357,15 +397,7 @@ def _parse_exits_and_objects_from_tmx(
                 if not obj_id:
                     raise ValueError(f"{path}: laser missing required property 'id'")
 
-                chan_text = (props.get("channel") or "").strip()
-                channel = 0
-                if chan_text:
-                    try:
-                        channel = int(chan_text)
-                    except ValueError:
-                        raise ValueError(f"{path}: laser has non-integer channel={chan_text!r}")
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: laser channel out of range (0..7), got {channel}")
+                channel = _parse_channel_index(props.get("channel") or "", path=path, what="laser")
 
                 lasers.append((cx, cy, dir_val, channel, obj_id))
                 continue
@@ -385,15 +417,7 @@ def _parse_exits_and_objects_from_tmx(
                 if not obj_id:
                     raise ValueError(f"{path}: target missing required property 'id'")
 
-                chan_text = (props.get("channel") or "").strip()
-                channel = 0
-                if chan_text:
-                    try:
-                        channel = int(chan_text)
-                    except ValueError:
-                        raise ValueError(f"{path}: target has non-integer channel={chan_text!r}")
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: target channel out of range (0..7), got {channel}")
+                channel = _parse_channel_index(props.get("channel") or "", path=path, what="target")
 
                 targets.append((cx, cy, channel, obj_id))
                 continue
@@ -407,14 +431,7 @@ def _parse_exits_and_objects_from_tmx(
                 if w <= 0 or h <= 0:
                     raise ValueError(f"{path}: fizzler must have width and height")
 
-                # Parse optional channel property (default 0).
-                chan_text = (props.get("channel") or "").strip()
-                if not chan_text:
-                    channel = 0
-                else:
-                    channel = int(chan_text)
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: fizzler channel out of range (0..7), got {channel}")
+                channel = _parse_channel_index(props.get("channel") or "", path=path, what="fizzler")
 
                 # Convert Tiled pixel coords to game pixel coords.
                 # Tiled uses tilewidth pixels; game X is half (8px per tile vs 16px).
@@ -431,22 +448,40 @@ def _parse_exits_and_objects_from_tmx(
                 fizzlers.append((game_x0, game_y0, game_x1, game_y1, channel))
                 continue
 
+            # --- Killzone rectangles (meta group) ---
+            if is_exit_group(og_name) and obj_type.lower() == "killzone":
+                x = _parse_float_int(obj.get("x"), path=path, what="object x")
+                y = _parse_float_int(obj.get("y"), path=path, what="object y")
+                w = _parse_float_int(obj.get("width") or "0", path=path, what="object width")
+                h = _parse_float_int(obj.get("height") or "0", path=path, what="object height")
+                if w <= 0 or h <= 0:
+                    raise ValueError(f"{path}: killzone must have width and height")
+
+                sentry_id = (props.get("sentry") or "").strip()
+                if not sentry_id:
+                    raise ValueError(f"{path}: killzone missing required property 'sentry'")
+
+                # Convert Tiled pixel coords to game pixel coords.
+                game_x0 = x // 2
+                game_y0 = y
+                game_x1 = (x + w) // 2
+                game_y1 = y + h
+
+                if game_x0 < 0 or game_x1 > 128 or game_y0 < 0 or game_y1 > 256:
+                    raise ValueError(
+                        f"{path}: killzone out of bounds: game ({game_x0},{game_y0})-({game_x1},{game_y1})"
+                    )
+
+                killzones.append((game_x0, game_y0, game_x1, game_y1, sentry_id))
+                continue
+
             # --- Buttons in meta group ---
             if is_exit_group(og_name) and obj_type.lower() == "button":
                 obj_id = (props.get("id") or "").strip()
                 if not obj_id:
                     raise ValueError(f"{path}: button missing required property 'id'")
 
-                chan_text = (props.get("channel") or "").strip()
-                if not chan_text:
-                    channel = 0
-                else:
-                    try:
-                        channel = int(chan_text)
-                    except ValueError:
-                        raise ValueError(f"{path}: button has non-integer channel={chan_text!r}")
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: button channel out of range (0..7), got {channel}")
+                channel = _parse_channel_index(props.get("channel") or "", path=path, what="button")
 
                 x = _parse_float_int(obj.get("x"), path=path, what="object x")
                 y = _parse_float_int(obj.get("y"), path=path, what="object y")
@@ -460,6 +495,47 @@ def _parse_exits_and_objects_from_tmx(
                 objects.append(("button", cx, cy, obj_id, channel, 0))
                 continue
 
+            # --- Zapper rectangles (meta group) ---
+            if is_exit_group(og_name) and obj_type.lower() == "zapper":
+                obj_id = (props.get("id") or "").strip()
+                if not obj_id:
+                    raise ValueError(f"{path}: zapper missing required property 'id'")
+
+                channel = _parse_channel_mask(props.get("channel") or "", path=path, what="zapper")
+
+                x = _parse_float_int(obj.get("x"), path=path, what="object x")
+                y = _parse_float_int(obj.get("y"), path=path, what="object y")
+                w = _parse_float_int(obj.get("width") or "0", path=path, what="object width")
+                h = _parse_float_int(obj.get("height") or "0", path=path, what="object height")
+
+                if x % tile_w != 0 or y % tile_h != 0:
+                    raise ValueError(f"{path}: zapper must be placed on tile grid")
+                if w % tile_w != 0:
+                    raise ValueError(f"{path}: zapper width must be a multiple of tile width")
+                if h != tile_h:
+                    raise ValueError(f"{path}: zapper must be exactly 1 tile tall ({tile_h}px), got {h}px")
+
+                cx = x // tile_w
+                cy = y // tile_h
+                width_tiles = w // tile_w
+
+                if width_tiles < 3:
+                    raise ValueError(f"{path}: zapper must be at least 3 tiles wide (left + middle + right), got {width_tiles}")
+                if not (0 <= cx <= 15 and 0 <= cy <= 15):
+                    raise ValueError(f"{path}: zapper out of bounds at {cx},{cy}")
+                if cx + width_tiles > 16:
+                    raise ValueError(f"{path}: zapper extends past right edge at {cx}+{width_tiles}")
+
+                # Store width_tiles in init_state bits 1-6 (bit 0 = on/off state); bit 7 = invert flag.
+                if width_tiles > 63:
+                    raise ValueError(f"{path}: zapper width {width_tiles} exceeds max 63 tiles")
+                init_state = width_tiles << 1
+                invert_text = (props.get("invert") or "").strip()
+                if invert_text == "1":
+                    init_state |= 0x80
+                objects.append(("zapper", cx, cy, obj_id, channel, init_state))
+                continue
+
             # --- Gameplay objects (planned/optional) ---
             if is_objects_group(og_name) and obj_type:
                 t = obj_type.strip().lower()
@@ -470,16 +546,13 @@ def _parse_exits_and_objects_from_tmx(
                 if not obj_id:
                     raise ValueError(f"{path}: object {obj_type!r} missing required property 'id'")
 
-                chan_text = (props.get("channel") or "").strip()
-                if not chan_text:
-                    channel = 0
+                # Drivers (pad, button) store a channel index; consumers (barrier, exit, zapper)
+                # store a channel bitmask for multi-channel XOR support.
+                _driver_types = {"pad", "button", "spawner", "cube", "sentry"}
+                if t in _driver_types:
+                    channel = _parse_channel_index(props.get("channel") or "", path=path, what=obj_type)
                 else:
-                    try:
-                        channel = int(chan_text)
-                    except ValueError:
-                        raise ValueError(f"{path}: object {obj_type!r} has non-integer channel={chan_text!r}")
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: object {obj_type!r} channel out of range (0..7), got {channel}")
+                    channel = _parse_channel_mask(props.get("channel") or "", path=path, what=obj_type)
 
                 x = _parse_float_int(obj.get("x"), path=path, what="object x")
                 y = _parse_float_int(obj.get("y"), path=path, what="object y")
@@ -506,9 +579,38 @@ def _parse_exits_and_objects_from_tmx(
                 else:
                     init_state = 0
 
+                # Invert flag: "invert" property -> init_state bit 7 (used by barriers/zappers).
+                invert_text = (props.get("invert") or "").strip()
+                if invert_text == "1":
+                    if t not in ("barrier", "zapper"):
+                        raise ValueError(f"{path}: invert property only valid on barrier/zapper, not {t!r}")
+                    init_state |= 0x80
+
+                # Sentry direction: "dir" property -> init_state bit 0 (0=right, 1=left).
+                if t == "sentry":
+                    dir_text = (props.get("dir") or "").strip().lower()
+                    if dir_text == "left":
+                        init_state |= 1
+                    elif dir_text in ("right", ""):
+                        pass  # bit 0 stays 0
+                    else:
+                        raise ValueError(f"{path}: sentry has invalid dir={dir_text!r} (expected 'left' or 'right')")
+
+                # Barrier height: encode height_tiles in init_state bits 1-6 (like zapper width).
+                if t == "barrier":
+                    h = _parse_float_int(obj.get("height") or "0", path=path, what="object height")
+                    if h == 0 or h % tile_h != 0:
+                        raise ValueError(f"{path}: barrier height must be a positive multiple of tile height ({tile_h}px), got {h}px")
+                    height_tiles = h // tile_h
+                    if height_tiles < 2:
+                        raise ValueError(f"{path}: barrier must be at least 2 tiles tall, got {height_tiles}")
+                    if height_tiles > 63:
+                        raise ValueError(f"{path}: barrier height {height_tiles} exceeds max 63 tiles")
+                    init_state |= (height_tiles << 1)
+
                 objects.append((t, cx, cy, obj_id, channel, init_state))
 
-    return exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers
+    return exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers, killzones
 
 
 def parse_room_tmx(
@@ -523,6 +625,7 @@ def parse_room_tmx(
     list[tuple[int, int, int, int, str]],
     list[tuple[int, int, int, str]],
     list[tuple[int, int, int, int, int]],
+    list[tuple[int, int, int, int, str]],
 ]:
     root = ET.fromstring(path.read_text(encoding="utf-8"))
     if root.tag != "map":
@@ -587,7 +690,7 @@ def parse_room_tmx(
     if len(gids) != 256:
         raise ValueError(f"{path}: expected 256 gids in layer data, got {len(gids)}")
     tiles = [gid_to_tile_id(g) for g in gids]
-    exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers = _parse_exits_and_objects_from_tmx(
+    exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers, killzones = _parse_exits_and_objects_from_tmx(
         root,
         path=path,
         map_w=width,
@@ -595,7 +698,7 @@ def parse_room_tmx(
         tile_w=tilewidth,
         tile_h=tileheight,
     )
-    return tiles, exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers
+    return tiles, exits, objects, start, has_exit_group, has_objects_group, lasers, targets, fizzlers, killzones
 
 
 @dataclass(frozen=True)
@@ -612,6 +715,7 @@ class Room:
     lasers: list[tuple[int, int, int, int, str]]    # (tile_x, tile_y, dir, channel, id)
     targets: list[tuple[int, int, int, str]]         # (tile_x, tile_y, channel, id)
     fizzlers: list[tuple[int, int, int, int, int]]        # (game_x0, game_y0, game_x1, game_y1, channel)
+    killzones: list[tuple[int, int, int, int, str]]      # (game_x0, game_y0, game_x1, game_y1, sentry_id)
 
 
 def parse_meta(
@@ -710,8 +814,9 @@ def parse_room(path: Path) -> Room:
     tmx_lasers: list[tuple[int, int, int, int, str]] = []
     tmx_targets: list[tuple[int, int, int, str]] = []
     tmx_fizzlers: list[tuple[int, int, int, int, int]] = []
+    tmx_killzones: list[tuple[int, int, int, int, str]] = []
     if path.suffix.lower() == ".tmx":
-        tiles, tmx_exits, tmx_objects, tmx_start, tmx_has_exit_group, tmx_has_objects_group, tmx_lasers, tmx_targets, tmx_fizzlers = parse_room_tmx(path)
+        tiles, tmx_exits, tmx_objects, tmx_start, tmx_has_exit_group, tmx_has_objects_group, tmx_lasers, tmx_targets, tmx_fizzlers, tmx_killzones = parse_room_tmx(path)
     elif path.suffix.lower() == ".txt":
         tiles = parse_room_txt(path)
     else:
@@ -738,6 +843,7 @@ def parse_room(path: Path) -> Room:
     lasers = tmx_lasers if tmx_has_exit_group else []
     targets = tmx_targets if tmx_has_exit_group else []
     fizzlers = tmx_fizzlers if tmx_has_exit_group else []
+    killzones = tmx_killzones if tmx_has_exit_group else []
 
     start = meta_start
     if tmx_start is not None and tmx_has_exit_group:
@@ -755,6 +861,7 @@ def parse_room(path: Path) -> Room:
         lasers=lasers,
         targets=targets,
         fizzlers=fizzlers,
+        killzones=killzones,
     )
 
 
@@ -789,6 +896,8 @@ class ProcessedLevel:
     all_targets: list[tuple[int, int, int, int]]
     fizzler_counts: list[int]
     fizzler_data: list[list[int]]
+    killzone_counts: list[int]
+    killzone_data: list[list[int]]
     room_indices: list[list[int]]
     card_lines: list[str]
 
@@ -955,6 +1064,21 @@ def process_level(level_dir: Path) -> ProcessedLevel:
             flat_f.extend([x0, y0, x1, y1, ch])
         fizzler_data.append(flat_f)
 
+    # Build killzone data (resolve sentry_id -> obj_index).
+    killzone_counts: list[int] = []
+    killzone_data: list[list[int]] = []
+    for r in rooms:
+        killzone_counts.append(len(r.killzones))
+        flat_k: list[int] = []
+        for x0, y0, x1, y1, sentry_id in r.killzones:
+            if sentry_id not in obj_id_to_index:
+                raise SystemExit(
+                    f"{level_dir}: {r.name}: killzone references unknown sentry id {sentry_id!r}"
+                )
+            idx = obj_id_to_index[sentry_id]
+            flat_k.extend([x0, y0, x1, y1, idx])
+        killzone_data.append(flat_k)
+
     # Per-room object index lists.
     room_indices: list[list[int]] = [[] for _ in rooms]
     for o in objs:
@@ -978,6 +1102,8 @@ def process_level(level_dir: Path) -> ProcessedLevel:
         all_targets=all_targets,
         fizzler_counts=fizzler_counts,
         fizzler_data=fizzler_data,
+        killzone_counts=killzone_counts,
+        killzone_data=killzone_data,
         room_indices=room_indices,
         card_lines=_read_card_txt(level_dir),
     )
@@ -1008,6 +1134,7 @@ def build_level_binary(lvl: ProcessedLevel) -> bytes:
         1B    exit_down_count   + E*3B records
         1B    obj_index_count   + N*1B indices
         1B    fizzler_count     + F*5B records
+        1B    killzone_count    + K*5B records
       Level card text:
         sequence of (row, col, len, data...) overlay records, &FF terminated
     """
@@ -1059,6 +1186,10 @@ def build_level_binary(lvl: ProcessedLevel) -> bytes:
         # Fizzlers for this room.
         buf.append(lvl.fizzler_counts[ri])
         buf.extend(lvl.fizzler_data[ri])
+
+        # Killzones for this room.
+        buf.append(lvl.killzone_counts[ri])
+        buf.extend(lvl.killzone_data[ri])
 
     # Level card text: length-prefixed strings for MODE 5 half-width renderer.
     #   byte 0:       title length
@@ -1188,6 +1319,8 @@ def _emit_asm(lvl: ProcessedLevel, *, prefix: str, out_path: Path,
     exits_down = list(lvl.exits_down)
     fizzler_counts = list(lvl.fizzler_counts)
     fizzler_data = list(lvl.fizzler_data)
+    killzone_counts = list(lvl.killzone_counts)
+    killzone_data = list(lvl.killzone_data)
     room_indices = list(lvl.room_indices)
 
     # --- Apply padding ---
@@ -1203,6 +1336,10 @@ def _emit_asm(lvl: ProcessedLevel, *, prefix: str, out_path: Path,
         fizzler_counts.append(0)
     while len(fizzler_data) < max_rooms:
         fizzler_data.append([])
+    while len(killzone_counts) < max_rooms:
+        killzone_counts.append(0)
+    while len(killzone_data) < max_rooms:
+        killzone_data.append([])
 
     # Build padded flat byte arrays.
     obj_flat: list[int] = []
@@ -1280,6 +1417,12 @@ def _emit_asm(lvl: ProcessedLevel, *, prefix: str, out_path: Path,
         for i in range(len(fizzler_counts)):
             ri = i if i < len(rooms) else 0
             lines.append(f"    EQUW {level_name}_room{ri:02d}_fizzlers")
+
+        for c in killzone_counts:
+            lines.append(f"    EQUB {c}")
+        for i in range(len(killzone_counts)):
+            ri = i if i < len(rooms) else 0
+            lines.append(f"    EQUW {level_name}_room{ri:02d}_killzones")
 
         lines.append("")
     else:
@@ -1378,6 +1521,17 @@ def _emit_asm(lvl: ProcessedLevel, *, prefix: str, out_path: Path,
             lines.append(f"    EQUW {level_name}_room{ri:02d}_fizzlers")
         lines.append("")
 
+        lines.append(".killzone_room_counts")
+        for c in killzone_counts:
+            lines.append(f"    EQUB {c}")
+        lines.append("")
+
+        lines.append(".killzone_room_ptrs")
+        for i in range(len(killzone_counts)):
+            ri = i if i < len(rooms) else 0
+            lines.append(f"    EQUW {level_name}_room{ri:02d}_killzones")
+        lines.append("")
+
         for i, idxs in enumerate(room_indices):
             if i >= len(rooms):
                 break
@@ -1396,6 +1550,16 @@ def _emit_asm(lvl: ProcessedLevel, *, prefix: str, out_path: Path,
                 lines.append("    ; (no fizzlers)")
             else:
                 lines.append(format_eqbytes(fd, per_line=16))
+            lines.append("")
+
+        for i, kd in enumerate(killzone_data):
+            if i >= len(rooms):
+                break
+            lines.append(f".{level_name}_room{i:02d}_killzones")
+            if not kd:
+                lines.append("    ; (no killzones)")
+            else:
+                lines.append(format_eqbytes(kd, per_line=16))
             lines.append("")
 
     # --- Per-room data (prefix mode only; legacy mode emits inline above) ---
@@ -1433,6 +1597,16 @@ def _emit_asm(lvl: ProcessedLevel, *, prefix: str, out_path: Path,
                 lines.append("    ; (no fizzlers)")
             else:
                 lines.append(format_eqbytes(fd, per_line=16))
+            lines.append("")
+
+        for i, kd in enumerate(killzone_data):
+            if i >= len(rooms):
+                break
+            lines.append(f".{level_name}_room{i:02d}_killzones")
+            if not kd:
+                lines.append("    ; (no killzones)")
+            else:
+                lines.append(format_eqbytes(kd, per_line=16))
             lines.append("")
 
     # Per-room tilemaps (RLE-compressed).

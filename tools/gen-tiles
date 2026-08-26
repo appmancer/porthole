@@ -19,7 +19,7 @@ Output:
 
 Tile indices:
 
-- 0 is an implicit "empty" tile (solid cyan fill) so '.' cells are safe.
+- 0 is an implicit "empty" tile (solid fill, colour index 2) so '.' cells are safe.
 - Tiles from the CSV become indices 1..N, in file order.
 """
 
@@ -129,10 +129,13 @@ def main() -> None:
 
     blocks = parse_tile_blocks(in_path)
 
-    # Tile 0: full cyan fill (colour index 2).
-    cyan4 = [2, 2, 2, 2]
-    cyan_byte = pack_mode5_byte(cyan4)
-    empty_raster = [cyan_byte] * (16 * 2)  # 16 rows * 2 bytes
+    # Tile 0: full fill (colour index 2), matching clear_playfield_bg.
+    # Not actually drawn on the hot path (render_tilemap skips tile id 0
+    # and relies on clear_playfield_bg having already filled the screen),
+    # kept here for consistency in case anything else reads tile 0's data.
+    empty4 = [2, 2, 2, 2]
+    empty_byte = pack_mode5_byte(empty4)
+    empty_raster = [empty_byte] * (16 * 2)  # 16 rows * 2 bytes
     empty_data = to_screen_byte_order(empty_raster, rows=16, width_bytes=2)
 
     tile_labels: list[str] = ["tile_empty"]

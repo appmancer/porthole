@@ -1,0 +1,1821 @@
+.render_start
+; render.asm
+; Routines to render a tilemap and sprites in MODE 5
+
+; Screen memory notes:
+; - Engine treats the playfield as a 16x16 grid of *cells*.
+; - Each cell is 8x16 pixels (MODE 5, 128px-wide playfield).
+; - Screen base is &5800.
+; - Each cell row is 512 bytes apart (32 bytes/scanline × 16 scanlines; see tile_row_screen_table).
+; - We do not use scrolling; we flick between screens.
+; - We may use screen RAM *below the playfield* as scratch (not returned to BASIC).
+
+; Shadow RAM screen access helpers.
+; Call shadow_screen_on before screen memory loops, shadow_screen_off after.
+; Sets/clears ACCCON X bit (bit 2) so CPU sees LYNNE at &3000-&7FFF.
+.shadow_screen_on
+    LDA ACCCON : ORA #&04 : STA ACCCON
+    RTS
+.shadow_screen_off
+    LDA ACCCON : AND #&FB : STA ACCCON
+    RTS
+
+; Clear LYNNE screen area (&5800-&77FF) to black.
+; Must live below &3000 because it sets X=1.
+; Clobbers: A,X,Y,temp_mask_ptr
+.clear_lynne_screen
+    JSR shadow_screen_on
+    LDA #&58 : STA temp_mask_ptr+1
+    LDA #0   : STA temp_mask_ptr
+    LDX #&20                         ; 32 pages = 8KB
+.cls_lynne_page
+    LDY #0 : LDA #0
+.cls_lynne_byte
+    STA (temp_mask_ptr),Y
+    INY : BNE cls_lynne_byte
+    INC temp_mask_ptr+1
+    DEX : BNE cls_lynne_page
+    JSR shadow_screen_off
+    RTS
+
+; ACCCON X-bit trampoline. Must live below &3000 (see shared/trampoline.asm).
+INCLUDE "shared/trampoline.asm"
+ASSERT P% < &3000
+
+.render_tilemap
+    ; Clear playfield to the background accent colour so tile id 0 can be skipped.
+    JSR clear_playfield_bg
+
+    ; Set up initial pointers
+    LDA #<(&5800)           ; Screen starts at &5800 in MODE 5
+    STA screen_ptr
+    LDA #>(&5800)
+    STA screen_ptr+1
+
+    ; Initialize row counter
+    LDA #0
+    STA row_counter                 ; row_counter
+
+.tilemap_row_loop
+    ; Initialize column counter
+    LDA #0
+    STA col_counter                 ; col_counter
+    
+.tilemap_col_loop
+    ; Calculate cell index: row_counter * 16 + col_counter  
+    LDY row_counter                 ; row_counter as index
+    LDA times16_table,Y     ; Get row_counter * 16 (2 cycles vs 8 for 4 ASLs)
+    CLC
+    ADC col_counter         ; + col_counter
+    TAY
+    
+    ; Get cell value directly (8-bit format - no nibble extraction!)
+    LDA (tilemap_ptr), Y
+    BEQ tilemap_skip_cell
+    JSR render_cell8x16
+  .tilemap_skip_cell
+    
+    ; Move to next cell column.
+    ; Each 8x16 cell is 2 bytes wide per scanline.
+    ; In MODE 5 screen-byte order that becomes +16 bytes for the next cell column.
+    LDA screen_ptr
+    CLC
+    ADC #16
+    STA screen_ptr
+    BCC tilemap_col_loop_no_carry
+    INC screen_ptr+1
+
+.tilemap_col_loop_no_carry    
+    ; Next column
+    INC col_counter
+    LDA col_counter
+    CMP #16                 ; 16 columns total
+    BNE tilemap_col_loop
+    
+.tilemap_end_of_row
+    ; Move to next cell row (add 256 bytes = 8 scanlines)
+    INC screen_ptr+1
+
+    ; Next row
+    INC row_counter
+    LDA row_counter
+    CMP #16                 ; 16 cell rows total
+    BEQ tilemap_done
+    JMP tilemap_row_loop
+    
+.tilemap_done
+    RTS
+
+
+ ; Render static tile-aligned objects.
+ ;
+ ; Objects are described by a small table so we can add new objects without
+ ; changing code.
+ .render_static_objects
+    ; temp_sprite_ptr := per-room object table pointer
+    LDA current_room
+    ASL A
+    TAX
+    LDA static_objects_room_pointers,X
+    STA temp_sprite_ptr
+    LDA static_objects_room_pointers+1,X
+    STA temp_sprite_ptr+1
+
+  .rsobj_next
+    ; End marker: stripes==0
+    LDY #2
+    LDA (temp_sprite_ptr),Y
+    BNE rsobj_has_entry
+    JMP rsobj_done
+  .rsobj_has_entry
+
+    ; screen_ptr := &5800 + y*512 + x*16
+    LDA #<(&5800)
+    STA screen_ptr
+    LDA #>(&5800)
+    STA screen_ptr+1
+
+    ; y*512 => add (y*2) to high byte
+    LDY #1
+    LDA (temp_sprite_ptr),Y
+    ASL A
+    CLC
+    ADC screen_ptr+1
+    STA screen_ptr+1
+
+    ; x*16 => add to low byte
+    LDY #0
+    LDA (temp_sprite_ptr),Y
+    TAY
+    LDA times16_table,Y
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC rsobj_x_ok
+    INC screen_ptr+1
+  .rsobj_x_ok
+
+    ; flags
+    LDY #5
+    LDA (temp_sprite_ptr),Y
+    STA temp
+
+    ; Skip disabled entries (bit7 clear)
+    AND #&80
+    BNE rsobj_enabled
+    JMP rsobj_advance
+  .rsobj_enabled
+
+    ; Restore full flags byte (masked bit etc.)
+    LDY #5
+    LDA (temp_sprite_ptr),Y
+    STA temp
+
+    ; sprite_ptr
+    LDY #6
+    LDA (temp_sprite_ptr),Y
+    STA sprite_ptr
+    INY
+    LDA (temp_sprite_ptr),Y
+    STA sprite_ptr+1
+
+    ; mask_ptr
+    LDY #8
+    LDA (temp_sprite_ptr),Y
+    STA mask_ptr
+    INY
+    LDA (temp_sprite_ptr),Y
+    STA mask_ptr+1
+
+    ; masked/unmasked
+    LDA temp
+    AND #1
+    BEQ rsobj_unmasked
+
+    ; A=stripe_count, X=bytes_per_stripe, Y=stride
+    LDY #2
+    LDA (temp_sprite_ptr),Y
+    STA temp_y
+    LDY #3
+    LDA (temp_sprite_ptr),Y
+    TAX
+    LDY #4
+    LDA (temp_sprite_ptr),Y
+    TAY
+    LDA temp_y
+    JSR stamp_striped_masked
+    JMP rsobj_advance
+
+  .rsobj_unmasked
+    ; A=stripe_count, X=bytes_per_stripe, Y=stride
+    LDY #2
+    LDA (temp_sprite_ptr),Y
+    STA temp_y
+    LDY #3
+    LDA (temp_sprite_ptr),Y
+    TAX
+    LDY #4
+    LDA (temp_sprite_ptr),Y
+    TAY
+    LDA temp_y
+    JSR stamp_striped_copy
+
+  .rsobj_advance
+    ; temp_sprite_ptr += STATIC_OBJ_ENTRY_SIZE
+    LDA temp_sprite_ptr
+    CLC
+    ADC #STATIC_OBJ_ENTRY_SIZE
+    STA temp_sprite_ptr
+    BCC rsobj_adv_ok
+    INC temp_sprite_ptr+1
+  .rsobj_adv_ok
+    JMP rsobj_next
+
+  .rsobj_done
+    RTS
+
+
+; Note: object instance tables live in `objects.asm`.
+
+
+; Generic unmasked stamper for tile-aligned objects.
+;
+; Inputs:
+; - screen_ptr: destination top-left
+; - sprite_ptr: source data (striped)
+; - A: stripe count (1,2,4)
+; - X: bytes to copy per stripe (16 for 8px-wide, 32 for 16px-wide)
+; - Y: source stride per stripe (usually 16 or 32)
+.stamp_striped_copy
+    STA row_counter
+    STX col_counter
+    STY temp_y
+
+    ; Preserve pointers.
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+    LDA sprite_ptr
+    PHA
+    LDA sprite_ptr+1
+    PHA
+
+    JSR shadow_screen_on
+
+  .stamp_stripe
+    LDY #0
+  .stamp_byte
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY col_counter
+    BNE stamp_byte
+
+    ; Next stripe on screen.
+    INC screen_ptr+1
+
+    ; Next stripe in sprite data.
+    LDA sprite_ptr
+    CLC
+    ADC temp_y
+    STA sprite_ptr
+    BCC stamp_sprite_ptr_ok
+    INC sprite_ptr+1
+  .stamp_sprite_ptr_ok
+
+    DEC row_counter
+    BNE stamp_stripe
+
+    JSR shadow_screen_off
+
+    ; Restore pointers.
+    PLA
+    STA sprite_ptr+1
+    PLA
+    STA sprite_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    RTS
+
+
+; Generic masked stamper for tile-aligned objects.
+;
+; Inputs:
+; - screen_ptr: destination top-left
+; - sprite_ptr: source data (striped)
+; - mask_ptr: mask data (striped)
+; - A: stripe count (1,2,4)
+; - X: bytes to process per stripe (16 for 8px-wide, 32 for 16px-wide)
+; - Y: source stride per stripe (usually 16 or 32)
+ .stamp_striped_masked
+    STA row_counter
+    STX col_counter
+    STY temp_y
+    PHP
+    SEI
+    JSR shadow_screen_on
+
+    ; Preserve pointers.
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+    LDA sprite_ptr
+    PHA
+    LDA sprite_ptr+1
+    PHA
+    LDA mask_ptr
+    PHA
+    LDA mask_ptr+1
+    PHA
+
+  .stampm_stripe
+    LDY #0
+  .stampm_byte
+    LDA (mask_ptr),Y
+    BEQ stampm_opaque
+    CMP #&FF
+    BEQ stampm_next
+
+    STA temp
+    LDA (screen_ptr),Y
+    AND temp
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP stampm_next
+
+  .stampm_opaque
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+
+  .stampm_next
+    INY
+    CPY col_counter
+    BNE stampm_byte
+
+    ; Next stripe on screen.
+    INC screen_ptr+1
+
+    ; Next stripe in sprite/mask data.
+    LDA sprite_ptr
+    CLC
+    ADC temp_y
+    STA sprite_ptr
+    BCC stampm_sprite_ptr_ok
+    INC sprite_ptr+1
+  .stampm_sprite_ptr_ok
+
+    LDA mask_ptr
+    CLC
+    ADC temp_y
+    STA mask_ptr
+    BCC stampm_mask_ptr_ok
+    INC mask_ptr+1
+  .stampm_mask_ptr_ok
+
+    DEC row_counter
+    BNE stampm_stripe
+
+    JSR shadow_screen_off
+
+    ; Restore pointers.
+    PLA
+    STA mask_ptr+1
+    PLA
+    STA mask_ptr
+    PLA
+    STA sprite_ptr+1
+    PLA
+    STA sprite_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    PLP
+    RTS
+
+; Fill the visible playfield (32 bytes x 256 scanlines = 8192 bytes) with the
+; background accent colour (colour index 2).
+;
+; In MODE 5 (2bpp), a byte of four colour-2 pixels encodes as &F0. Solid
+; black (&00) was tried here but made black-outlined sprites (Chell
+; included) disappear against the void.
+.clear_playfield_bg
+    ; temp_mask_ptr := &5800
+    LDA #<(&5800)
+    STA temp_mask_ptr
+    LDA #>(&5800)
+    STA temp_mask_ptr+1
+
+    JSR shadow_screen_on
+
+    ; 0x5800..0x77FF is 0x20 pages of 256 bytes.
+    LDX #&20
+    LDA #&F0
+  .clear_page
+    LDY #0
+  .clear_byte
+    STA (temp_mask_ptr),Y
+    INY
+    BNE clear_byte
+    INC temp_mask_ptr+1
+    DEX
+    BNE clear_page
+
+    JSR shadow_screen_off
+    RTS
+
+
+; --- fill_yellow_from_row12 ---
+; Fill shadow screen char rows 12-31 with yellow (colour 3 = &FF).
+; Char row 12 = &5800 + 12*256 = &6400.  20 rows = 20 pages.
+; Must live below &3000 because it sets ACCCON X=1.
+; Clobbers: A, X, Y, temp_mask_ptr
+.fill_yellow_from_row12
+    JSR shadow_screen_on
+    LDA #<(&6400)
+    STA temp_mask_ptr
+    LDA #>(&6400)
+    STA temp_mask_ptr+1
+    LDX #20                         ; 20 pages (char rows 12-31)
+    LDA #&FF                        ; colour 3 = yellow
+.fylr_page
+    LDY #0
+.fylr_byte
+    STA (temp_mask_ptr),Y
+    INY
+    BNE fylr_byte
+    INC temp_mask_ptr+1
+    DEX
+    BNE fylr_page
+    JSR shadow_screen_off
+    RTS
+
+
+; --- write_char_to_shadow ---
+; Copy 8 bytes from CHAR_BUF to shadow screen RAM at (screen_ptr).
+; Must live below &3000 because it sets ACCCON X=1.
+; Input: screen_ptr = destination in shadow screen RAM.
+;        CHAR_BUF (&09C9..&09D0) = 8 bytes of MODE 5 character data.
+; Clobbers: A, Y
+CHAR_BUF = &09C9
+.write_char_to_shadow
+    JSR shadow_screen_on
+    LDY #0
+.wcts_loop
+    LDA CHAR_BUF,Y
+    STA (screen_ptr),Y
+    INY
+    CPY #8
+    BNE wcts_loop
+    JSR shadow_screen_off
+    RTS
+
+
+.render_cell8x16
+    ; Store tile type
+    STA temp
+    ; Preserve screen pointer
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+
+    ; Page in tile data bank — protect from interrupt-driven ROMSEL changes.
+    PHP
+    SEI
+    LDA &F4 : PHA             ; save MOS ROMSEL shadow
+    LDA tile_bank
+    STA &F4 : STA ROMSEL      ; update both shadow and register
+
+    ; Get sprite data pointer for this tile
+    LDA temp
+    ASL A                   ; × 2 for 16-bit pointer
+    TAX
+    LDA sprite_table,X
+    STA sprite_ptr
+    LDA sprite_table+1,X
+    STA sprite_ptr+1
+
+    ; Plot first half (top 8 rows)
+    JSR plot_cell_stripe8x8
+
+    ; Move screen pointer down 8 rows (256 bytes)
+    INC screen_ptr+1
+
+    ; Move sprite pointer to bottom half (+16 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #16
+    STA sprite_ptr
+    BCC next_half
+    INC sprite_ptr+1
+
+.next_half
+    ; Plot second half (bottom 8 rows)
+    JSR plot_cell_stripe8x8
+
+    ; Restore previous bank
+    PLA : STA &F4 : STA ROMSEL
+    PLP
+
+    ; Restore screen pointer
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    RTS
+
+; Masked version of render_cell8x16 - for sprites with transparent black pixels
+.render_masked_cell8x16
+    ; Store tile type
+    STA temp
+
+    ; Preserve screen pointer
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+
+    ; Page in tile data bank — protect from interrupt-driven ROMSEL changes.
+    PHP
+    SEI
+    LDA &F4 : PHA             ; save MOS ROMSEL shadow
+    LDA tile_bank
+    STA &F4 : STA ROMSEL      ; update both shadow and register
+
+    ; Get sprite data pointer for this tile
+    LDA temp
+    ASL A                   ; × 2 for 16-bit pointer
+    TAX
+    LDA sprite_table,X
+    STA sprite_ptr
+    LDA sprite_table+1,X
+    STA sprite_ptr+1
+
+    ; Plot first half (top 8 rows) with masking
+    JSR plot_masked_cell_stripe8x8
+
+    ; Move screen pointer down 8 rows (256 bytes)
+    INC screen_ptr+1
+
+    ; Move sprite pointer to bottom half (+16 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #16
+    STA sprite_ptr
+    BCC next_half_masked
+    INC sprite_ptr+1
+
+.next_half_masked
+    ; Plot second half (bottom 8 rows) with masking
+    JSR plot_masked_cell_stripe8x8
+
+    ; Restore previous bank
+    PLA : STA &F4 : STA ROMSEL
+    PLP
+
+    ; Restore screen pointer
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    RTS
+
+; Plots one 8x8 stripe of an 8x16 cell.
+; Stored as 16 bytes (2 bytes wide × 8 scanlines) in MODE 5 screen-byte order.
+.plot_cell_stripe8x8
+    JSR shadow_screen_on
+    LDY #0
+.sprite_wide_row_loop
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #16
+    BNE sprite_wide_row_loop
+    JSR shadow_screen_off
+    RTS
+
+; Plots one 8x8 stripe of an 8x16 cell with masking (black pixels transparent).
+; MODE 5 uses interleaved bits: pixel 0=bits 0+4, pixel 1=bits 1+5, pixel 2=bits 2+6, pixel 3=bits 3+7
+.plot_masked_cell_stripe8x8
+    JSR shadow_screen_on
+    LDY #0
+.masked_sprite_byte_loop
+    LDA (sprite_ptr),Y             ; Load sprite byte from sprite_ptr
+    BEQ skip_sprite_byte    ; If entire byte is 0 (all black), skip it
+    
+    STA temp                 ; Store sprite byte in &70 (temp)
+    LDA (screen_ptr),Y             ; Load current screen byte from screen_ptr
+    STA temp_y                 ; Store screen byte in &75 (temp_y)
+    
+    ; Process pixel 0 (bits 0 and 4) - MSB bit 0 = bit 7, bit 4 = bit 3
+    LDA temp
+    AND #&88                ; Mask bits 7 and 3 (0 and 4 in MSB numbering)
+    BEQ keep_screen_pixel0  ; If sprite pixel is black, keep screen pixel
+    LDA temp_y
+    AND #&77                ; Clear screen bits 7 and 3
+    ORA temp                ; OR in sprite bits 7 and 3
+    STA temp_y
+.keep_screen_pixel0
+    
+    ; Process pixel 1 (bits 1 and 5) - MSB bit 1 = bit 6, bit 5 = bit 2
+    LDA temp
+    AND #&44                ; Mask bits 6 and 2 (1 and 5 in MSB numbering)
+    BEQ keep_screen_pixel1  ; If sprite pixel is black, keep screen pixel
+    LDA temp_y
+    AND #&BB                ; Clear screen bits 6 and 2
+    ORA temp                ; OR in sprite bits 6 and 2
+    STA temp_y
+.keep_screen_pixel1
+    
+    ; Process pixel 2 (bits 2 and 6) - MSB bit 2 = bit 5, bit 6 = bit 1
+    LDA temp
+    AND #&22                ; Mask bits 5 and 1 (2 and 6 in MSB numbering)
+    BEQ keep_screen_pixel2  ; If sprite pixel is black, keep screen pixel
+    LDA temp_y
+    AND #&DD                ; Clear screen bits 5 and 1
+    ORA temp                ; OR in sprite bits 5 and 1
+    STA temp_y
+.keep_screen_pixel2
+    
+    ; Process pixel 3 (bits 3 and 7) - MSB bit 3 = bit 4, bit 7 = bit 0
+    LDA temp
+    AND #&11                ; Mask bits 4 and 0 (3 and 7 in MSB numbering)
+    BEQ keep_screen_pixel3  ; If sprite pixel is black, keep screen pixel
+    LDA temp_y
+    AND #&EE                ; Clear screen bits 4 and 0
+    ORA temp                ; OR in sprite bits 4 and 0
+    STA temp_y
+.keep_screen_pixel3
+
+    LDA temp_y
+    STA (screen_ptr),Y             ; Write modified byte back to screen
+
+.skip_sprite_byte
+    INY
+    CPY #16                 ; 16 bytes total
+    BNE masked_sprite_byte_loop
+    JSR shadow_screen_off
+    RTS
+
+; Render character sprite with mask - uses character_sprite_table and character_mask_table
+.render_character_sprite
+    ; preserve A
+    STA temp
+    ; preserve screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr +1
+    PHA
+    ; restore A
+    LDA temp
+    ; Input: A = character sprite index (0-based index for character_sprite_table)
+    ASL A
+    TAX
+    LDA character_sprite_table,X
+    STA sprite_ptr
+    LDA character_sprite_table+1,X
+    STA sprite_ptr+1
+    
+    ; Set up mask pointer from character_mask_table
+    LDA character_mask_table,X
+    STA mask_ptr
+    LDA character_mask_table+1,X
+    STA mask_ptr+1
+
+    ; Plot full character sprite (32 scanlines) using Spycat-style masked blit
+    JSR plot_sprite12x32_masked_striped
+
+    ; restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+    
+    RTS
+
+; Render 16x16 overlay sprite (gun/box arms) with mask.
+; Input: A = overlay index (0-based, matches overlay_*_table order).
+; The overlay is drawn over the middle two stripes of the 16x32 body (stripes 1+2).
+.render_overlay_sprite
+    ; Preserve input index before clobbering A.
+    STA temp
+
+    ; preserve screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+
+    ; screen_ptr += 1 stripe (8 scanlines)
+    INC screen_ptr+1
+
+    ; Restore our index (original A)
+    LDA temp
+
+    ASL A
+    TAX
+
+    LDA overlay_sprite_table,X
+    STA sprite_ptr
+    LDA overlay_sprite_table+1,X
+    STA sprite_ptr+1
+
+    LDA overlay_mask_table,X
+    STA mask_ptr
+    LDA overlay_mask_table+1,X
+    STA mask_ptr+1
+
+    JSR plot_sprite16x16_masked_striped
+
+    ; restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+
+    RTS
+
+; Render a 16x16 reticle sprite with mask.
+; Input: A = reticle state index (0=blocked/unportalable, 1=portalable).
+; Drawn at `screen_ptr` with no built-in offset.
+.render_reticle_sprite
+    ; Preserve input index before clobbering A.
+    STA temp
+
+    ; preserve screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+
+    ; Restore our index (original A)
+    LDA temp
+
+    ASL A
+    TAX
+
+    LDA reticle_sprite_table,X
+    STA sprite_ptr
+    LDA reticle_sprite_table+1,X
+    STA sprite_ptr+1
+
+    LDA reticle_mask_table,X
+    STA mask_ptr
+    LDA reticle_mask_table+1,X
+    STA mask_ptr+1
+
+    JSR plot_sprite16x16_masked_striped
+
+    ; restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+
+    RTS
+ 
+ ; Sprite blit used by Spycat-format character sprites.
+; Data: 4 stripes × 32 bytes/stripe (8 scanlines × 4 bytes/scanline).
+; Screen: each stripe is 8 scanlines below the previous one.
+;
+; Debug version (no mask): dst = pix (hard overwrite)
+; Requires: sprite_ptr = pix data, screen_ptr = top-left screen
+.plot_sprite12x32_striped_copy
+    ; Preserve base pointers so we can restore them.
+    LDA sprite_ptr
+    STA temp_sprite_ptr
+    LDA sprite_ptr+1
+    STA temp_sprite_ptr+1
+
+    JSR shadow_screen_on
+    LDX #0
+.copy_stripe_loop
+    LDY #0
+.copy_row_bytes
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE copy_row_bytes
+
+    ; Next stripe: move down 8 scanlines on screen.
+    INC screen_ptr+1
+
+    ; Next stripe in data (+32 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC copy_sprite_ptr_ok
+    INC sprite_ptr+1
+.copy_sprite_ptr_ok
+
+    INX
+    CPX #4
+    BNE copy_stripe_loop
+
+    JSR shadow_screen_off
+
+    ; Restore screen_ptr (advanced 4 stripes)
+    LDA screen_ptr+1
+    SEC
+    SBC #4
+    STA screen_ptr+1
+
+    ; Restore sprite_ptr
+    LDA temp_sprite_ptr
+    STA sprite_ptr
+    LDA temp_sprite_ptr+1
+    STA sprite_ptr+1
+
+    RTS
+
+ ; Masked version (Spycat-style): dst = (dst & mask) | pix
+ ; Requires: sprite_ptr = pix data, mask_ptr = mask data, screen_ptr = top-left screen
+ .plot_sprite12x32_masked_striped
+    ; Preserve base pointers so we can restore them.
+    LDA sprite_ptr
+    STA temp_sprite_ptr
+    LDA sprite_ptr+1
+    STA temp_sprite_ptr+1
+    LDA mask_ptr
+    STA temp_mask_ptr
+    LDA mask_ptr+1
+    STA temp_mask_ptr+1
+
+    JSR shadow_screen_on
+    LDX #0
+ .masked_stripe_loop
+    LDY #0
+ .masked_row_bytes
+    ; Fast paths:
+    ; - mask==&00: fully opaque -> dst=pix
+    ; - mask==&FF and pix==&00: fully transparent -> skip
+    LDA (mask_ptr),Y
+    BEQ masked_opaque
+    CMP #&FF
+    BEQ masked_maybe_transparent
+
+    STA temp
+    LDA (screen_ptr),Y
+    AND temp
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP masked_next_byte
+
+  .masked_opaque
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP masked_next_byte
+
+  .masked_maybe_transparent
+    LDA (sprite_ptr),Y
+    BEQ masked_next_byte
+    ORA (screen_ptr),Y
+    STA (screen_ptr),Y
+
+  .masked_next_byte
+
+    INY
+    CPY #32
+    BNE masked_row_bytes
+
+    ; Next stripe: move down 8 scanlines on screen.
+    INC screen_ptr+1
+
+    ; Next stripe in data (+32 bytes)
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC masked_sprite_ptr_ok
+    INC sprite_ptr+1
+.masked_sprite_ptr_ok
+
+    LDA mask_ptr
+    CLC
+    ADC #32
+    STA mask_ptr
+    BCC masked_mask_ptr_ok
+    INC mask_ptr+1
+.masked_mask_ptr_ok
+
+    INX
+    CPX #4
+    BNE masked_stripe_loop
+
+    JSR shadow_screen_off
+
+    ; Restore screen_ptr (advanced 4 stripes)
+    LDA screen_ptr+1
+    SEC
+    SBC #4
+    STA screen_ptr+1
+
+    ; Restore sprite/mask pointers
+    LDA temp_sprite_ptr
+    STA sprite_ptr
+    LDA temp_sprite_ptr+1
+    STA sprite_ptr+1
+    LDA temp_mask_ptr
+    STA mask_ptr
+    LDA temp_mask_ptr+1
+    STA mask_ptr+1
+ 
+    RTS
+
+; Unmasked version: 16x16 (two stripes): dst = pix (hard overwrite)
+; Requires: sprite_ptr = pix data, screen_ptr = top-left screen address for stripe 0
+.plot_sprite16x16_striped_copy
+    ; Preserve base sprite pointer so we can restore it.
+    LDA sprite_ptr
+    STA temp_sprite_ptr
+    LDA sprite_ptr+1
+    STA temp_sprite_ptr+1
+
+    JSR shadow_screen_on
+    ; Stripe 0: copy 32 bytes
+    LDY #0
+.overlay_copy_bytes0
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE overlay_copy_bytes0
+
+    ; Advance screen one stripe (8 scanlines) and data +32 bytes
+    INC screen_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC overlay_copy_sprite_ptr_ok
+    INC sprite_ptr+1
+.overlay_copy_sprite_ptr_ok
+
+    ; Stripe 1: copy 32 bytes
+    LDY #0
+.overlay_copy_bytes1
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    INY
+    CPY #32
+    BNE overlay_copy_bytes1
+
+    JSR shadow_screen_off
+
+    ; Restore screen_ptr (advanced 1 stripe)
+    DEC screen_ptr+1
+
+    ; Restore sprite_ptr
+    LDA temp_sprite_ptr
+    STA sprite_ptr
+    LDA temp_sprite_ptr+1
+    STA sprite_ptr+1
+
+    RTS
+
+ ; Masked version (Spycat-style): 16x16 (two stripes): dst = (dst & mask) | pix
+ ; Requires: sprite_ptr = pix data, mask_ptr = mask data
+ ;          screen_ptr = top-left screen address for stripe 0
+ .plot_sprite16x16_masked_striped
+    ; Preserve base pointers so we can restore them.
+    LDA sprite_ptr
+    STA temp_sprite_ptr
+    LDA sprite_ptr+1
+    STA temp_sprite_ptr+1
+    LDA mask_ptr
+    STA temp_mask_ptr
+    LDA mask_ptr+1
+    STA temp_mask_ptr+1
+
+    JSR shadow_screen_on
+    ; Stripe 0: copy 32 bytes
+    LDY #0
+ .overlay_bytes0
+    LDA (mask_ptr),Y
+    BEQ overlay_opaque0
+    CMP #&FF
+    BEQ overlay_maybe_transparent0
+
+    STA temp
+    LDA (screen_ptr),Y
+    AND temp
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP overlay_next0
+
+  .overlay_opaque0
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP overlay_next0
+
+  .overlay_maybe_transparent0
+    LDA (sprite_ptr),Y
+    BEQ overlay_next0
+    ORA (screen_ptr),Y
+    STA (screen_ptr),Y
+
+  .overlay_next0
+    INY
+    CPY #32
+    BNE overlay_bytes0
+
+    ; Advance screen one stripe (8 scanlines) and data +32 bytes
+    INC screen_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC sprite_ptr_ok1
+    INC sprite_ptr+1
+.sprite_ptr_ok1
+
+    LDA mask_ptr
+    CLC
+    ADC #32
+    STA mask_ptr
+    BCC mask_ptr_ok1
+    INC mask_ptr+1
+.mask_ptr_ok1
+
+    ; Stripe 1: copy 32 bytes
+    LDY #0
+ .overlay_bytes1
+    LDA (mask_ptr),Y
+    BEQ overlay_opaque1
+    CMP #&FF
+    BEQ overlay_maybe_transparent1
+
+    STA temp
+    LDA (screen_ptr),Y
+    AND temp
+    ORA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP overlay_next1
+
+  .overlay_opaque1
+    LDA (sprite_ptr),Y
+    STA (screen_ptr),Y
+    JMP overlay_next1
+
+  .overlay_maybe_transparent1
+    LDA (sprite_ptr),Y
+    BEQ overlay_next1
+    ORA (screen_ptr),Y
+    STA (screen_ptr),Y
+
+  .overlay_next1
+    INY
+    CPY #32
+    BNE overlay_bytes1
+
+    JSR shadow_screen_off
+
+    ; Restore screen_ptr (advanced 1 stripe)
+    DEC screen_ptr+1
+
+    ; Restore sprite/mask pointers
+    LDA temp_sprite_ptr
+    STA sprite_ptr
+    LDA temp_sprite_ptr+1
+    STA sprite_ptr+1
+    LDA temp_mask_ptr
+    STA mask_ptr
+    LDA temp_mask_ptr+1
+    STA mask_ptr+1
+
+    RTS
+ 
+; Sprite pointer table lookup is now used for sprite selection.
+
+
+
+; Dedicated save-under buffers in screen scratch.
+; We avoid the general pool so we can restore/draw per object (and skip work
+; entirely when an object hasn't moved).
+CHELL_SAVE_UNDER_BASE     = &7800   ; 16x32 = 128 bytes
+RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
+
+; solid_tile_plane is allocated in persistent_objects_data.asm (256 bytes).
+
+; Save-under helpers.
+;
+; These copy raw screen bytes into a contiguous buffer and restore them later.
+; save_chell_under is merged into save_and_draw_character_current (render_state.asm).
+;
+; Chell: 16x32 -> 4 stripes x 32 bytes.
+; Reticle: 16x16 -> 2 stripes x 32 bytes.
+
+; Restore 16x32 from CHELL_SAVE_UNDER_BASE to chell_prev_ptr.
+.restore_chell_under
+    PHP
+    SEI
+    JSR shadow_screen_on
+    ; temp_mask_ptr := dest screen
+    LDA chell_prev_ptr
+    STA temp_mask_ptr
+    LDA chell_prev_ptr+1
+    STA temp_mask_ptr+1
+
+    ; sprite_ptr := src buffer
+    LDA #<(CHELL_SAVE_UNDER_BASE)
+    STA sprite_ptr
+    LDA #>(CHELL_SAVE_UNDER_BASE)
+    STA sprite_ptr+1
+
+    LDY #0
+    STY temp
+.restore_chell_stripe
+    LDY #0
+.restore_chell_bytes
+    LDA (sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    CPY #32
+    BNE restore_chell_bytes
+
+    INC temp_mask_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC restore_chell_next
+    INC sprite_ptr+1
+.restore_chell_next
+
+    INC temp
+    LDA temp
+    CMP #4
+    BNE restore_chell_stripe
+
+    JSR shadow_screen_off
+    PLP
+    RTS
+
+; Save 16x16 under screen_ptr into RETICLE_SAVE_UNDER_BASE.
+.save_reticle_under
+    PHP
+    SEI
+    JSR shadow_screen_on
+    ; temp_mask_ptr := source screen
+    LDA screen_ptr
+    STA temp_mask_ptr
+    LDA screen_ptr+1
+    STA temp_mask_ptr+1
+
+    ; sprite_ptr := dest buffer
+    LDA #<(RETICLE_SAVE_UNDER_BASE)
+    STA sprite_ptr
+    LDA #>(RETICLE_SAVE_UNDER_BASE)
+    STA sprite_ptr+1
+
+    LDY #0
+    STY temp
+.save_reticle_stripe
+    LDY #0
+.save_reticle_bytes
+    LDA (temp_mask_ptr),Y
+    STA (sprite_ptr),Y
+    INY
+    CPY #32
+    BNE save_reticle_bytes
+
+    INC temp_mask_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC save_reticle_next
+    INC sprite_ptr+1
+.save_reticle_next
+
+    INC temp
+    LDA temp
+    CMP #2
+    BNE save_reticle_stripe
+
+    JSR shadow_screen_off
+    PLP
+    RTS
+
+; Restore 16x16 from RETICLE_SAVE_UNDER_BASE to reticle_prev_ptr.
+.restore_reticle_under
+    PHP
+    SEI
+    JSR shadow_screen_on
+    ; temp_mask_ptr := dest screen
+    LDA reticle_prev_ptr
+    STA temp_mask_ptr
+    LDA reticle_prev_ptr+1
+    STA temp_mask_ptr+1
+
+    ; sprite_ptr := src buffer
+    LDA #<(RETICLE_SAVE_UNDER_BASE)
+    STA sprite_ptr
+    LDA #>(RETICLE_SAVE_UNDER_BASE)
+    STA sprite_ptr+1
+
+    LDY #0
+    STY temp
+.restore_reticle_stripe
+    LDY #0
+.restore_reticle_bytes
+    LDA (sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    CPY #32
+    BNE restore_reticle_bytes
+
+    INC temp_mask_ptr+1
+
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC restore_reticle_next
+    INC sprite_ptr+1
+.restore_reticle_next
+
+    INC temp
+    LDA temp
+    CMP #2
+    BNE restore_reticle_stripe
+
+    JSR shadow_screen_off
+    PLP
+    RTS
+
+; Build a 16x16 solid-tile plane from the current room tilemap.
+;
+; Stores 256 bytes at `solid_tile_plane`:
+; - 0 = empty
+; - 1 = solid
+;
+; Portalability is handled separately via a tile-layer (portalmap_ptr).
+; --- Save under ---------------------------------------------------------
+; Copies the 16x16 under screen_ptr into SPARK_SAVE_UNDER_BASE.
+; 2 stripes of 32 bytes; consecutive bands are +256 apart.
+; Clobbers: A,Y,temp,temp_mask_ptr,sprite_ptr
+.spark_save_under
+    PHP
+    SEI
+    ; Stripe count into ZP first: spark_stripes lives at &69xx, which X=1
+    ; replaces with screen memory.
+    LDA spark_stripes
+    STA temp_y
+    JSR shadow_screen_on
+    LDA screen_ptr   : STA temp_mask_ptr
+    LDA screen_ptr+1 : STA temp_mask_ptr+1
+    LDA #<(SPARK_SAVE_UNDER_BASE) : STA sprite_ptr
+    LDA #>(SPARK_SAVE_UNDER_BASE) : STA sprite_ptr+1
+    LDA #0
+    STA temp
+  .ssu_stripe
+    LDY #0
+  .ssu_bytes
+    LDA (temp_mask_ptr),Y
+    STA (sprite_ptr),Y
+    INY
+    CPY #32
+    BNE ssu_bytes
+    INC temp_mask_ptr+1
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC ssu_next
+    INC sprite_ptr+1
+  .ssu_next
+    INC temp
+    LDA temp
+    CMP temp_y
+    BNE ssu_stripe
+    JSR shadow_screen_off
+    PLP
+    RTS
+
+
+; --- Restore under ------------------------------------------------------
+; Puts the saved pixels back at spark_prev_ptr and drops the buffer.
+; Safe to call unconditionally: does nothing if there is nothing saved.
+; Clobbers: A,Y,temp,temp_mask_ptr,sprite_ptr
+.spark_restore_under
+    LDA spark_has_under
+    BNE sru_go
+    RTS
+  .sru_go
+    LDA #0
+    STA spark_has_under
+    PHP
+    SEI
+    ; Read the destination BEFORE mapping LYNNE in.  spark_prev_ptr lives in
+    ; the spark section at &68xx, which ACCCON X=1 replaces with screen
+    ; memory -- reading it after shadow_screen_on returns screen bytes and
+    ; the restore then splatters 64 bytes at a random address.
+    LDA spark_prev_ptr   : STA temp_mask_ptr
+    LDA spark_prev_ptr+1 : STA temp_mask_ptr+1
+    LDA spark_stripes
+    STA temp_y
+    JSR shadow_screen_on
+    LDA #<(SPARK_SAVE_UNDER_BASE) : STA sprite_ptr
+    LDA #>(SPARK_SAVE_UNDER_BASE) : STA sprite_ptr+1
+    LDA #0
+    STA temp
+  .sru_stripe
+    LDY #0
+  .sru_bytes
+    LDA (sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    CPY #32
+    BNE sru_bytes
+    INC temp_mask_ptr+1
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC sru_next
+    INC sprite_ptr+1
+  .sru_next
+    INC temp
+    LDA temp
+    CMP temp_y
+    BNE sru_stripe
+    JSR shadow_screen_off
+    PLP
+    RTS
+
+
+
+; Everything above that touches ACCCON X=1 must execute from below &3000,
+; otherwise LYNNE is mapped over the code as it runs.
+ASSERT P% < &3000
+
+.build_material_planes_from_tilemap
+    LDY #0
+.build_solid_tile_plane_loop
+    LDA (tilemap_ptr),Y
+    TAX
+    TXA
+    AND #&20
+    BEQ not_solid_tile
+    LDA #1
+.not_solid_tile
+    STA solid_tile_plane,Y
+    INY
+    BNE build_solid_tile_plane_loop
+    ; Fall through to mark fizzler tiles in solid_tile_plane.
+
+; Mark fizzler region tiles as solid in solid_tile_plane.
+; This blocks LOS (reticle and quick-shot) but NOT physics movement.
+; Laser beams check the tilemap directly (AND #&20), so they pass through.
+; Runs once per room entry (not per frame).
+; Clobbers: A,X,Y,col_counter,row_counter,temp_y,temp,hstep_rem,hstep_moved
+.mark_fizzler_tiles
+    LDA room_fizzler_count
+    BEQ mft_done
+    LDY #0                    ; data offset into (room_fizzler_ptr)
+    LDX room_fizzler_count
+.mft_outer
+    ; Load pixel bounds, convert to tile coords.
+    LDA (room_fizzler_ptr),Y : INY   ; x0 px
+    LSR A : LSR A : LSR A            ; /8 → tile_x0
+    STA col_counter
+    LDA (room_fizzler_ptr),Y : INY   ; y0 px
+    LSR A : LSR A : LSR A : LSR A    ; /16 → tile_y0
+    STA row_counter
+    LDA (room_fizzler_ptr),Y : INY   ; x1 px (exclusive)
+    LSR A : LSR A : LSR A            ; /8 → tile_x1 (exclusive in tiles)
+    STA temp_y
+    LDA (room_fizzler_ptr),Y : INY   ; y1 px (exclusive)
+    LSR A : LSR A : LSR A : LSR A    ; /16 → tile_y1 (exclusive in tiles)
+    STA temp
+    INY                              ; skip channel byte (5 bytes per fizzler record)
+    STY hstep_rem                    ; save data offset
+    STX hstep_moved                  ; save outer counter
+
+    ; Nested loop: rows [row_counter..temp), cols [col_counter..temp_y)
+    ; col_counter holds col_start, restored each row iteration.
+.mft_row_loop
+    LDA row_counter
+    CMP temp
+    BCS mft_row_done
+
+    ; Compute tile_index = row_counter * 16 + col_counter
+    LDA row_counter
+    ASL A : ASL A : ASL A : ASL A    ; *16
+    CLC
+    ADC col_counter
+    TAX                               ; X = starting tile index for this row
+    LDA col_counter
+    PHA                               ; save col_start
+
+.mft_col_loop
+    LDA col_counter
+    CMP temp_y
+    BCS mft_col_done
+
+    LDA #1
+    STA solid_tile_plane,X
+    INX
+    INC col_counter
+    JMP mft_col_loop
+
+.mft_col_done
+    PLA
+    STA col_counter                   ; restore col_start
+    INC row_counter
+    JMP mft_row_loop
+
+.mft_row_done
+    LDY hstep_rem
+    LDX hstep_moved
+    DEX
+    BNE mft_outer
+.mft_done
+    ; Fall through to fix up zapper solidity.
+
+; Patch solid_tile_plane for any zapper objects in the current room.
+; Zapper off tiles have bit 5 set (tile IDs >= 32) but should NOT be solid.
+; Runs once per room entry after build_material_planes_from_tilemap.
+; Clobbers: A,X,Y,temp,col_counter
+.fixup_zapper_solidity
+    LDY #0
+  .fzs_loop
+    CPY #OBJ_COUNT
+    BCS fzs_done
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_ZAPPER
+    BNE fzs_next
+    LDA obj_room,Y
+    CMP current_room
+    BNE fzs_next
+
+    ; Compute solidity: on (bit0=0) → solid=1; off (bit0=1) → solid=0.
+    LDA obj_state,Y
+    AND #1
+    EOR #1
+    STA temp            ; solidity value
+
+    ; Get width in tiles from obj_state bits 1-6.
+    LDA obj_state,Y
+    AND #&7E
+    LSR A
+    STA col_counter     ; width_tiles
+
+    ; Compute starting tile index.
+    STY temp_y
+    LDX obj_y,Y
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX                 ; X = leftmost tile index
+
+  .fzs_patch_loop
+    LDA temp
+    STA solid_tile_plane,X
+    INX
+    DEC col_counter
+    BNE fzs_patch_loop
+
+    LDY temp_y          ; restore object index
+
+  .fzs_next
+    INY
+    JMP fzs_loop
+  .fzs_done
+    RTS
+
+
+; Clear zapper tiles from physics solidity plane.
+; Zappers kill on contact, so they must not block Chell's movement.
+; Called each frame during rebuild_solid_phys_plane.
+; Clobbers: A,X,Y,temp,col_counter,temp_y
+.rsp_clear_zappers
+    LDY #0
+  .rcz_loop
+    CPY #OBJ_COUNT
+    BCS rcz_done
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_ZAPPER
+    BNE rcz_next
+    LDA obj_room,Y
+    CMP current_room
+    BNE rcz_next
+
+    ; Only clear when zapper is ON (bit0=0). When off, tiles are already non-solid.
+    LDA obj_state,Y
+    AND #1
+    BNE rcz_next
+
+    ; Get width in tiles from obj_state bits 1-6.
+    LDA obj_state,Y
+    AND #&7E
+    LSR A
+    STA col_counter
+
+    ; Compute starting tile index.
+    STY temp_y
+    LDX obj_y,Y
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX
+
+  .rcz_clear_loop
+    LDA #0
+    STA solid_phys_plane,X
+    INX
+    DEC col_counter
+    BNE rcz_clear_loop
+
+    LDY temp_y
+  .rcz_next
+    INY
+    JMP rcz_loop
+  .rcz_done
+    RTS
+
+
+; Rebuild the physics solidity plane (tiles + standable objects).
+;
+; Rebuilds from the tilemap, then stamps standable objects (cubes) into it.
+;
+; Must be called during update before any collision queries for the frame.
+; Clobbers: A,X,Y
+.rebuild_solid_phys_plane
+    ; Build solid plane directly from tilemap (avoids banked solid_tile_plane).
+    LDY #0
+  .rsp_copy
+    LDA (tilemap_ptr),Y
+    TAX
+    TXA
+    AND #&20
+    BEQ rsp_not_solid
+    LDA #1
+  .rsp_not_solid
+    STA solid_phys_plane,Y
+    INY
+    BNE rsp_copy
+
+    ; Clear zapper tiles from physics plane so Chell can enter and die.
+    ; Zappers should block LOS (solid_tile_plane) but not movement.
+    JSR rsp_clear_zappers
+
+    ; Stamp standable objects into the physics plane.
+    ; Note: pads are triggers on the floor and should not raise Chell, so only
+    ; cubes contribute to physics solidity.
+    ; Precompute Chell tile span for overlap skip.
+    LDA char_tile_pos
+    AND #15
+    STA col_counter            ; chell_left_tile
+    CLC
+    ADC #2
+    STA row_counter            ; chell_right_excl (aligned case)
+    LDA char_byte_offset
+    ORA char_pixel_offset
+    BEQ rsp_have_chell_x_span
+    INC row_counter            ; unaligned Chell can span a 3rd tile
+  .rsp_have_chell_x_span
+    LDA char_tile_pos
+    LSR A : LSR A : LSR A : LSR A
+    STA temp_y                 ; chell_y
+    LDY #0
+  .rsp_obj_loop
+    LDA obj_room,Y
+    CMP current_room
+    BNE rsp_obj_next
+
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_CUBE
+    BNE rsp_obj_next
+
+    ; Carried cubes do not contribute to solidity.
+    LDA obj_state,Y
+    AND #OBJ_STATE_CARRIED
+    BNE rsp_obj_next
+
+    ; Skip solidity stamp if cube overlaps Chell (prevents trapping).
+    ; Use Chell's occupied horizontal tile span so the overlap test stays
+    ; symmetric when she is straddling tile boundaries.
+    ; Cube is 2 wide x 1 tall at (obj_x, obj_y)..(obj_x+1, obj_y).
+    ; Y overlap: cube_y == chell_y OR cube_y == chell_y+1
+    LDA obj_y,Y
+    CMP temp_y                 ; chell_y
+    BEQ rsp_chk_x_overlap
+    SEC
+    SBC temp_y
+    CMP #1                     ; cube_y == chell_y+1?
+    BNE rsp_obj_stamp          ; no Y overlap — stamp normally
+  .rsp_chk_x_overlap
+    ; No overlap if cube is entirely to the right of Chell.
+    LDA obj_x,Y
+    CMP row_counter            ; cube_left >= chell_right_excl
+    BCS rsp_obj_stamp
+
+    ; No overlap if cube is entirely to the left of Chell.
+    CLC
+    ADC #2                     ; cube_right_excl
+    CMP col_counter            ; cube_right_excl <= chell_left_tile
+    BCC rsp_obj_stamp
+    BEQ rsp_obj_stamp
+
+    JMP rsp_obj_next           ; overlap — skip stamp
+
+  .rsp_obj_stamp
+    ; idx = obj_y*16 + obj_x
+    LDA obj_y,Y
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX
+    LDA #1
+    STA solid_phys_plane,X
+
+    ; second tile (x+1) unless at right edge
+    LDA obj_x,Y
+    CMP #15
+    BEQ rsp_obj_next
+    INX
+    LDA #1
+    STA solid_phys_plane,X
+
+  .rsp_obj_next
+    INY
+    CPY #OBJ_COUNT
+    BNE rsp_obj_loop
+    RTS
+
+
+; Return C=1 if solid at pixel (X,Y) for physics.
+; Uses `solid_phys_plane` (tiles + standable objects).
+.is_solid_physics
+    ; tile_x = X >> 3
+    TXA
+    LSR A
+    LSR A
+    LSR A
+    STA col_counter
+
+    ; tile_y = Y >> 4
+    TYA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAY
+
+    ; tilepos = tile_y*16 + tile_x
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+
+    LDA solid_phys_plane,Y
+    BEQ solid_phys_clear
+    SEC
+    RTS
+  .solid_phys_clear
+    CLC
+    RTS
+
+; Return C=1 if solid at pixel (X,Y).
+; Uses the prebuilt solid-tile plane (8x16 tiles).
+.is_solid
+    ; tile_x = X >> 3
+    TXA
+    LSR A
+    LSR A
+    LSR A
+    STA col_counter
+
+    ; tile_y = Y >> 4
+    TYA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAY
+
+    ; tilepos = tile_y*16 + tile_x
+    LDA times16_table,Y
+    CLC
+    ADC col_counter
+    TAY
+
+    LDA solid_tile_plane,Y
+    BEQ solid_clear
+    SEC
+    RTS
+.solid_clear
+    CLC
+    RTS
+
+; Legacy: redraw tiles behind the character (tilemap-based restore)
+.redraw_background_area
+    ; Save screen_ptr
+    LDA screen_ptr
+    PHA
+    LDA screen_ptr+1
+    PHA
+    
+    ; Character sprite is 2 tiles wide × 2 tiles tall (16x32).
+    ; We redraw 4 tiles (2×2) to fully erase the previous frame.
+    
+    ; Calculate tile_y and tile_x from char_tile_pos for screen positioning only
+    LDA char_tile_pos
+    LSR A              ; Divide by 2
+    LSR A              ; Divide by 4  
+    LSR A              ; Divide by 8
+    LSR A              ; Divide by 16 = tile_y
+    STA temp_y         ; Store tile_y
+    
+    ; Calculate tile_x from char_tile_pos  
+    LDA char_tile_pos
+    AND #15            ; Keep only lower 4 bits = tile_x
+    STA col_counter    ; Store tile_x
+    
+    ; Look up screen position from tile row table
+    LDA temp_y         ; tile_y
+    ASL A              ; * 2 for 16-bit table index
+    TAY
+    LDA tile_row_screen_table,Y
+    STA screen_ptr
+    LDA tile_row_screen_table+1,Y
+    STA screen_ptr+1
+    
+    ; Add tile_x * 16 using lookup table
+    LDY col_counter    ; tile_x
+    LDA times16_table,Y
+    CLC
+    ADC screen_ptr
+    STA screen_ptr
+    BCC first_tile
+    INC screen_ptr+1
+    
+.first_tile
+    ; Top-left tile
+    LDY char_tile_pos
+    JSR get_tilemap_tile
+    JSR render_cell8x16
+
+    ; Top-right tile
+    LDA screen_ptr
+    CLC
+    ADC #16
+    STA screen_ptr
+    BCC top_right_no_carry
+    INC screen_ptr+1
+.top_right_no_carry
+    LDY char_tile_pos
+    INY
+    JSR get_tilemap_tile
+    JSR render_cell8x16
+
+    ; Move down one tile row (512 bytes)
+    INC screen_ptr+1
+    INC screen_ptr+1
+
+    ; Bottom-right tile (char_tile_pos + 17)
+    LDY char_tile_pos
+    TYA
+    CLC
+    ADC #17
+    TAY
+    JSR get_tilemap_tile
+    JSR render_cell8x16
+
+    ; Bottom-left tile (move screen_ptr back 16 bytes; char_tile_pos + 16)
+    LDA screen_ptr
+    SEC
+    SBC #16
+    STA screen_ptr
+    BCS bottom_left_no_borrow
+    DEC screen_ptr+1
+.bottom_left_no_borrow
+    LDY char_tile_pos
+    TYA
+    CLC
+    ADC #16
+    TAY
+    JSR get_tilemap_tile
+    JSR render_cell8x16
+
+    ; Restore screen_ptr
+    PLA
+    STA screen_ptr+1
+    PLA
+    STA screen_ptr
+ 
+    RTS

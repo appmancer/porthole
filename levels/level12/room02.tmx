@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="21">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+35,35,35,35,35,35,35,35,43,54,44,35,35,35,35,35,
+1,1,1,1,1,1,1,1,36,54,34,1,1,1,1,1,
+1,1,1,1,1,1,1,1,36,54,34,1,1,1,1,1,
+1,1,1,1,1,1,2,1,36,54,34,1,1,1,1,1,
+33,37,1,1,1,1,54,54,54,54,34,1,38,54,54,33,
+54,54,58,59,59,60,54,54,54,54,34,1,36,54,54,54,
+54,34,1,1,1,1,39,54,54,54,40,1,39,54,54,54,
+54,34,1,1,1,1,1,15,1,1,1,1,1,1,54,54,
+54,34,1,1,1,1,1,1,1,1,1,1,1,1,54,54,
+54,34,1,1,1,1,1,1,1,1,1,1,1,1,54,54,
+54,54,54,50,51,54,54,54,54,54,54,54,54,54,54,54,
+35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,35,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="17" name="pad_01" type="pad" x="48" y="160" width="32" height="16">
+   <properties>
+    <property name="channel" value="3"/>
+    <property name="id" value="pad_01"/>
+   </properties>
+  </object>
+  <object id="18" name="spawner_01" type="spawner" x="112" y="112">
+   <properties>
+    <property name="channel" value="3"/>
+    <property name="id" value="spawner_01"/>
+   </properties>
+   <point/>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="9" name="edge_exit_07" type="edge_exit" x="0" y="16" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_07"/>
+    <property name="to" value="room01"/>
+   </properties>
+  </object>
+  <object id="10" name="edge_exit_08" type="edge_exit" x="240" y="16" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_08"/>
+    <property name="to" value="room03"/>
+   </properties>
+  </object>
+  <object id="15" name="zapper_02" type="zapper" x="32" y="80" width="64" height="16">
+   <properties>
+    <property name="channel" value="2"/>
+    <property name="id" value="zapper_02"/>
+   </properties>
+  </object>
+  <object id="16" name="button_4" type="button" x="96" y="48" width="16" height="16">
+   <properties>
+    <property name="channel" value="2"/>
+    <property name="id" value="button_4"/>
+   </properties>
+  </object>
+  <object id="19" name="edge_exit_13" type="edge_exit" x="240" y="192" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_13"/>
+    <property name="to" value="room03"/>
+   </properties>
+  </object>
+  <object id="20" name="edge_exit_14" type="edge_exit" x="0" y="192" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_14"/>
+    <property name="to" value="room01"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

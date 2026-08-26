@@ -1,38 +1,68 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="11">
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="18">
  <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
  <layer id="1" name="Tile Layer 1" width="16" height="16">
   <data encoding="csv">
-54,54,54,44,35,35,35,35,35,35,40,1,1,1,1,36,
-54,54,54,34,1,1,1,1,1,1,1,1,1,1,1,36,
-54,54,54,34,0,0,0,0,0,0,0,0,1,38,33,42,
-54,54,54,34,0,0,0,0,0,0,0,0,0,36,54,54,
-54,54,54,34,0,0,0,0,0,0,0,38,33,42,54,54,
-54,54,54,34,0,0,0,0,0,1,0,36,54,54,54,54,
-35,35,35,40,0,0,0,0,1,38,33,42,54,54,54,54,
-1,1,1,0,0,0,0,0,1,39,35,35,35,35,35,43,
-1,0,1,0,0,0,0,1,1,1,1,1,1,1,1,36,
-1,1,1,0,0,0,0,0,1,1,1,1,1,1,1,36,
-1,1,0,0,0,0,0,0,1,1,1,1,1,1,1,36,
-33,33,33,33,33,33,33,33,33,37,1,1,1,1,1,36,
-54,35,35,35,35,35,35,35,35,40,1,1,1,1,1,36,
-54,1,1,1,1,1,1,1,1,1,1,1,1,1,1,54,
-54,12,12,12,12,12,12,12,12,12,12,12,12,12,12,54,
-54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,54
+44,35,35,35,40,1,1,1,1,1,1,39,35,35,35,43,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+34,0,0,0,0,0,0,38,37,0,0,1,1,0,1,36,
+34,0,0,1,1,38,33,42,41,33,37,1,1,1,1,36,
+34,0,0,38,33,42,54,54,54,54,41,33,37,1,1,36,
+34,1,0,36,54,54,54,54,54,54,54,54,34,1,1,36,
+34,1,1,39,54,54,54,54,54,54,54,54,40,1,1,36,
+34,1,1,1,55,1,13,4,5,13,1,55,1,1,1,36,
+34,0,1,1,57,1,14,6,7,14,1,57,1,1,1,36,
+34,1,1,38,54,54,54,54,54,54,54,54,37,1,1,36,
+34,1,0,36,54,54,54,54,54,54,54,54,34,1,1,36,
+40,1,0,39,35,35,35,35,35,35,35,35,40,1,1,39,
+1,1,1,0,0,0,0,0,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33
 </data>
  </layer>
- <objectgroup id="2" name="objects"/>
+ <objectgroup id="2" name="objects">
+  <object id="13" name="exit" type="exit" x="112" y="112">
+   <properties>
+    <property name="channel" value="0"/>
+    <property name="id" value="exit"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="15" name="barrier_02" type="barrier" x="176" y="112" width="16" height="32">
+   <properties>
+    <property name="channel" value="1"/>
+    <property name="id" value="barrier_02"/>
+   </properties>
+  </object>
+ </objectgroup>
  <objectgroup id="3" name="meta">
-  <object id="9" name="edge_exit_06" type="edge_exit" x="0" y="112" width="16" height="64">
+  <object id="9" name="edge_exit_06" type="edge_exit" x="80" y="0" width="96" height="16">
    <properties>
     <property name="id" value="edge_exit_06"/>
+    <property name="to" value="room03"/>
+   </properties>
+  </object>
+  <object id="10" name="edge_exit_05" type="edge_exit" x="0" y="192" width="16" height="48">
+   <properties>
+    <property name="id" value="edge_exit_05"/>
     <property name="to" value="room01"/>
    </properties>
   </object>
-  <object id="10" name="edge_exit_07" type="edge_exit" x="176" y="0" width="64" height="16">
+  <object id="11" name="edge_exit_07" type="edge_exit" x="240" y="192" width="16" height="48">
    <properties>
     <property name="id" value="edge_exit_07"/>
-    <property name="to" value="room03"/>
+    <property name="to" value="room05"/>
+   </properties>
+  </object>
+  <object id="16" name="fizzler_01" type="fizzler" x="96" y="112" width="16" height="32">
+   <properties>
+    <property name="channel" value="2"/>
+   </properties>
+  </object>
+  <object id="17" name="fizzler_02" type="fizzler" x="144" y="112" width="16" height="32">
+   <properties>
+    <property name="channel" value="2"/>
    </properties>
   </object>
  </objectgroup>
