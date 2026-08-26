@@ -31,8 +31,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 2                 ; pad    (16x16)
     EQUB 2                 ; exit   (16x32)
     EQUB 0                 ; spawner (tile-based, no sprite)
-    EQUB 1                 ; barrier (8x32, 1 tile wide x 2 tall)
+    EQUB 1                 ; barrier (8xN, 1 tile wide x variable tall)
     EQUB 2                 ; sentry  (16x16)
+    EQUB 16                ; zapper  (variable width, max 16 tiles x 1 tall)
 
 .obj_redraw_h_tiles
     EQUB 0                 ; type 0 (unused)
@@ -41,8 +42,9 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     EQUB 1                 ; pad
     EQUB 2                 ; exit
     EQUB 0                 ; spawner (tile-based, no sprite)
-    EQUB 2                 ; barrier (2 tiles tall)
+    EQUB 16                ; barrier (variable height, max 16 tiles)
     EQUB 1                 ; sentry
+    EQUB 1                 ; zapper  (1 tile tall)
 
 ; Initialize per-object runtime arrays from generated obj_defs.
 ; Clobbers: A,X,Y,temp,temp_y
@@ -202,10 +204,10 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     ADC obj_x,Y               ; + obj_x
     TAX
     LDA solid_tile_plane,X     ; left tile below
-    BNE ctf_done
+    BNE ctf_blocked
     INX
     LDA solid_tile_plane,X     ; right tile below
-    BNE ctf_done
+    BNE ctf_blocked
 
     ; Check other cubes at below_y.
     JSR cube_check_cubes_below
@@ -220,6 +222,48 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     STA obj_dirty,Y
     STA objects_pending
   .ctf_done
+    RTS
+
+  .ctf_blocked
+    ; Cube landed on something solid. Check if it's a zapper tile (destroy cube).
+    ; X = tilemap index of the solid tile below. Check both tiles below.
+    STX temp
+    LDA obj_y,Y
+    CLC
+    ADC #1
+    TAX
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX                        ; X = left tile below index
+    STY temp_y                 ; save obj index
+    TAY
+    LDA (tilemap_ptr),Y        ; left tile ID
+    CMP #TILE_ZAPPER_LEFT_ON
+    BEQ ctf_zapper_destroy
+    CMP #TILE_ZAPPER_MID_ON
+    BEQ ctf_zapper_destroy
+    CMP #TILE_ZAPPER_RIGHT_ON
+    BEQ ctf_zapper_destroy
+    INY
+    LDA (tilemap_ptr),Y        ; right tile ID
+    CMP #TILE_ZAPPER_LEFT_ON
+    BEQ ctf_zapper_destroy
+    CMP #TILE_ZAPPER_MID_ON
+    BEQ ctf_zapper_destroy
+    CMP #TILE_ZAPPER_RIGHT_ON
+    BEQ ctf_zapper_destroy
+    LDY temp_y                 ; restore obj index
+    RTS                        ; just blocked, not destroyed
+
+  .ctf_zapper_destroy
+    ; Despawn cube: set room to &FF.
+    LDY temp_y
+    LDA #&FF
+    STA obj_room,Y
+    LDA #1
+    STA obj_dirty,Y
+    STA objects_pending
     RTS
 
 
@@ -313,9 +357,6 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     ; Matched portal A → exit through portal B.
     LDA portal_b_enabled
     BEQ ccfp_miss
-    LDA portal_b_orient
-    CMP #PORTAL_ORIENT_BACK
-    BEQ ccfp_miss
     LDA #1                     ; exit_kind = B
     JMP cube_do_portal_exit
 
@@ -344,9 +385,6 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     BCS ccfp_miss
     ; Matched portal B → exit through portal A.
     LDA portal_a_enabled
-    BEQ ccfp_miss
-    LDA portal_a_orient
-    CMP #PORTAL_ORIENT_BACK
     BEQ ccfp_miss
     LDA #0                     ; exit_kind = A
     JMP cube_do_portal_exit
@@ -710,25 +748,6 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
 ;
 ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter,screen_ptr,sprite_ptr
 .update_signals_and_object_states
-    ; Precompute Chell tile coords.
-    ; temp = chell_x (0..15)
-    LDA char_tile_pos
-    AND #15
-    STA temp
-    ; temp_y = chell_y (0..15)
-    LDA char_tile_pos
-    LSR A
-    LSR A
-    LSR A
-    LSR A
-    STA temp_y
-    ; row_counter = chell_bottom_y (tile y of feet)
-    ; char_tile_pos stores Chell's top tile row; sprite is 2 tiles tall.
-    LDA temp_y
-    CLC
-    ADC #1
-    STA row_counter
-
     ; Clear published signals.
     LDA #0
     STA sig_state
@@ -736,6 +755,21 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     ; Pass 1: drivers (pad/button)
     LDY #0
   .usos_driver_loop
+    ; Recompute Chell tile coords each iteration because the object tile/state
+    ; update path reuses temp/temp_y scratch.
+    LDA char_tile_pos
+    AND #15
+    STA temp
+    LDA char_tile_pos
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    STA temp_y
+    LDA temp_y
+    CLC
+    ADC #1
+    STA row_counter
     LDA obj_type,Y
     CMP #OBJ_TYPE_PAD
     BEQ usos_do_pad
@@ -749,8 +783,8 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
 
   .usos_do_button
     JSR compute_button_pressed
-    ; Latch: once pressed, stay pressed (OR with existing state bit 0).
-    ORA obj_state,Y
+    ; Toggle: each press flips state bit 0.
+    EOR obj_state,Y
     AND #1
 
   .usos_apply_driver
@@ -807,24 +841,14 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
   .usos_cons_loop
     LDA obj_type,Y
     CMP #OBJ_TYPE_EXIT
-    BNE usos_chk_spawner
+    BNE usos_chk_barrier
 
-    ; open = (sig_state & (1<<channel)) != 0
-    LDX obj_channel,Y
-    LDA bit_table,X
-    AND sig_state
-    BEQ usos_exit_closed
-    LDA #1
-    JMP usos_exit_apply
-  .usos_exit_closed
-    LDA #0
-
-  .usos_exit_apply
+    JSR compute_consumer_signal
     STA col_counter
 
-    ; Update obj_state bit0 (open)
+    ; Update obj_state bit0 (open), preserving bit 7 (invert).
     LDA obj_state,Y
-    AND #&FE
+    AND #&80
     ORA col_counter
     STA screen_ptr          ; new_state
 
@@ -850,24 +874,95 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     STA obj_dirty,Y
     JMP usos_cons_next
 
-  .usos_chk_spawner
+  .usos_chk_barrier
     CMP #OBJ_TYPE_BARRIER
-    BNE usos_chk_spawner2
+    BNE usos_chk_zapper
 
-    ; Barrier: open = (sig_state & (1<<channel)) != 0
-    LDX obj_channel,Y
-    LDA bit_table,X
-    AND sig_state
-    BEQ usos_barrier_closed
-    LDA #1
-    JMP usos_barrier_apply
-  .usos_barrier_closed
-    LDA #0
-
-  .usos_barrier_apply
+    JSR compute_consumer_signal
     STA col_counter
 
-    ; Update obj_state bit0 (open/closed)
+    ; If a barrier wants to close, keep it open while a cube occupies
+    ; its 1×N footprint. This gives a stable "jammed open" puzzle rule.
+    LDA col_counter
+    BNE usos_barrier_apply
+    LDA obj_state,Y
+    AND #1
+    BEQ usos_barrier_apply     ; already closed
+    JSR barrier_closure_blocked
+    BCC usos_barrier_apply
+    INC col_counter
+
+  .usos_barrier_apply
+    ; Update obj_state bit0 (open/closed), preserving bits 1-7 (height + invert).
+    LDA obj_state,Y
+    AND #&FE
+    ORA col_counter
+    STA screen_ptr          ; new_state
+
+    LDA obj_state,Y
+    CMP screen_ptr
+    BNE usos_barrier_changed
+    JMP usos_cons_next
+  .usos_barrier_changed
+
+    LDA screen_ptr
+    STA obj_state,Y
+
+    JSR update_object_tiles_for_state
+
+    ; Visible change? only matters if in the current room.
+    LDA obj_room,Y
+    CMP current_room
+    BEQ usos_barrier_in_room
+    JMP usos_cons_next
+  .usos_barrier_in_room
+
+    ; Patch solid_tile_plane for the barrier's tiles (1w x Nh).
+    ; Open (obj_state bit0=1) → solid=0; Closed (bit0=0) → solid=1.
+    LDA obj_state,Y
+    AND #1
+    EOR #1              ; invert: open→0, closed→1
+    STA temp            ; solidity value
+
+    ; Get height in tiles from obj_state bits 1-6.
+    LDA obj_state,Y
+    AND #&7E
+    LSR A               ; height_tiles
+    STA col_counter
+
+    ; Compute starting tile index.
+    LDX obj_y,Y
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX                 ; X = tile index (top tile)
+
+  .usos_barrier_solid_loop
+    LDA temp
+    STA solid_tile_plane,X
+    TXA
+    CLC
+    ADC #16
+    TAX
+    DEC col_counter
+    BNE usos_barrier_solid_loop
+
+    LDA #1
+    STA objects_pending
+    STA obj_dirty,Y
+    JMP usos_cons_next
+
+  .usos_chk_zapper
+    CMP #OBJ_TYPE_ZAPPER
+    BNE usos_chk_spawner2
+
+    ; Zapper: off = parity(sig_state & channel_mask) XOR invert
+    ; state bit 0: 0 = on (dangerous), 1 = off (safe)
+    JSR compute_consumer_signal
+    STA col_counter
+
+    ; Update obj_state bit0 (on/off), preserving bits 1-7 (bit 7 = invert, bits 0-6 of init = width).
+    ; Actually obj_state stores: bit 7 = invert, bits 1-6 = width_tiles, bit 0 = on/off.
     LDA obj_state,Y
     AND #&FE
     ORA col_counter
@@ -887,27 +982,32 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     CMP current_room
     BNE usos_cons_next
 
-    ; Patch solid_tile_plane for the barrier's two tiles (1w x 2h).
-    ; Open (obj_state bit0=1) → solid=0; Closed (bit0=0) → solid=1.
+    ; Patch solid_tile_plane for the zapper's horizontal tiles.
+    ; On (bit0=0) → solid=1; Off (bit0=1) → solid=0.
     LDA obj_state,Y
     AND #1
-    EOR #1              ; invert: open→0, closed→1
-    PHA                 ; save solidity value
+    EOR #1              ; on→1 (solid), off→0 (passable)
+    STA temp            ; solidity value
+
+    ; Get width in tiles from obj_state bits 1-6.
+    LDA obj_state,Y
+    AND #&7E            ; mask out bit 0 (state) and bit 7 (invert)
+    LSR A               ; shift right: bits 1-6 -> bits 0-5 = width
+    STA col_counter     ; width_tiles
+
+    ; Compute starting tile index.
     LDX obj_y,Y
     LDA times16_table,X
     CLC
     ADC obj_x,Y
-    TAX                 ; X = tile index (top tile)
-    PLA
-    STA solid_tile_plane,X   ; patch top tile
-    TXA
-    CLC
-    ADC #16
-    TAX
-    LDA obj_state,Y
-    AND #1
-    EOR #1
-    STA solid_tile_plane,X   ; patch bottom tile
+    TAX                 ; X = tile index (leftmost tile)
+
+  .usos_zapper_solid_loop
+    LDA temp
+    STA solid_tile_plane,X
+    INX
+    DEC col_counter
+    BNE usos_zapper_solid_loop
 
     LDA #1
     STA objects_pending
@@ -962,6 +1062,11 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     PHA
     STA temp_y             ; obj_index
 
+    ; This writes tiles for objects that may live in another room, and
+    ; non-current rooms are held in SWRAM bank 6. Paging it in leaves main RAM
+    ; visible, so the resident current-room page still works unchanged.
+    JSR tilemap_bank_in
+
     LDA obj_type,Y
     CMP #OBJ_TYPE_PAD
     BEQ uots_pad
@@ -971,9 +1076,13 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     BEQ uots_exit
     CMP #OBJ_TYPE_BARRIER
     BEQ uots_barrier_jmp
+    CMP #OBJ_TYPE_ZAPPER
+    BEQ uots_zapper_jmp
     JMP uots_done
   .uots_barrier_jmp
     JMP uots_barrier
+  .uots_zapper_jmp
+    JMP uots_zapper
 
   .uots_pad
     LDA obj_state,Y
@@ -1054,31 +1163,118 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     JMP uots_done
 
   .uots_barrier
+    ; Read height and state before uots_set_room_ptr_and_offset clobbers Y.
+    LDY temp_y          ; Y = obj_index
+    LDA obj_state,Y
+    AND #&7E
+    LSR A               ; height_tiles
+    STA row_counter     ; total tiles to write
+
     LDA obj_state,Y
     AND #1
     BEQ uots_barrier_closed
+
+    ; --- Barrier OPEN ---
     LDA #TILE_BARRIER_OPEN_T
-    STA temp
+    STA temp            ; top tile
     LDA #TILE_BARRIER_OPEN_B
-    STA col_counter
+    STA col_counter     ; bottom tile
+    LDA #0
+    STA screen_ptr      ; middle tile (empty)
     JMP uots_barrier_write
+
   .uots_barrier_closed
     LDA #TILE_BARRIER_CLOSED_T
-    STA temp
+    STA temp            ; top tile
     LDA #TILE_BARRIER_CLOSED_B
-    STA col_counter
+    STA col_counter     ; bottom tile
+    LDA #TILE_BARRIER_CLOSED_M
+    STA screen_ptr      ; middle tile
+
   .uots_barrier_write
     JSR uots_set_room_ptr_and_offset
+    ; Write top tile.
     LDA temp
     STA (temp_sprite_ptr),Y
+    DEC row_counter
+    ; Write middle tiles (if any), then bottom tile.
+  .uots_barrier_mid
+    DEC row_counter
+    BEQ uots_barrier_bot
     TYA
     CLC
     ADC #16
     TAY
-    LDA col_counter
+    LDA screen_ptr      ; middle tile
     STA (temp_sprite_ptr),Y
+    JMP uots_barrier_mid
+  .uots_barrier_bot
+    TYA
+    CLC
+    ADC #16
+    TAY
+    LDA col_counter     ; bottom tile
+    STA (temp_sprite_ptr),Y
+    JMP uots_done
+
+  .uots_zapper
+    ; Patch tilemap tiles for zapper on/off.
+    ; obj_state bit 0: 0 = on, 1 = off.
+    ; obj_state bits 1-6: width in tiles.
+    ; Read obj_state before uots_set_room_ptr_and_offset clobbers Y.
+    LDY temp_y          ; Y = obj_index
+    LDA obj_state,Y
+    AND #&7E            ; mask bits 1-6
+    LSR A               ; width_tiles
+    STA row_counter     ; loop counter
+
+    LDA obj_state,Y
+    AND #1
+    BEQ uots_zapper_on
+
+    ; --- Zapper OFF ---
+    JSR uots_set_room_ptr_and_offset
+    ; Left cap off
+    LDA #TILE_ZAPPER_LEFT_OFF
+    STA (temp_sprite_ptr),Y
+    INY
+    DEC row_counter
+    DEC row_counter     ; subtract 2 for both caps
+    ; Middle tiles -> empty
+  .uots_zapper_off_mid
+    LDA #0              ; empty tile
+    STA (temp_sprite_ptr),Y
+    INY
+    DEC row_counter
+    BNE uots_zapper_off_mid
+    ; Right cap off
+    LDA #TILE_ZAPPER_RIGHT_OFF
+    STA (temp_sprite_ptr),Y
+    JMP uots_done
+
+  .uots_zapper_on
+    ; --- Zapper ON ---
+    JSR uots_set_room_ptr_and_offset
+    ; Left cap on
+    LDA #TILE_ZAPPER_LEFT_ON
+    STA (temp_sprite_ptr),Y
+    INY
+    DEC row_counter
+    DEC row_counter     ; subtract 2 for both caps
+    ; Middle tiles
+  .uots_zapper_on_mid
+    LDA #TILE_ZAPPER_MID_ON
+    STA (temp_sprite_ptr),Y
+    INY
+    DEC row_counter
+    BNE uots_zapper_on_mid
+    ; Right cap on
+    LDA #TILE_ZAPPER_RIGHT_ON
+    STA (temp_sprite_ptr),Y
+    JMP uots_done
 
   .uots_done
+    JSR tilemap_bank_out
     PLA
     TAY
     RTS
@@ -1091,6 +1287,8 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     LDY temp_y
     LDA obj_room,Y
     JSR get_room_tilemap_ptr
+    ; Objects in non-current rooms resolve to a bank-6 address; the caller
+    ; writes through temp_sprite_ptr, so bank 6 must be paged in around it.
 
     LDY temp_y
     LDA obj_y,Y
@@ -1099,6 +1297,96 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     CLC
     ADC obj_x,Y
     TAY
+    RTS
+
+
+; Compute consumer signal state from channel mask + invert bit.
+; Input: Y = object index, sig_state set
+; Output: A = desired state (0 or 1)
+; Clobbers: A, X, temp
+.compute_consumer_signal
+    LDA obj_channel,Y      ; channel mask
+    AND sig_state           ; masked signal bits
+    ; Compute parity by folding: 8 bits -> 4 bits -> nibble lookup
+    STA temp
+    LSR A : LSR A : LSR A : LSR A
+    EOR temp
+    AND #&0F
+    TAX
+    LDA parity_nibble,X    ; A = 0 or 1 (parity)
+    ; XOR with invert bit (obj_state bit 7)
+    STA temp
+    LDA obj_state,Y
+    ASL A                   ; bit 7 -> carry
+    LDA temp
+    ADC #0                  ; add carry (XOR via modular arithmetic)
+    AND #1                  ; A = final state (0 or 1)
+    RTS
+
+.parity_nibble
+    EQUB 0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0
+
+
+; Return C=1 if a non-carried cube occupies barrier Y's 1×N footprint.
+; Barriers are 1 tile wide, variable tiles tall; cubes are 2x1.
+; Clobbers: A, X, Y, temp
+.barrier_closure_blocked
+    LDX #0
+  .bcb_loop
+    CPX #OBJ_COUNT
+    BCS bcb_clear
+
+    LDA obj_type,X
+    CMP #OBJ_TYPE_CUBE
+    BNE bcb_next
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE bcb_next
+
+    LDA obj_room,X
+    CMP obj_room,Y
+    BNE bcb_next
+
+    ; Vertical overlap: cube row must be within barrier's height_tiles.
+    LDA obj_y,X
+    SEC
+    SBC obj_y,Y         ; A = cube_row - barrier_top
+    BCC bcb_next         ; cube is above barrier
+    STA temp             ; offset from barrier top
+    LDA obj_state,Y
+    AND #&7E
+    LSR A                ; height_tiles
+    CMP temp             ; height_tiles > offset?
+    BCC bcb_next         ; no: cube is below barrier
+    BEQ bcb_next
+
+  .bcb_check_x
+    ; Horizontal overlap: object [x, x+2) vs barrier [x, x+1).
+    LDA obj_x,Y
+    CLC
+    ADC #1
+    STA temp
+    LDA obj_x,X
+    CMP temp
+    BCS bcb_next
+
+    LDA obj_x,X
+    CLC
+    ADC #2
+    STA temp
+    LDA obj_x,Y
+    CMP temp
+    BCS bcb_next
+
+    SEC
+    RTS
+
+  .bcb_next
+    INX
+    JMP bcb_loop
+
+  .bcb_clear
+    CLC
     RTS
 
 
@@ -1194,9 +1482,10 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     ; Preserve caller IRQ state (nested callers may already be SEI).
     PHP
     SEI
-    LDA ROMSEL
+    LDA &F4
     STA saved_romsel
     LDA obj_bank
+    STA &F4
     STA ROMSEL
 
     LDY #0
@@ -1232,6 +1521,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     BNE apou_stamp_loop
 
     LDA saved_romsel
+    STA &F4
     STA ROMSEL
     PLP
 
@@ -1402,16 +1692,16 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     JMP spo_sentry_stamp
   .spo_sentry_dis
     LDA temp : AND #SENTRY_DIR_LEFT : BNE spo_sentry_dl
-    LDA #<obj_sentry_r_x0 : STA sprite_ptr
-    LDA #>obj_sentry_r_x0 : STA sprite_ptr+1
-    LDA #<obj_sentry_r_x0_mask : STA mask_ptr
-    LDA #>obj_sentry_r_x0_mask : STA mask_ptr+1
+    LDA #<obj_sentry_r_x1 : STA sprite_ptr
+    LDA #>obj_sentry_r_x1 : STA sprite_ptr+1
+    LDA #<obj_sentry_r_x1_mask : STA mask_ptr
+    LDA #>obj_sentry_r_x1_mask : STA mask_ptr+1
     JMP spo_sentry_stamp
   .spo_sentry_dl
-    LDA #<obj_sentry_l_x0 : STA sprite_ptr
-    LDA #>obj_sentry_l_x0 : STA sprite_ptr+1
-    LDA #<obj_sentry_l_x0_mask : STA mask_ptr
-    LDA #>obj_sentry_l_x0_mask : STA mask_ptr+1
+    LDA #<obj_sentry_l_x1 : STA sprite_ptr
+    LDA #>obj_sentry_l_x1 : STA sprite_ptr+1
+    LDA #<obj_sentry_l_x1_mask : STA mask_ptr
+    LDA #>obj_sentry_l_x1_mask : STA mask_ptr+1
   .spo_sentry_stamp
     ; 16x16 (same geometry as cube)
     LDA #2
@@ -1554,6 +1844,54 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
 
   .button_done
     LDA col_counter
+    RTS
+
+
+; Return C=1 if SPACE is pressed while Chell overlaps a button in the
+; current room. Used to suppress pickup/drop on the same key without
+; consuming the button press itself.
+;
+; Clobbers: A,Y,temp,temp_y,row_counter,col_counter
+.consume_button_press_if_overlapping
+    LDA action_pressed
+    BEQ cbpio_no
+
+    ; Precompute Chell tile coords in the same form used by button checks.
+    LDA char_tile_pos
+    AND #15
+    STA temp
+    LDA char_tile_pos
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    STA temp_y
+    LDA temp_y
+    CLC
+    ADC #1
+    STA row_counter
+
+    LDY #0
+  .cbpio_loop
+    CPY #OBJ_COUNT
+    BCS cbpio_no
+
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_BUTTON
+    BNE cbpio_next
+
+    JSR compute_button_pressed
+    BEQ cbpio_next
+
+    SEC
+    RTS
+
+  .cbpio_next
+    INY
+    JMP cbpio_loop
+
+  .cbpio_no
+    CLC
     RTS
 
 
@@ -1894,9 +2232,10 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
     ; Preserve caller IRQ state (nested callers may already be SEI).
     PHP
     SEI
-    LDA ROMSEL
+    LDA &F4
     STA saved_romsel
     LDA obj_bank
+    STA &F4
     STA ROMSEL
 
     LDY #0
@@ -2037,6 +2376,7 @@ CUBE_PORTAL_COOLDOWN_FRAMES = PORTAL_COOLDOWN_FRAMES
   .rpobj_done
     ; Restore ROMSEL and re-enable IRQs.
     LDA saved_romsel
+    STA &F4
     STA ROMSEL
     PLP
     RTS

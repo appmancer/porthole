@@ -11,6 +11,13 @@
 .place_portal_from_reticle
      STA portal_kind
 
+     ; Callers only reach here with a valid (green) reticle, so this is the
+     ; success sound. A is reloaded from portal_kind below.
+IF ENABLE_AUDIO AND ENABLE_SFX
+     LDA #SFX_PORTAL_OPEN
+     STA SFX_PENDING
+ENDIF
+
       ; Snapshot old portal state (for erase).
      LDA portal_kind
      BEQ ppr_snap_a
@@ -62,7 +69,7 @@
       STA temp_y
 
       ; Orientation computed by reticle validation.
-      ; 0..4 (wall_l, wall_r, floor, ceil, back)
+      ; 0..3 (wall_l, wall_r, floor, ceil)
       LDA reticle_wall_orient
       STA row_counter
 
@@ -87,7 +94,7 @@
       JMP ppr_y_ok
   .ppr_not_ceil
 
-      ; Wall/back-wall stamps are 2 tiles tall; clamp y so y+1 stays in range.
+      ; Wall stamps are 2 tiles tall; clamp y so y+1 stays in range.
       CMP #PORTAL_ORIENT_FLOOR
       BCS ppr_y_ok
       LDA temp_y
@@ -108,8 +115,6 @@
        ; Disallow placement if tile footprints intersect.
       ; new footprint dims (tile units) into col_counter(w) and screen_ptr(h)
       LDA row_counter
-      CMP #PORTAL_ORIENT_BACK
-      BEQ ppr_new_back
       CMP #PORTAL_ORIENT_FLOOR
       BCS ppr_new_fc
       ; wall (1x2)
@@ -123,12 +128,6 @@
       LDA #2
       STA col_counter
       LDA #1
-      STA screen_ptr
-      JMP ppr_overlap_have_new
-   .ppr_new_back
-      ; back wall (2x2)
-      LDA #2
-      STA col_counter
       STA screen_ptr
 
    .ppr_overlap_have_new
@@ -164,8 +163,6 @@
 
    .ppr_overlap_have_other
       ; other dims into temp_mask_ptr+1(w) and temp_sprite_ptr(h)
-      CMP #PORTAL_ORIENT_BACK
-      BEQ ppr_other_back
       CMP #PORTAL_ORIENT_FLOOR
       BCS ppr_other_fc
       ; wall (1x2)
@@ -179,12 +176,6 @@
       LDA #2
       STA temp_mask_ptr+1
       LDA #1
-      STA temp_sprite_ptr
-      JMP ppr_overlap_test
-   .ppr_other_back
-      ; back wall (2x2)
-      LDA #2
-      STA temp_mask_ptr+1
       STA temp_sprite_ptr
 
    .ppr_overlap_test
@@ -285,8 +276,6 @@
 
       ; Redraw underlying tiles for the old portal footprint.
       LDA portal_old_orient
-      CMP #PORTAL_ORIENT_BACK
-      BEQ apu_erase_back
       CMP #PORTAL_ORIENT_FLOOR
       BCS apu_erase_fc
 
@@ -337,47 +326,6 @@
        JSR redraw_tile_xy
 
        JMP apu_stamp_new
-
-  .apu_erase_back
-      ; Back wall: 2x2 tiles at (x,y),(x+1,y),(x,y+1),(x+1,y+1)
-      LDA portal_old_y
-      STA temp_y
-
-      ; top row
-      LDX portal_old_x
-      LDA temp_y
-      JSR redraw_tile_xy
-      LDX portal_old_x
-      CPX #15
-      BEQ apu_back_skip_topx
-      INX
-      LDA temp_y
-      JSR redraw_tile_xy
-  .apu_back_skip_topx
-
-      ; bottom row
-      LDA temp_y
-      CMP #15
-      BEQ apu_stamp_new
-      CLC
-      ADC #1
-      STA temp_y
-      LDX portal_old_x
-      LDA temp_y
-      JSR redraw_tile_xy
-      LDX portal_old_x
-      CPX #15
-      BEQ apu_stamp_new
-      INX
-      LDA temp_y
-      JSR redraw_tile_xy
-
-      LDX portal_old_x
-      CPX #15
-      BEQ apu_stamp_new
-      INX
-      LDA temp_y
-      JSR redraw_tile_xy
 
   .apu_stamp_new
       ; Stamp the newly placed portal if it is visible in this room.
@@ -439,6 +387,9 @@
      LDA #1
      STA beam_do_redraw
      JSR retrace_all_beams
+     JSR render_static_objects
+     JSR stamp_portals_for_current_room
+     JSR render_persistent_objects_current_room
      LDA #0
      STA portal_pending
      RTS
@@ -481,6 +432,9 @@
     LDA #1
     STA beam_do_redraw
     JSR retrace_all_beams
+    JSR render_static_objects
+    JSR stamp_portals_for_current_room
+    JSR render_persistent_objects_current_room
 
     LDA #1
     STA chell_dirty
@@ -492,8 +446,6 @@
 ; Clobbers: A,X,Y,temp,temp_y,row_counter,screen_ptr (los_y1 modified for fc/back)
 .erase_portal_footprint
     LDA los_dx
-    CMP #PORTAL_ORIENT_BACK
-    BEQ epf_back
     CMP #PORTAL_ORIENT_FLOOR
     BCS epf_fc
 
@@ -522,32 +474,6 @@
     STY los_y1
     LDX los_x1
     TYA
-    JSR redraw_tile_xy
-    LDX los_x1
-    CPX #15
-    BEQ epf_done
-    INX
-    LDA los_y1
-    JMP redraw_tile_xy          ; tail call
-
-.epf_back
-    ; Back wall: 2x2 block
-    LDX los_x1
-    LDA los_y1
-    JSR redraw_tile_xy
-    LDX los_x1
-    CPX #15
-    BEQ epf_back_bot
-    INX
-    LDA los_y1
-    JSR redraw_tile_xy
-.epf_back_bot
-    LDA los_y1
-    CMP #15
-    BEQ epf_done
-    CLC : ADC #1
-    STA los_y1
-    LDX los_x1
     JSR redraw_tile_xy
     LDX los_x1
     CPX #15
@@ -648,20 +574,18 @@
       ; When the portal pixels live in the *right* half of the 16px sprite, we
       ; start 16 bytes into each stripe.
       ; Floor/ceiling: 16x16 (2 stripes, 32 bytes/stripe).
-      ; Back wall: 16x32 (4 stripes, 32 bytes/stripe).
       ;
       ; Note: sprite+mask bytes live in object SWRAM; page it in for reads.
       ; Preserve caller IRQ state (nested callers may already be SEI).
       PHP
       SEI
-      LDA ROMSEL
+      LDA &F4
       STA saved_romsel
       LDA obj_bank
+      STA &F4
       STA ROMSEL
 
        LDA row_counter
-       CMP #PORTAL_ORIENT_BACK
-       BEQ spx_is_back
        CMP #PORTAL_ORIENT_FLOOR
        BCS spx_not_wall
        JMP spx_is_wall
@@ -722,39 +646,6 @@
   .spx_fc_stamp
        ; A=stripe_count, X=bytes_per_stripe, Y=stride
        LDA #2
-       LDX #32
-       LDY #32
-       JSR stamp_striped_masked
-       JMP spx_done
-
- .spx_is_back
-      LDA temp
-      BEQ spx_back_red
-
-       ; Yellow back wall
-        LDA #<portal_b_yel_x0
-        STA sprite_ptr
-        LDA #>portal_b_yel_x0
-        STA sprite_ptr+1
-        LDA #<portal_b_yel_x0_mask
-        STA mask_ptr
-        LDA #>portal_b_yel_x0_mask
-        STA mask_ptr+1
-       JMP spx_back_stamp
-
-  .spx_back_red
-        LDA #<portal_b_red_x0
-        STA sprite_ptr
-        LDA #>portal_b_red_x0
-        STA sprite_ptr+1
-        LDA #<portal_b_red_x0_mask
-        STA mask_ptr
-        LDA #>portal_b_red_x0_mask
-        STA mask_ptr+1
-
-  .spx_back_stamp
-       ; A=stripe_count, X=bytes_per_stripe, Y=stride
-       LDA #4
        LDX #32
        LDY #32
        JSR stamp_striped_masked
@@ -857,6 +748,7 @@
   .spx_done
       ; Restore ROMSEL and re-enable IRQs.
       LDA saved_romsel
+      STA &F4
       STA ROMSEL
       PLP
       RTS
