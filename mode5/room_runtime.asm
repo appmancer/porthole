@@ -126,15 +126,14 @@
 
 
 ; Set tilemap_ptr based on current_room variable.
-; Uses room_pointers table to get correct room data.
+; Brings the room's tilemap into the resident main-RAM page first.
 .set_room_tilemap
-    LDA current_room
-    ASL A                   ; ×2 for 16-bit pointer
-    TAX
+    ; Only the current room is resident in main RAM; bring it in if needed.
+    JSR tilemap_make_resident
 
-    LDA room_pointers,X
+    LDA #<room_tilemap
     STA tilemap_ptr
-    LDA room_pointers+1,X
+    LDA #>room_tilemap
     STA tilemap_ptr+1
 
     RTS

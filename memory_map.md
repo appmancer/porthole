@@ -221,9 +221,12 @@ access. Always write &F4 before &FE30; use SEI around bank switches.
 | Bank | Used    | Free    | Purpose                                     |
 |------|--------:|--------:|---------------------------------------------|
 | 4    | ~16,000 |    ~384 | Chell sprite+mask bitmaps (CHDATA)          |
-| 5    |   6,784 |   9,600 | Object sprite+mask bitmaps (OBJDAT)         |
-| 6    |   1,836 |  14,548 | Tileset data (tile pixel bitmaps)           |
-| 7    |       0 |  16,384 | Available                                   |
+| 5    |   5,760 |  10,624 | Object sprite+mask bitmaps (OBJDAT)         |
+| 6    |   4,864 |  11,520 | Tile sheets (&8000..&AFFF) + room tilemaps (&B000..&BAFF) |
+| 7    |       — |       — | Level pack (LVLS), `LEVEL_SWRAM_BANK_DEFAULT` |
+
+All four banks are allocated. Bank 6's `&B000..&BAFF` is written at runtime by
+`load_level` and must not be used for tile sheets -- see `TILEMAP_BANK_BASE`.
 
 ### Bank 5 — object sprites
 
@@ -235,9 +238,15 @@ access. Always write &F4 before &FE30; use SEI around bank switches.
 
 ### Bank 6 — tileset data
 
-Tile pixel bitmaps. 54 tiles (1,836 bytes). Paged in during tilemap
-rendering (`render_cell8x16`), then paged back for sprite blitting.
-Capacity for ~480 tiles (16KB).
+Tile pixel bitmaps: 63 tiles (2,048 bytes) at `&8000`, with room for ~5 more
+themed sheets up to `&AFFF`. Paged in during tilemap rendering
+(`render_cell8x16`), then paged back for sprite blitting.
+
+`&B000..&BAFF` holds the per-room tilemaps (MAX_ROOMS x 256). Only the current
+room is resident in main RAM (`room_tilemap`); `room_pointers[current_room]`
+points at that page and every other entry at its bank home. Paging bank 6 does
+not hide main RAM, so cross-room readers (`retrace_all_beams`,
+`update_object_tiles_for_state`) page it in and read both without branching.
 
 | Allocation              | Size  | Notes                               |
 |-------------------------|------:|-------------------------------------|

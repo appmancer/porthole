@@ -9,13 +9,13 @@
 ; buffer, which persists until the next level load.
 
 ; Global constants (max across all levels).
-LEVEL_COUNT = 9
-MAX_ROOMS = 8
-OBJ_COUNT = 16
+LEVEL_COUNT = 13
+MAX_ROOMS = 11
+OBJ_COUNT = 24
 OBJ_DEF_SIZE = 6
 LASER_COUNT = 1
 LASER_DEF_SIZE = 7
-TARGET_COUNT = 1
+TARGET_COUNT = 2
 TARGET_DEF_SIZE = 4
 FIZZLER_DEF_SIZE = 5
 
@@ -63,61 +63,260 @@ STAGING_BUF = &0E00
 ; Set by ll_parse_staged after room parsing; used by show_level_card.
 .level_card_ptr SKIP 2
 
-; Decompressed tilemap buffers — one 256-byte flat tilemap per room.
-; room_pointers entries are patched at load time to point here.
-; Game code reads/writes via (tilemap_ptr),Y unchanged.
+; Decompressed tilemaps — one 256-byte flat tilemap per room.
+;
+; Only the CURRENT room is resident in main RAM; every room's home is in SWRAM
+; bank 6 (alongside tile pixel data) at TILEMAP_BANK_BASE + room*256. This keeps
+; 2.5KB of main RAM free at the cost of a 256-byte copy per room transition.
+;
+; room_pointers[current_room] points at the resident page; all other entries
+; point at the room's bank home. Current-room code paths are therefore unchanged
+; -- only genuinely cross-room readers (the beam trace) must page bank 6 in.
+;
+; Paging bank 6 does not hide main RAM, so a reader that pages it can read both
+; the resident page and other rooms' homes without branching.
+;
+; Base is &B000, leaving &8000..&AFFF (12KB) for themed tile sheets.
+TILEMAP_BANK_BASE = &B000
+
 ; Must be page-aligned so (zp),Y with Y=0..255 covers exactly one room.
 ALIGN 256
-.tilemap_buffers        SKIP MAX_ROOMS * 256
+.room_tilemap           SKIP 256
+.resident_room          SKIP 1      ; room held in room_tilemap (&FF = none)
+.tilemap_saved_romsel   SKIP 1      ; ROMSEL shadow saved by tilemap_bank_in
+
+
+
+; --- SWRAM bank 6 paging for tilemap access ---
+;
+; Paging bank 6 does NOT hide main RAM, so while it is in a reader can see both
+; the resident page (main RAM) and every room's bank home without branching.
+;
+; NOT nestable with itself (single saved byte). Inner routines that do their own
+; stack-based ROMSEL save/restore (e.g. redraw_tile_xy) are fine to call from
+; inside an in/out pair.
+.tilemap_bank_in
+    PHP
+    SEI
+    LDA &F4
+    STA tilemap_saved_romsel
+    LDA tile_bank
+    STA &F4
+    STA ROMSEL
+    PLP
+    RTS
+
+.tilemap_bank_out
+    PHP
+    SEI
+    LDA tilemap_saved_romsel
+    STA &F4
+    STA ROMSEL
+    PLP
+    RTS
+
+
+; Make current_room's tilemap resident in room_tilemap.
+;
+; Writes the outgoing room back to its bank home first, so runtime mutations
+; (beam stamps, object tile state, and later vine burns) survive a room change.
+; Then patches room_pointers: current room -> resident page, outgoing room ->
+; its bank home.
+;
+; Clobbers: A,X,Y,temp_mask_ptr
+.tilemap_make_resident
+    LDA current_room
+    CMP resident_room
+    BEQ tmr_done
+
+    JSR tilemap_bank_in
+
+    ; --- Write back the outgoing room, if there is one ---
+    LDA resident_room
+    CMP #&FF
+    BEQ tmr_no_writeback
+    CLC
+    ADC #>TILEMAP_BANK_BASE     ; A = resident_room
+    STA temp_mask_ptr+1
+    LDA #<TILEMAP_BANK_BASE
+    STA temp_mask_ptr
+    LDY #0
+.tmr_wb
+    LDA room_tilemap,Y
+    STA (temp_mask_ptr),Y
+    INY
+    BNE tmr_wb
+    ; Outgoing room's pointer goes back to its bank home.
+    LDA resident_room
+    ASL A
+    TAX
+    LDA temp_mask_ptr
+    STA room_pointers,X
+    LDA temp_mask_ptr+1
+    STA room_pointers+1,X
+.tmr_no_writeback
+
+    ; --- Fetch the incoming room ---
+    LDA current_room
+    CLC
+    ADC #>TILEMAP_BANK_BASE
+    STA temp_mask_ptr+1
+    LDA #<TILEMAP_BANK_BASE
+    STA temp_mask_ptr
+    LDY #0
+.tmr_fetch
+    LDA (temp_mask_ptr),Y
+    STA room_tilemap,Y
+    INY
+    BNE tmr_fetch
+
+    JSR tilemap_bank_out
+
+    LDA current_room
+    STA resident_room
+    ASL A
+    TAX
+    LDA #<room_tilemap
+    STA room_pointers,X
+    LDA #>room_tilemap
+    STA room_pointers+1,X
+.tmr_done
+    RTS
 
 
 ; load_level: read a level from the binary pack into the active buffer.
 ;
 ; Flow:
-;   Phase 0: ensure correct pack is in LYNNE (may trigger DFS read)
-;   Phase 1: stage level data from LYNNE (&3000+) to STAGING_BUF (&0E00)
-;   Phase 2: parse staged data into active buffer + tilemap_buffers
+;   Phase 1: stage level data from SWRAM bank 7 to STAGING_BUF (&0E00)
+;   Phase 2: parse staged data into active buffer + per-room tilemaps in bank 6
 ;
 ; Input: current_level set (0..LEVEL_COUNT-1).
 ; Clobbers: A,X,Y,temp,temp_sprite_ptr,temp_mask_ptr
 .load_level
-    ; --- Phase 0: load pack to LYNNE ---
-    JSR load_pack_for_level
-
-    ; --- Phase 1: stage level data from LYNNE to STAGING_BUF ---
-    JSR ll_stage_from_lynne
+    ; No room is resident yet: the bank is about to be (re)filled, so any
+    ; stale resident page must not be written back over it.
+    LDA #&FF
+    STA resident_room
+    ; --- Phase 1: stage level data from SWRAM to STAGING_BUF ---
+    JSR ll_stage_from_swram
 
     ; --- Phase 2: parse staged data into active buffer ---
     ; temp_sprite_ptr now points to STAGING_BUF.
-    ; All data is in main RAM; ACCCON X=0.
     JMP ll_parse_staged
 
 
-; ll_stage_from_lynne: copy level data from LYNNE to STAGING_BUF.
+; ll_stage_from_swram: copy level data from SWRAM bank 7 to STAGING_BUF.
 ;
-; Computes level_in_pack, then delegates to the below-&3000 trampoline
-; (lynne_stage_level) which handles ACCCON X=1, offset table reads,
-; memcpy, and ACCCON restore.  Returns with temp_sprite_ptr = STAGING_BUF.
+; Pages in the level pack bank, reads offset table, copies the level's
+; data to STAGING_BUF, restores bank.  Returns with temp_sprite_ptr = STAGING_BUF.
 ;
 ; Clobbers: A,X,Y,temp,temp_sprite_ptr,temp_mask_ptr
-.ll_stage_from_lynne
-    ; Compute level_in_pack = current_level MOD LEVELS_PER_PACK.
+.ll_stage_from_swram
+    ; Compute level_in_pack index (= current_level for single-pack).
     LDA current_level
-.ll_stg_div
-    CMP #LEVELS_PER_PACK
-    BCC ll_stg_div_done
-    SEC
-    SBC #LEVELS_PER_PACK
-    BCS ll_stg_div              ; always taken (result >= 0)
-.ll_stg_div_done
-    ; A = level_in_pack (0-based)
-    ; Offset table entry is at PACK_LOAD_ADDR + 1 + level_in_pack*2.
     ASL A                       ; *2
     TAX                         ; X = byte offset into offset table
 
-    ; Trampoline at &0900: sets ACCCON X=1, reads offsets from LYNNE,
-    ; copies level data to STAGING_BUF, restores X=0, sets temp_sprite_ptr.
-    JMP lynne_stage_level
+    ; Page in level pack bank.
+    PHP
+    SEI
+    LDA &F4 : PHA              ; save MOS ROMSEL shadow
+    LDA level_bank
+    STA &F4 : STA ROMSEL
+
+    ; Read offset[level_in_pack] from SWRAM.
+    ; Pack header at &8000: [count(1B)] [offsets(N+1)*2B]
+    LDA PACK_LOAD_ADDR+1,X     ; offset[i] lo
+    STA temp_sprite_ptr
+    LDA PACK_LOAD_ADDR+2,X     ; offset[i] hi
+    STA temp_sprite_ptr+1
+
+    ; Read offset[i+1] (sentinel).
+    LDA PACK_LOAD_ADDR+3,X     ; offset[i+1] lo
+    STA temp_mask_ptr
+    LDA PACK_LOAD_ADDR+4,X     ; offset[i+1] hi
+    STA temp_mask_ptr+1
+
+    ; Compute length = offset[i+1] - offset[i].
+    LDA temp_mask_ptr
+    SEC
+    SBC temp_sprite_ptr
+    STA temp                    ; length lo
+    LDA temp_mask_ptr+1
+    SBC temp_sprite_ptr+1
+    PHA                         ; length hi on stack
+
+    ; Compute source = PACK_LOAD_ADDR + offset[i].
+    LDA temp_sprite_ptr
+    CLC
+    ADC #<PACK_LOAD_ADDR
+    STA temp_sprite_ptr
+    LDA temp_sprite_ptr+1
+    ADC #>PACK_LOAD_ADDR
+    STA temp_sprite_ptr+1
+
+    ; Set destination = STAGING_BUF.
+    LDA #<STAGING_BUF
+    STA temp_mask_ptr
+    LDA #>STAGING_BUF
+    STA temp_mask_ptr+1
+
+    ; Copy length bytes from SWRAM to main RAM.
+    PLA                         ; length hi
+    TAX                         ; X = full pages
+
+    LDY #0
+    LDA temp
+    BEQ ll_sw_full_pages
+.ll_sw_partial
+    LDA (temp_sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    CPY temp
+    BNE ll_sw_partial
+
+    CPX #0
+    BEQ ll_sw_copy_done
+
+    ; Advance pointers past partial page.
+    LDA temp_sprite_ptr
+    CLC : ADC temp
+    STA temp_sprite_ptr
+    BCC ll_sw_no_c1
+    INC temp_sprite_ptr+1
+.ll_sw_no_c1
+    LDA temp_mask_ptr
+    CLC : ADC temp
+    STA temp_mask_ptr
+    BCC ll_sw_no_c2
+    INC temp_mask_ptr+1
+.ll_sw_no_c2
+
+.ll_sw_full_pages
+    CPX #0
+    BEQ ll_sw_copy_done
+    LDY #0
+.ll_sw_page
+    LDA (temp_sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    BNE ll_sw_page
+    INC temp_sprite_ptr+1
+    INC temp_mask_ptr+1
+    DEX
+    BNE ll_sw_page
+
+.ll_sw_copy_done
+    ; Restore ROMSEL.
+    PLA : STA &F4 : STA ROMSEL
+    PLP
+
+    ; Set temp_sprite_ptr = STAGING_BUF for the parser.
+    LDA #<STAGING_BUF
+    STA temp_sprite_ptr
+    LDA #>STAGING_BUF
+    STA temp_sprite_ptr+1
+    RTS
 
 
 ; ll_parse_staged: parse level data from STAGING_BUF into the active buffer.
@@ -302,26 +501,29 @@ ALIGN 256
 .ll_room_active
 
     ; --- RLE decompress tilemap ---
-    ; Destination: tilemap_buffers + room_idx * 256.
+    ; Destination: TILEMAP_BANK_BASE + room_idx * 256, in SWRAM bank 6.
+    ; Source (STAGING_BUF) is main RAM, so paging bank 6 here is safe.
     LDA ll_room_idx
     CLC
-    ADC #>tilemap_buffers
+    ADC #>TILEMAP_BANK_BASE
     STA temp_mask_ptr+1
-    LDA #<tilemap_buffers
+    LDA #<TILEMAP_BANK_BASE
     STA temp_mask_ptr
 
+    JSR tilemap_bank_in
     JSR rle_decompress          ; reads from temp_sprite_ptr, writes to temp_mask_ptr
                                 ; temp_sprite_ptr is advanced past RLE data
+    JSR tilemap_bank_out
 
-    ; Set room_pointers[room_idx] = destination buffer address.
+    ; Set room_pointers[room_idx] = bank home address.
     LDA ll_room_idx
     ASL A                       ; *2 for word index
     TAX
-    LDA #<tilemap_buffers
+    LDA #<TILEMAP_BANK_BASE
     STA room_pointers,X
     LDA ll_room_idx
     CLC
-    ADC #>tilemap_buffers
+    ADC #>TILEMAP_BANK_BASE
     STA room_pointers+1,X
 
     ; --- Parse exit records for 4 directions ---
@@ -426,30 +628,32 @@ ALIGN 256
     CMP #MAX_ROOMS
     BCS ll_rooms_done
 
-    ; room_pointers[i] = tilemap_buffers + i*256.
+    ; room_pointers[i] = TILEMAP_BANK_BASE + i*256.
     LDA ll_room_idx
     ASL A
     TAX
-    LDA #<tilemap_buffers
+    LDA #<TILEMAP_BANK_BASE
     STA room_pointers,X
     LDA ll_room_idx
     CLC
-    ADC #>tilemap_buffers
+    ADC #>TILEMAP_BANK_BASE
     STA room_pointers+1,X
 
-    ; Zero tilemap buffer for this slot.
+    ; Zero this slot's tilemap in bank 6.
     LDA ll_room_idx
     CLC
-    ADC #>tilemap_buffers
+    ADC #>TILEMAP_BANK_BASE
     STA temp_mask_ptr+1
-    LDA #<tilemap_buffers
+    LDA #<TILEMAP_BANK_BASE
     STA temp_mask_ptr
+    JSR tilemap_bank_in
     LDA #0
     LDY #0
 .ll_zero_tm
     STA (temp_mask_ptr),Y
     INY
     BNE ll_zero_tm
+    JSR tilemap_bank_out
 
     ; Zero counts.
     LDX ll_room_idx
