@@ -1,0 +1,4210 @@
+Moon Raider disassembly
+=======================
+Moon Raider was written by David Elliot, and was published by Program Power for
+the BBC Micro in 1983. It is an unofficial conversion of Konami's 1981 arcade
+game, Scramble.
+
+The following disassembly was created by reverse engineering binary images,
+without access to any source code. It is nevertheless reasonably complete,
+allowing the technical approaches used to be understood.
+
+The author of this disassembly imposes no additional copyright restrictions
+beyond those already present on the game itself. It is provided for educational
+purposes only, and it is hoped that the original authors will accept it in the
+good faith it was intended - as a tribute to their skills.
+
+Technical notes
+===============
+A BASIC loader stores the codes for user-defined keys in &0c08 - &0c0d.
+
+Interesting pokes
+=================
+&23a1 = &bd
+infinite lives
+
+&1c56 = &bd
+infinite fuel
+
+&1db0 = &bd
+invulnerability
+
+Game disassembly
+================
+; $.Raid1
+; 001900 001906 002520
+
+&1900 0d                                                            # Start of BASIC program
+&1901 ff                                                            # End of BASIC program
+
+; unused
+&1902 00
+
+; to_start_game
+&1903 4c fa 22 JMP &22fa ; start_game
+
+; entry_point
+&1906 4c 18 3e JMP &3e18 ; to_move_memory_first_stage
+
+; check_for_escape
+&1909 a5 ff    LDA &ff ; os_flags
+&190b 30 01    BMI &190e ; escape_pressed
+&190d 60       RTS
+; escape_pressed
+&190e a0 00    LDY #&00
+&1910 a9 7e    LDA #&7e ; Acknowledge ESCAPE condition
+&1912 a2 00    LDX #&00
+&1914 20 f4 ff JSR &fff4 ; OSBYTE
+&1917 4c 00 04 JMP &0400 ; to_hall_of_fame_screen
+
+; unused
+&191a 60       RTS
+
+; write_text
+&191b a0 00    LDY #&00
+; write_text_loop
+&191d b1 60    LDA (&60),Y ; text_address
+&191f c9 ff    CMP #&ff
+&1921 f0 0c    BEQ &192f ; leave                                    # &ff indicates end of text
+&1923 20 ee ff JSR &ffee ; OSWRCH
+&1926 e6 60    INC &60 ; text_address_low
+&1928 d0 f3    BNE &191d ; write_text_loop
+&192a e6 61    INC &61 ; text_address_high
+&192c 4c 1d 19 JMP &191d ; write_text_loop
+; leave
+&192f 60       RTS
+
+; plot_number
+&1930 a0 00    LDY #&00
+&1932 a9 01    LDA #&01
+&1934 85 74    STA &74 ; leading_zeros                              # Set to non-zero to plot zeros as spaces
+; plot_number_digit_loop
+&1936 a2 00    LDX #&00
+; divide_by_power_of_ten_loop
+&1938 a5 72    LDA &72 ; number
+&193a 38       SEC
+&193b f9 6a 19 SBC &196a,Y ; powers_of_ten
+&193e 85 72    STA &72 ; number
+&1940 a5 73    LDA &73 ; number + 1
+&1942 c8       INY
+&1943 f9 6a 19 SBC &196a,Y ; powers_of_ten
+&1946 90 07    BCC &194f ; finished_division
+&1948 85 73    STA &73 ; number + 1
+&194a e8       INX
+&194b 88       DEY
+&194c 4c 38 19 JMP &1938 ; divide_by_power_of_ten_loop
+; finished_division
+&194f 88       DEY
+&1950 a5 72    LDA &72 ; number
+&1952 79 6a 19 ADC &196a,Y ; powers_of_ten
+&1955 85 72    STA &72 ; number
+&1957 20 ee 19 JSR &19ee ; plot_digit_of_number
+&195a c8       INY
+&195b c8       INY
+&195c c0 08    CPY #&08
+&195e d0 d6    BNE &1936 ; plot_number_digit_loop
+&1960 a6 72    LDX &72 ; number
+&1962 20 ee 19 JSR &19ee ; plot_number_somehow
+&1965 a2 00    LDX #&00 ; "0"
+&1967 4c 05 1a JMP &1a05 ; plot_digit
+
+; powers_of_ten
+&196a 10 27 ; 10000
+&196c e8 03 ; 1000
+&196e 64 00 ; 100
+&1970 0a 00 ; 10
+&1972 01 00 ; 1
+
+; read_joystick_state
+&1974 a0 00    LDY #&00
+&1976 a9 80    LDA #&80 ; Read I/O device or buffer status
+&1978 a2 01    LDX #&01 ; First joystick left/right
+&197a 20 f4 ff JSR &fff4 ; OSBYTE
+&197d 8c 1d 22 STY &221d ; joystick_x
+&1980 a0 00    LDY #&00
+&1982 a9 80    LDA #&80 ; Read I/O device or buffer status
+&1984 a2 02    LDX #&02 ; First joystick up/down
+&1986 20 f4 ff JSR &fff4 ; OSBYTE
+&1989 8c 1e 22 STY &221e ; joystick_y
+&198c a0 00    LDY #&00
+&198e a9 80    LDA #&80 ; Read I/O device or buffer status
+&1990 a2 00    LDX #&00 ; Joystick buttons
+&1992 20 f4 ff JSR &fff4 ; OSBYTE
+&1995 8a       TXA
+&1996 29 01    AND #&01
+&1998 8d 1c 22 STA &221c ; joystick_fire
+&199b 60       RTS
+
+; check_for_keyboard_or_joystick_movement
+&199c ad 01 0c LDA &0c01 ; input_method
+&199f c9 02    CMP #&02 ; INPUT_JOYSTICK
+&19a1 d0 03    BNE &19a6 ; check_for_keyboard_movement
+&19a3 4c 84 1a JMP &1a84 ; check_for_joystick_movement
+; check_for_keyboard_movement
+&19a6 a2 05    LDX #&05
+; check_for_keys_loop
+&19a8 bd 8f 2e LDA &2e8f,X ; standard_keys
+&19ab a8       TAY
+&19ac ad 01 0c LDA &0c01 ; input_method
+&19af f0 04    BEQ &19b5 ; not_user_keys
+&19b1 bd 08 0c LDA &0c08,X ; user_keys
+&19b4 a8       TAY
+; not_user_keys
+&19b5 8a       TXA
+&19b6 48       PHA ; tmp_x
+&19b7 98       TYA
+&19b8 aa       TAX
+&19b9 a0 ff    LDY #&ff
+&19bb a9 81    LDA #&81 ; Scan for a particular key
+&19bd 20 f4 ff JSR &fff4 ; OSBYTE
+&19c0 68       PLA ; tmp_x
+&19c1 aa       TAX
+&19c2 98       TYA
+&19c3 95 00    STA &00,X ; keys_pressed
+&19c5 ca       DEX
+&19c6 10 e0    BPL &19a8 ; check_for_keys_loop
+&19c8 60       RTS
+
+; check_for_player_movement
+&19c9 20 9c 19 JSR &199c ; check_for_keyboard_or_joystick_movement
+&19cc a5 00    LDA &00 ; left_pressed
+&19ce 38       SEC
+&19cf e5 01    SBC &01 ; right_pressed
+&19d1 8d 1c 2f STA &2f1c ; horizontal_movement
+&19d4 a5 02    LDA &02 ; up_pressed
+&19d6 38       SEC
+&19d7 e5 03    SBC &03 ; down_pressed
+&19d9 0a       ASL A
+&19da 0a       ASL A
+&19db 8d 1b 2f STA &2f1b ; vertical_movement
+&19de ad 20 2f LDA &2f20 ; player_fuel
+&19e1 d0 0a    BNE &19ed ; not_out_of_fuel                          # Is the player out of fuel?
+&19e3 a9 04    LDA #&04
+&19e5 8d 1b 2f STA &2f1b ; vertical_movement                        # If so, set moving down
+&19e8 a9 00    LDA #&00
+&19ea 8d 1c 2f STA &2f1c ; horizontal_movement
+; not_out_of_fuel
+&19ed 60       RTS
+
+; plot_digit_of_number
+&19ee c0 02    CPY #&02
+&19f0 d0 03    BNE &19f5 ; not_ten_thousands
+&19f2 8e f9 22 STX &22f9 ; ten_thousands
+; not_thousands
+&19f5 8a       TXA
+&19f6 d0 09    BNE &1a01 ; not_zero
+&19f8 a5 74    LDA &74 ; leading_zeros
+&19fa f0 09    BEQ &1a05 ; plot_digit
+&19fc a2 0a    LDX #&0a ; " "
+&19fe 4c 05 1a JMP &1a05 ; plot_digit
+; not_zero
+&1a01 a9 00    LDA #&00
+&1a03 85 74    STA &74 ; leading_zeros                              # Set to zero to plot zeros as zero
+; plot_digit
+&1a05 98       TYA
+&1a06 48       PHA ; tmp_y
+&1a07 8a       TXA
+&1a08 0a       ASL A
+&1a09 0a       ASL A
+&1a0a 0a       ASL A
+&1a0b 0a       ASL A
+&1a0c 18       CLC
+&1a0d 69 0f    ADC #&0f
+&1a0f aa       TAX
+&1a10 a0 0f    LDY #&0f
+; plot_digit_loop
+&1a12 bd 00 16 LDA &1600,X ; number_sprites
+&1a15 91 82    STA (&82),Y ; screen_address
+&1a17 ca       DEX
+&1a18 88       DEY
+&1a19 10 f7    BPL &1a12 ; plot_digit_loop
+&1a1b a5 82    LDA &82 ; screen_address_low
+&1a1d 18       CLC
+&1a1e 69 10    ADC #&10                                             # Move right four pixels
+&1a20 85 82    STA &82 ; screen_address_low
+&1a22 a5 83    LDA &83 ; screen_address_high
+&1a24 69 00    ADC #&00
+&1a26 85 83    STA &83 ; screen_address_high
+&1a28 68       PLA ; tmp_y
+&1a29 a8       TAY
+&1a2a 60       RTS
+
+; plot_score
+&1a2b a9 68    LDA #&68 ; &1768 = score_buffer + 13 * 8
+&1a2d 85 82    STA &82 ; screen_address_low
+&1a2f a9 17    LDA #&17
+&1a31 85 83    STA &83 ; screen_address_high
+&1a33 ad 22 2f LDA &2f22 ; score
+&1a36 85 72    STA &72 ; number
+&1a38 ad 23 2f LDA &2f23 ; score + 1
+&1a3b 85 73    STA &73 ; number + 1
+&1a3d ad f9 22 LDA &22f9 ; ten_thousands
+&1a40 8d f8 22 STA &22f8 ; previous_ten_thousands
+&1a43 20 30 19 JSR &1930 ; plot_number
+&1a46 ad f8 22 LDA &22f8 ; previous_ten_thousands
+&1a49 cd f9 22 CMP &22f9 ; ten_thousands
+&1a4c f0 12    BEQ &1a60 ; skip_extra_life                          # Extra life every 10,000 points
+&1a4e 20 5e 2b JSR &2b5e ; play_sound_for_extra_life
+&1a51 ee 24 2f INC &2f24 ; player_lives
+&1a54 ad 24 2f LDA &2f24 ; player_lives
+&1a57 c9 0a    CMP #&0a
+&1a59 d0 05    BNE &1a60 ; skip_ceiling
+&1a5b a9 09    LDA #&09
+&1a5d 8d 24 2f STA &2f24 ; player_lives
+; skip_ceiling
+; skip_extra_life
+&1a60 a2 0b    LDX #&0b ; ":"
+&1a62 20 05 1a JSR &1a05 ; plot_digit
+&1a65 ae 24 2f LDX &2f24 ; player_lives
+&1a68 20 05 1a JSR &1a05 ; plot_digit
+&1a6b a2 0a    LDX #&0a ; " "
+&1a6d 20 05 1a JSR &1a05 ; plot_digit
+&1a70 60       RTS
+
+; add_to_score
+&1a71 8a       TXA
+&1a72 18       CLC
+&1a73 6d 22 2f ADC &2f22 ; score
+&1a76 8d 22 2f STA &2f22 ; score
+&1a79 ad 23 2f LDA &2f23 ; score + 1
+&1a7c 69 00    ADC #&00
+&1a7e 8d 23 2f STA &2f23 ; score + 1
+&1a81 4c 2b 1a JMP &1a2b ; plot_score
+
+; check_for_joystick_movement
+&1a84 20 74 19 JSR &1974 ; read_joystick_state
+&1a87 a2 05    LDX #&05
+&1a89 a9 00    LDA #&00
+; reset_keys_pressed_loop
+&1a8b 95 00    STA &00,X ; keys_pressed
+&1a8d ca       DEX
+&1a8e 10 fb    BPL &1a8b ; reset_keys_pressed_loop
+&1a90 ad 1d 22 LDA &221d ; joystick_x
+&1a93 c9 eb    CMP #&eb
+&1a95 90 04    BCC &1a9b ; joystick_not_left
+&1a97 a9 ff    LDA #&ff
+&1a99 85 00    STA &00 ; left_pressed
+; joystick_not_left
+&1a9b ad 1d 22 LDA &221d ; joystick_x
+&1a9e c9 19    CMP #&19
+&1aa0 b0 04    BCS &1aa6 ; joystick_not_right
+&1aa2 a9 ff    LDA #&ff
+&1aa4 85 01    STA &01 ; right_pressed
+; joystick_not_right
+&1aa6 ad 1e 22 LDA &221e ; joystick_y
+&1aa9 c9 eb    CMP #&eb
+&1aab 90 04    BCC &1ab1 ; joystick_not_up
+&1aad a9 ff    LDA #&ff
+&1aaf 85 02    STA &02 ; up_pressed
+; joystick_not_up
+&1ab1 ad 1e 22 LDA &221e ; joystick_y
+&1ab4 c9 14    CMP #&14
+&1ab6 b0 04    BCS &1abc ; joystick_not_down
+&1ab8 a9 ff    LDA #&ff
+&1aba 85 03    STA &03 ; down_pressed
+; joystick_not_down
+&1abc ad 1c 22 LDA &221c ; joystick_fire
+&1abf f0 06    BEQ &1ac7 ; joystick_not_firing
+&1ac1 a9 ff    LDA #&ff
+&1ac3 85 04    STA &04 ; fire_pressed
+&1ac5 85 05    STA &05 ; bomb_pressed
+; joystick_not_firing
+&1ac7 60       RTS
+
+; move_memory_first_stage
+&1ac8 a9 30    LDA #&30
+&1aca 85 71    STA &71 ; source_address_high
+&1acc a9 10    LDA #&10
+&1ace 85 73    STA &73 ; target_address_high
+&1ad0 a9 00    LDA #&00
+&1ad2 85 70    STA &70 ; source_address_low
+&1ad4 85 72    STA &72 ; target_address_low
+&1ad6 a2 07    LDX #&07
+&1ad8 a0 00    LDY #&00
+; move_3000_to_37ff_loop                                            # Move &3000 - &37ff to &1000 - &17ff
+&1ada b1 70    LDA (&70),Y ; source_address
+&1adc 91 72    STA (&72),Y ; target_address
+&1ade 88       DEY
+&1adf d0 f9    BNE &1ada ; move_3000_to_37ff_loop
+&1ae1 e6 71    INC &71 ; source_address_high
+&1ae3 e6 73    INC &73 ; target_address_high
+&1ae5 ca       DEX
+&1ae6 10 f2    BPL &1ada ; move_3000_to_37ff_loop
+&1ae8 4c 03 38 JMP &3803 ; to_move_memory_second_stage
+
+; set_crtc_start_address
+&1aeb a5 80    LDA &80 ; screen_start_address_low
+&1aed 85 82    STA &82 ; crtc_start_address_low
+&1aef a5 81    LDA &81 ; screen_start_address_high
+&1af1 85 83    STA &83 ; crtc_start_address_high
+&1af3 46 83    LSR &83 ; crtc_start_address_high
+&1af5 66 82    ROR &82 ; crtc_start_address_low
+&1af7 46 83    LSR &83 ; crtc_start_address_high
+&1af9 66 82    ROR &82 ; crtc_start_address_low
+&1afb 46 83    LSR &83 ; crtc_start_address_high
+&1afd 66 82    ROR &82 ; crtc_start_address_low
+&1aff a9 0c    LDA #&0c ; R12: Displayed screen start address register (high)
+&1b01 8d 00 fe STA &fe00 ; video register number
+&1b04 a5 83    LDA &83 ; crtc_start_address_high
+&1b06 8d 01 fe STA &fe01 ; video register value
+&1b09 a9 0d    LDA #&0d ; R13: Displayed screen start address register (low)
+&1b0b 8d 00 fe STA &fe00 ; video register number
+&1b0e a5 82    LDA &82 ; crtc_start_address_low
+&1b10 8d 01 fe STA &fe01 ; video register value
+&1b13 60       RTS
+
+; wait_for_vsync_clearing_interrupt                                 # Unused code
+&1b14 20 19 1b JSR &1b19 ; wait_for_vsync
+&1b17 58       CLI
+&1b18 60       RTS
+
+; wait_for_vsync
+&1b19 78       SEI
+&1b1a a9 02    LDA #&02
+; wait_for_vsync_loop
+&1b1c 2c 4d fe BIT &fe4d ; System VIA interrupt flag register       # &02 set if v-sync has occurred
+&1b1f f0 fb    BEQ &1b1c ; wait_for_vsync_loop
+&1b21 60       RTS
+
+; scroll_screen_right
+&1b22 a5 80    LDA &80 ; screen_start_address_low
+&1b24 18       CLC
+&1b25 69 08    ADC #&08                                             # Move right two pixels
+&1b27 85 80    STA &80 ; screen_start_address_low
+&1b29 a5 81    LDA &81 ; screen_start_address_high
+&1b2b 69 00    ADC #&00
+&1b2d 85 81    STA &81 ; screen_start_address_high
+&1b2f c9 80    CMP #&80
+&1b31 d0 04    BNE &1b37 ; skip_wraparound
+&1b33 a9 30    LDA #&30
+&1b35 85 81    STA &81 ; screen_start_address_high
+; skip_wraparound
+&1b37 20 19 1b JSR &1b19 ; wait_for_vsync
+&1b3a 20 eb 1a JSR &1aeb ; set_crtc_start_address
+&1b3d 60       RTS
+
+; calculate_screen_address_from_offset
+&1b3e 86 83    STX &83 ; offset_high
+&1b40 84 82    STY &82 ; offset_low
+&1b42 a5 80    LDA &80 ; screen_start_address_low
+&1b44 18       CLC
+&1b45 65 82    ADC &82 ; offset_low
+&1b47 85 82    STA &82 ; screen_address_low
+&1b49 a5 83    LDA &83 ; offset_high
+&1b4b 65 81    ADC &81 ; screen_start_address_high
+&1b4d 85 83    STA &83 ; offset_high
+&1b4f c9 80    CMP #&80
+&1b51 90 05    BCC &1b58 ; skip_wraparound
+&1b53 38       SEC
+&1b54 e9 50    SBC #&50
+&1b56 85 83    STA &83 ; screen_address_high
+; skip_wraparound
+&1b58 a6 83    LDX &83 ; screen_address_high
+&1b5a a4 82    LDY &82 ; screen_address_low
+&1b5c 60       RTS
+
+; move_screen_address_in_YX_down_a_row                              # Unused code
+&1b5d c8       INY                                                  # Move down a row
+&1b5e d0 01    BNE &1b61 ; skip_page
+&1b60 e8       INX
+; skip_page
+&1b61 98       TYA
+&1b62 29 07    AND #&07
+&1b64 d0 09    BNE &1b6f ; not_new_group
+&1b66 98       TYA
+&1b67 18       CLC
+&1b68 69 78    ADC #&78                                             # Move down a group
+&1b6a a8       TAY
+&1b6b 8a       TXA
+&1b6c 69 02    ADC #&02
+&1b6e aa       TAX
+; not_new_group
+&1b6f e0 80    CPX #&80
+&1b71 90 05    BCC &1b78 ; skip_wraparound
+&1b73 8a       TXA
+&1b74 38       SEC
+&1b75 e9 50    SBC #&50
+&1b77 aa       TAX
+; skip_wraparound
+&1b78 60       RTS
+
+; move_down_a_row
+&1b79 e6 82    INC &82 ; screen_address_low                         # Move down a row
+&1b7b d0 0d    BNE &1b8a ; skip_page
+&1b7d e6 83    INC &83 ; screen_address_high
+&1b7f a5 83    LDA &83 ; screen_address_high
+&1b81 c9 80    CMP #&80
+&1b83 90 05    BCC &1b8a ; skip_wraparound
+&1b85 38       SEC
+&1b86 e9 50    SBC #&50
+&1b88 85 83    STA &83 ; screen_address_high
+; skip_wraparound
+; skip_page
+&1b8a a5 82    LDA &82 ; screen_address_low
+&1b8c 29 07    AND #&07
+&1b8e d0 18    BNE &1ba8 ; not_new_group
+&1b90 a5 82    LDA &82 ; screen_address_low
+&1b92 18       CLC
+&1b93 69 78    ADC #&78                                             # Move down a group
+&1b95 85 82    STA &82 ; screen_address_low
+&1b97 a5 83    LDA &83 ; screen_address_high
+&1b99 69 02    ADC #&02
+&1b9b 85 83    STA &83 ; screen_address_high
+&1b9d a5 83    LDA &83 ; screen_address_high
+&1b9f c9 80    CMP #&80
+&1ba1 90 05    BCC &1ba8 ; skip_wraparound
+&1ba3 38       SEC
+&1ba4 e9 50    SBC #&50
+&1ba6 85 83    STA &83 ; screen_address_high
+; skip_wraparound
+; not_new_group
+&1ba8 60       RTS
+
+; change_ground_height
+&1ba9 a5 72    LDA &72 ; height_change_offset
+&1bab 29 0f    AND #&0f
+&1bad aa       TAX
+&1bae ad 16 2f LDA &2f16 ; ground_height
+&1bb1 18       CLC
+&1bb2 7d 5f 22 ADC &225f,X ; height_change_table
+&1bb5 8d 16 2f STA &2f16 ; ground_height
+&1bb8 60       RTS
+
+; wipe_column
+&1bb9 a2 4d    LDX #&4d ; &4d87 = 31 * &280 + 7                     # Bottom left of screen
+&1bbb a0 87    LDY #&87
+&1bbd 20 3e 1b JSR &1b3e ; calculate_screen_address_from_offset
+&1bc0 86 83    STX &83 ; screen_address_high
+&1bc2 84 82    STY &82 ; screen_address_low
+&1bc4 a2 00    LDX #&00
+&1bc6 a9 00    LDA #&00
+&1bc8 a0 00    LDY #&00
+; wipe_column_loop
+&1bca a9 00    LDA #&00 ; colour 0
+&1bcc a0 00    LDY #&00
+&1bce 91 82    STA (&82),Y ; screen_address
+&1bd0 8a       TXA
+&1bd1 48       PHA ; row
+&1bd2 a5 82    LDA &82 ; screen_address_low
+&1bd4 38       SEC
+&1bd5 e9 01    SBC #&01                                             # Move up a row
+&1bd7 85 82    STA &82 ; screen_address_low
+&1bd9 a5 83    LDA &83 ; screen_address_high
+&1bdb e9 00    SBC #&00
+&1bdd 85 83    STA &83 ; screen_address_high
+&1bdf a5 82    LDA &82 ; screen_address_low
+&1be1 29 07    AND #&07
+&1be3 c9 07    CMP #&07
+&1be5 d0 0d    BNE &1bf4 ; not_new_group
+&1be7 a5 82    LDA &82 ; screen_address_low
+&1be9 38       SEC
+&1bea e9 78    SBC #&78                                             # Move up a group
+&1bec 85 82    STA &82 ; screen_address_low
+&1bee a5 83    LDA &83 ; screen_address_high
+&1bf0 e9 02    SBC #&02
+&1bf2 85 83    STA &83 ; screen_address_high
+&1bf4 a5 83    LDA &83 ; screen_address_high
+; not_new_group
+&1bf6 c9 30    CMP #&30
+&1bf8 b0 05    BCS &1bff ; skip_wraparound
+&1bfa 18       CLC
+&1bfb 69 50    ADC #&50
+&1bfd 85 83    STA &83 ; screen_address_high
+; skip_wraparound
+&1bff 68       PLA ; row
+&1c00 aa       TAX
+&1c01 ca       DEX
+&1c02 d0 c6    BNE &1bca ; wipe_column_loop
+&1c04 60       RTS
+
+; plot_fuel
+&1c05 ae 20 2f LDX &2f20 ; player_fuel
+&1c08 f0 0f    BEQ &1c19 ; skip_plotting_full_fuel
+&1c0a e8       INX
+&1c0b a0 10    LDY #&10
+&1c0d 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&1c10 a0 07    LDY #&07
+&1c12 a9 ff    LDA #&ff ; colour 15
+; plot_full_fuel_loop
+&1c14 91 82    STA (&82),Y ; screen_address
+&1c16 88       DEY
+&1c17 10 fb    BPL &1c14 ; plot_full_fuel_loop
+; skip_plotting_full_fuel
+&1c19 ad 20 2f LDA &2f20 ; player_fuel
+&1c1c c9 46    CMP #&46
+&1c1e f0 10    BEQ &1c30 ; skip_plotting_empty_fuel
+&1c20 a2 47    LDX #&47
+&1c22 a0 10    LDY #&10
+&1c24 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&1c27 a9 03    LDA #&03 ; colour 1
+&1c29 a0 07    LDY #&07
+; plot_empty_fuel_loop
+&1c2b 91 82    STA (&82),Y ; screen_address
+&1c2d 88       DEY
+&1c2e 10 fb    BPL &1c2b ; plot_empty_fuel_loop
+; skip_plotting_empty_fuel
+&1c30 60       RTS
+
+; copy_score_buffer_to_screen
+&1c31 a2 00    LDX #&00 ; &00b0 = 16 * 8
+&1c33 a0 b0    LDY #&b0
+&1c35 20 3e 1b JSR &1b3e ; calculate_screen_address_from_offset
+&1c38 86 83    STX &83 ; screen_address_high
+&1c3a 84 82    STY &82 ; screen_address_low
+&1c3c a0 ff    LDY #&ff
+; copy_score_buffer_to_screen_loop
+&1c3e b9 00 17 LDA &1700,Y ; score_buffer
+&1c41 29 0f    AND #&0f
+&1c43 91 82    STA (&82),Y ; screen_address
+&1c45 88       DEY
+&1c46 c0 ff    CPY #&ff
+&1c48 d0 f4    BNE &1c3e ; copy_score_buffer_to_screen_loop
+&1c4a 60       RTS
+
+; consider_draining_fuel
+&1c4b ce 21 2f DEC &2f21 ; fuel_drain_cooldown
+&1c4e d0 10    BNE &1c60 ; leave
+&1c50 ad 2a 2f LDA &2f2a ; maximum_fuel_drain_cooldown
+&1c53 8d 21 2f STA &2f21 ; fuel_drain_cooldown
+&1c56 ce 20 2f DEC &2f20 ; player_fuel
+&1c59 10 05    BPL &1c60 ; skip_floor
+&1c5b a9 00    LDA #&00
+&1c5d 8d 20 2f STA &2f20 ; player_fuel
+; skip_floor
+; leave
+&1c60 60       RTS
+
+; initialise_score
+&1c61 a9 00    LDA #&00 ; colour 0
+&1c63 8d 22 2f STA &2f22 ; score
+&1c66 8d 23 2f STA &2f23 ; score + 1
+&1c69 a0 ff    LDY #&ff
+; initialise_score_buffer_loop
+&1c6b 99 00 17 STA &1700,Y ; score_buffer                           # Wipe &1781 - &17ff
+&1c6e 88       DEY
+&1c6f c0 80    CPY #&80
+&1c71 d0 f8    BNE &1c6b ; initialise_score_buffer_loop
+&1c73 60       RTS
+
+; calculate_screen_address_from_X_and_Y                             # Called with X = x, Y = y
+&1c74 8a       TXA
+&1c75 29 7f    AND #&7f
+&1c77 85 70    STA &70 ; tmp_low
+&1c79 a9 00    LDA #&00
+&1c7b 06 70    ASL &70 ; tmp_low
+&1c7d 2a       ROL A
+&1c7e 06 70    ASL &70 ; tmp_low
+&1c80 2a       ROL A
+&1c81 06 70    ASL &70 ; tmp_low
+&1c83 2a       ROL A
+&1c84 85 71    STA &71 ; tmp_high
+&1c86 98       TYA
+&1c87 29 07    AND #&07
+&1c89 0a       ASL A
+&1c8a 85 72    STA &72 ; offset_low
+&1c8c 98       TYA
+&1c8d 29 f8    AND #&f8
+&1c8f 4a       LSR A
+&1c90 4a       LSR A
+&1c91 85 73    STA &73 ; offset_high
+&1c93 4a       LSR A
+&1c94 4a       LSR A
+&1c95 66 72    ROR &72 ; offset_low
+&1c97 18       CLC
+&1c98 65 73    ADC &73 ; offset_high
+&1c9a 85 73    STA &73 ; offset_high
+&1c9c 18       CLC
+&1c9d a5 73    LDA &73 ; offset_high
+&1c9f 65 71    ADC &71 ; tmp_high
+&1ca1 85 73    STA &73 ; offset_high
+&1ca3 a5 72    LDA &72 ; offset_low
+&1ca5 18       CLC
+&1ca6 65 70    ADC &70 ; tmp_low
+&1ca8 85 72    STA &72 ; offset_low
+&1caa a9 00    LDA #&00
+&1cac 65 73    ADC &73 ; offset_high
+&1cae 85 73    STA &73 ; offset_high
+&1cb0 a6 73    LDX &73 ; offset_high
+&1cb2 a4 72    LDY &72 ; offset_low
+&1cb4 20 3e 1b JSR &1b3e ; calculate_screen_address_from_offset
+&1cb7 86 83    STX &83 ; screen_address_high
+&1cb9 84 82    STY &82 ; screen_address_low
+&1cbb 60       RTS
+
+; sprite_width
+&1cbc 00
+
+; sprite_height
+&1cbd 00
+
+; plot_sprite
+&1cbe 29 0f    AND #&0f
+&1cc0 85 6d    STA &6d ; sprite
+&1cc2 86 6e    STX &6e ; sprite_x
+&1cc4 84 6f    STY &6f ; sprite_y
+&1cc6 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&1cc9 a6 6d    LDX &6d ; sprite
+&1ccb bd cf 2e LDA &2ecf,X ; sprite_heights_table                   # height - 1
+&1cce 8d bd 1c STA &1cbd ; sprite_height
+&1cd1 bd c2 2e LDA &2ec2,X ; sprite_widths_table                    # (width - 1) * 8
+&1cd4 8d bc 1c STA &1cbc ; sprite_width
+&1cd7 a9 00    LDA #&00
+&1cd9 85 64    STA &64 ; collision                                  # Set to zero to indicate no collision
+&1cdb a5 6d    LDA &6d ; sprite
+&1cdd 85 71    STA &71 ; sprite_address_high
+&1cdf a9 00    LDA #&00
+&1ce1 18       CLC
+&1ce2 66 71    ROR &71 ; sprite_address_high
+&1ce4 6a       ROR A
+&1ce5 85 70    STA &70 ; sprite_address_low
+&1ce7 a9 00    LDA #&00 ; &1000 = sprite_data
+&1ce9 18       CLC
+&1cea 65 70    ADC &70 ; sprite_address_low
+&1cec 85 70    STA &70 ; sprite_address_low
+&1cee a9 10    LDA #&10
+&1cf0 65 71    ADC &71 ; sprite_address_high
+&1cf2 85 71    STA &71 ; sprite_address_high
+&1cf4 ae bd 1c LDX &1cbd ; sprite_height
+; plot_sprite_row_loop
+&1cf7 ac bc 1c LDY &1cbc ; sprite_width
+; plot_sprite_column_loop
+&1cfa a5 83    LDA &83 ; screen_address_high
+&1cfc c9 7f    CMP #&7f
+&1cfe d0 1d    BNE &1d1d ; plot_sprite_without_wraparound
+&1d00 98       TYA
+&1d01 18       CLC
+&1d02 65 82    ADC &82 ; screen_address_low
+&1d04 90 17    BCC &1d1d ; plot_sprite_without_wraparound
+; plot_sprite_with_wraparound
+&1d06 a9 2f    LDA #&2f
+&1d08 85 83    STA &83 ; screen_address_high
+&1d0a b1 70    LDA (&70),Y ; sprite_address
+&1d0c 51 82    EOR (&82),Y ; screen_address
+&1d0e 91 82    STA (&82),Y ; screen_address
+&1d10 31 70    AND (&70),Y ; sprite_address
+&1d12 05 64    ORA &64 ; collision
+&1d14 85 64    STA &64 ; collision
+&1d16 a9 7f    LDA #&7f
+&1d18 85 83    STA &83 ; screen_address_high
+&1d1a 4c 29 1d JMP &1d29 ; next_group
+; plot_sprite_without_wraparound
+&1d1d b1 70    LDA (&70),Y ; sprite_address
+&1d1f f0 08    BEQ &1d29 ; next_group
+&1d21 51 82    EOR (&82),Y ; screen_address
+&1d23 91 82    STA (&82),Y ; screen_address
+&1d25 05 64    ORA &64 ; collision
+&1d27 85 64    STA &64 ; collision
+; next_group
+&1d29 98       TYA
+&1d2a 38       SEC
+&1d2b e9 08    SBC #&08                                             # Move left two pixels
+&1d2d a8       TAY
+&1d2e 10 ca    BPL &1cfa ; plot_sprite_column_loop
+&1d30 ca       DEX
+&1d31 30 22    BMI &1d55 ; leave
+&1d33 e6 82    INC &82 ; screen_address_low                         # Move down a row
+&1d35 a5 82    LDA &82 ; screen_address_low
+&1d37 29 07    AND #&07
+&1d39 d0 08    BNE &1d43 ; not_new_group
+&1d3b c6 82    DEC &82 ; screen_address_low                         # Move up a row,
+&1d3d 20 79 1b JSR &1b79 ; move_down_a_row                          # so that move_down_a_row moves down a group
+&1d40 4c 43 1d JMP &1d43 ; not_new_group                            # Unnecessary code
+; not_new_group
+&1d43 e6 70    INC &70 ; sprite_address_low
+&1d45 a5 70    LDA &70 ; sprite_address_low
+&1d47 29 07    AND #&07
+&1d49 d0 ac    BNE &1cf7 ; plot_sprite_row_loop
+&1d4b a5 70    LDA &70 ; sprite_address_low
+&1d4d 18       CLC
+&1d4e 69 38    ADC #&38                                             # Move to next row of sprite data
+&1d50 85 70    STA &70 ; sprite_address_low
+&1d52 4c f7 1c JMP &1cf7 ; plot_sprite_row_loop
+; leave
+&1d55 60       RTS
+
+; unused                                                            # Unused code
+&1d56 ad 19 2f LDA &2f19 ; player_x
+&1d59 38       SEC
+&1d5a e9 01    SBC #&01
+&1d5c aa       TAX
+&1d5d ac 1a 2f LDY &2f1a ; player_y
+&1d60 a9 00    LDA #&00 ; SPRITE_PLAYER
+&1d62 20 be 1c JSR &1cbe ; plot_sprite
+&1d65 4c 68 1d JMP &1d68 ; plot_player                              # Unnecessary code
+
+; plot_player
+&1d68 a9 00    LDA #&00 ; SPRITE_PLAYER
+&1d6a ae 19 2f LDX &2f19 ; player_x
+&1d6d ac 1a 2f LDY &2f1a ; player_y
+&1d70 4c be 1c JMP &1cbe ; plot_sprite
+
+; replot_player
+&1d73 ad 1a 2f LDA &2f1a ; player_y
+&1d76 85 71    STA &71 ; y
+&1d78 18       CLC
+&1d79 6d 1b 2f ADC &2f1b ; vertical_movement
+&1d7c c9 ec    CMP #&ec
+&1d7e f0 06    BEQ &1d86 ; skip_vertical_movement                   # Stop player moving beyond bottom of world
+&1d80 c9 24    CMP #&24
+&1d82 f0 02    BEQ &1d86 ; skip_vertical_movement                   # Stop player moving beyond top of world
+&1d84 85 71    STA &71 ; y
+; skip_vertical_movement
+&1d86 ad 19 2f LDA &2f19 ; player_x
+&1d89 85 70    STA &70 ; x
+&1d8b 18       CLC
+&1d8c 6d 1c 2f ADC &2f1c ; horizontal_movement
+&1d8f c9 02    CMP #&02
+&1d91 f0 06    BEQ &1d99 ; skip_horizontal_movement                 # Stop player moving beyond left of screen
+&1d93 c9 28    CMP #&28
+&1d95 f0 02    BEQ &1d99 ; skip_horizontal_movement                 # Stop player moving too far right
+&1d97 85 70    STA &70 ; x
+; skip_horizontal_movement
+&1d99 a5 70    LDA &70 ; x
+&1d9b 48       PHA ; x
+&1d9c a5 71    LDA &71 ; y
+&1d9e 48       PHA ; y
+&1d9f ad 19 2f LDA &2f19 ; player_x
+&1da2 38       SEC
+&1da3 e9 01    SBC #&01
+&1da5 aa       TAX
+&1da6 ac 1a 2f LDY &2f1a ; player_y
+&1da9 a9 00    LDA #&00 ; SPRITE_PLAYER
+&1dab 20 be 1c JSR &1cbe ; plot_sprite                              # Unplot player
+&1dae a5 64    LDA &64 ; collision
+&1db0 8d 25 2f STA &2f25 ; player_exploding
+&1db3 68       PLA ; y
+&1db4 8d 1a 2f STA &2f1a ; player_y
+&1db7 68       PLA ; x
+&1db8 8d 19 2f STA &2f19 ; player_x
+&1dbb 20 68 1d JSR &1d68 ; plot_player                              # Plot player
+&1dbe 60       RTS
+
+; consider_updating_palette
+&1dbf ce f7 22 DEC &22f7 ; palette_update_cooldown
+&1dc2 f0 01    BEQ &1dc5 ; update_palette
+&1dc4 60       RTS
+; update_palette
+&1dc5 a9 02    LDA #&02
+&1dc7 8d f7 22 STA &22f7 ; palette_update_cooldown
+&1dca ee 1d 2f INC &2f1d ; first_palette_timer
+&1dcd a2 08    LDX #&08                                             # Set colour 8
+&1dcf ad 1d 2f LDA &2f1d ; first_palette_timer
+&1dd2 29 03    AND #&03
+&1dd4 18       CLC
+&1dd5 69 01    ADC #&01                                             # to R, G, Y or B on first_timer MOD 4
+&1dd7 a8       TAY
+&1dd8 20 3b 1e JSR &1e3b ; set_palette
+&1ddb a2 09    LDX #&09                                             # Set colour 9
+&1ddd ad 1d 2f LDA &2f1d ; first_palette_timer
+&1de0 18       CLC
+&1de1 69 01    ADC #&01
+&1de3 29 03    AND #&03
+&1de5 18       CLC
+&1de6 69 01    ADC #&01                                             # to R, G, Y or B on (first_timer + 1) MOD 4
+&1de8 a8       TAY
+&1de9 20 3b 1e JSR &1e3b ; set_palette
+&1dec a2 0a    LDX #&0a                                             # Set colour 10
+&1dee ad 1d 2f LDA &2f1d ; first_palette_timer
+&1df1 18       CLC
+&1df2 69 02    ADC #&02
+&1df4 29 03    AND #&03
+&1df6 18       CLC
+&1df7 69 01    ADC #&01                                             # to R, G, Y or B on (first_timer + 2) MOD 4
+&1df9 a8       TAY
+&1dfa 20 3b 1e JSR &1e3b ; set_palette
+&1dfd a2 0b    LDX #&0b                                             # Set colour 11
+&1dff ad 1d 2f LDA &2f1d ; first_palette_timer
+&1e02 18       CLC
+&1e03 69 03    ADC #&03
+&1e05 29 03    AND #&03
+&1e07 18       CLC
+&1e08 69 01    ADC #&01                                             # to R, G, Y or B on (first_timer + 3) MOD 4
+&1e0a a8       TAY
+&1e0b 20 3b 1e JSR &1e3b ; set_palette
+&1e0e ee 26 2f INC &2f26 ; second_palette_timer
+&1e11 ad 26 2f LDA &2f26 ; second_palette_timer
+&1e14 29 7f    AND #&7f
+&1e16 8d 26 2f STA &2f26 ; second_palette_timer
+&1e19 a2 0c    LDX #&0c                                             # Set colour 12
+&1e1b ad 26 2f LDA &2f26 ; second_palette_timer
+&1e1e 18       CLC
+&1e1f 69 01    ADC #&01                                             # to R, R or Y on (second_timer + 1) MOD 3
+&1e21 20 4f 1e JSR &1e4f ; set_red_or_yellow
+&1e24 a2 0d    LDX #&0d                                             # Set colour 13
+&1e26 ad 26 2f LDA &2f26 ; second_palette_timer
+&1e29 18       CLC
+&1e2a 69 02    ADC #&02                                             # to R, R or Y on (second_timer + 2) MOD 3
+&1e2c 20 4f 1e JSR &1e4f ; set_red_or_yellow
+&1e2f a2 0e    LDX #&0e                                             # Set colour 14
+&1e31 ad 26 2f LDA &2f26 ; second_palette_timer
+&1e34 18       CLC
+&1e35 69 03    ADC #&03                                             # to R, R or Y on (second_timer + 3) MOD 3
+&1e37 4c 4f 1e JMP &1e4f ; set_red_or_yellow
+&1e3a 60       RTS
+
+; set_palette                                                       # Called with X = logical colour, Y = physical colour
+&1e3b 8a       TXA
+&1e3c 0a       ASL A
+&1e3d 0a       ASL A
+&1e3e 0a       ASL A
+&1e3f 0a       ASL A
+&1e40 85 6f    STA &6f ; logical_colour
+&1e42 98       TYA
+&1e43 29 0f    AND #&0f
+&1e45 49 07    EOR #&07
+&1e47 05 6f    ORA &6f ; logical_colour
+&1e49 8d 21 fe STA &fe21 ; video ULA palette register
+&1e4c 60       RTS
+
+; unused                                                            # Unused entry point
+&1e4d 29 7f    AND #&7f
+; set_red_or_yellow
+; divide_by_three_loop
+&1e4f 38       SEC
+&1e50 e9 03    SBC #&03
+&1e52 10 fb    BPL &1e4f ; divide_by_three_loop
+&1e54 18       CLC
+&1e55 69 03    ADC #&03
+&1e57 a0 01    LDY #&01 ; R
+&1e59 c9 02    CMP #&02
+&1e5b d0 02    BNE &1e5f ; to_set_palette
+&1e5d a0 03    LDY #&03 ; Y                                         # Set colour to yellow one frame in three; red otherwise
+; to_set_palette
+&1e5f 4c 3b 1e JMP &1e3b ; set_palette
+
+; shift_block                                                       # Unused code; would scroll status on screen
+&1e62 a2 00    LDX #&00 ; &00ff = 31 * 8 + 7
+&1e64 a0 ff    LDY #&ff
+&1e66 20 3e 1b JSR &1b3e ; calculate_screen_address_from_offset
+&1e69 86 85    STX &85 ; target_address_high
+&1e6b 84 84    STY &84 ; target_address_low
+&1e6d a2 00    LDX #&00 ; &00f7 = 30 * 8 + 7
+&1e6f a0 f7    LDY #&f7
+&1e71 20 3e 1b JSR &1b3e ; calculate_screen_address_from_offset
+&1e74 86 83    STX &83 ; source_address_high
+&1e76 84 82    STY &82 ; source_address_low
+&1e78 a2 f7    LDX #&f7
+&1e7a a0 00    LDY #&00
+; shift_block_loop
+&1e7c b1 82    LDA (&82),Y ; source_address
+&1e7e 91 84    STA (&84),Y ; target_address
+&1e80 8a       TXA
+&1e81 48       PHA ; count
+&1e82 a2 82    LDX #&82 ; source_address
+&1e84 20 94 1e JSR &1e94 ; move_address_back_a_byte
+&1e87 a2 84    LDX #&84 ; target_address
+&1e89 20 94 1e JSR &1e94 ; move_address_back_a_byte
+&1e8c 68       PLA ; count
+&1e8d aa       TAX
+&1e8e ca       DEX
+&1e8f e0 ff    CPX #&ff
+&1e91 d0 e9    BNE &1e7c ; shift_block_loop
+&1e93 60       RTS
+
+; move_address_back_a_byte                                          # Unused code
+&1e94 d6 00    DEC &00,X ; address_low
+&1e96 b5 00    LDA &00,X ; address_low
+&1e98 c9 ff    CMP #&ff
+&1e9a d0 0c    BNE &1ea8 ; leave
+&1e9c d6 01    DEC &01,X ; address_high
+&1e9e b5 01    LDA &01,X ; address_high
+&1ea0 c9 2f    CMP #&2f
+&1ea2 d0 04    BNE &1ea8 ; leave
+&1ea4 a9 7f    LDA #&7f
+&1ea6 95 01    STA &01,X ; address_high
+; leave
+&1ea8 60       RTS
+
+; remove_lasers_pellets_and_bombs
+&1ea9 a2 0f    LDX #&0f
+; remove_lasers_and_pellets_loop
+&1eab a9 00    LDA #&00
+&1ead 9d 00 0e STA &0e00,X ; lasers_present                         # Set to zero to indicate no laser in slot
+&1eb0 8a       TXA
+&1eb1 29 07    AND #&07
+&1eb3 a8       TAY
+&1eb4 a9 ff    LDA #&ff
+&1eb6 99 50 0f STA &0f50,Y ; pellets_present                        # Set to &ff to indicate no pellet in slot
+&1eb9 ca       DEX
+&1eba 10 ef    BPL &1eab ; remove_lasers_and_pellets_loop
+&1ebc a2 01    LDX #&01
+&1ebe a9 00    LDA #&00
+; remove_bombs_loop
+&1ec0 9d 30 0f STA &0f30,X ; bombs_present                          # Set to zero to indicate no bomb in slot
+&1ec3 ca       DEX
+&1ec4 10 fa    BPL &1ec0 ; remove_bombs_loop
+&1ec6 60       RTS
+
+; add_laser
+&1ec7 a2 0f    LDX #&0f
+; find_slot_for_laser_loop
+&1ec9 bd 00 0e LDA &0e00,X ; lasers_present                         # Zero if no laser in slot
+&1ecc f0 04    BEQ &1ed2 ; found_slot
+&1ece ca       DEX
+&1ecf 10 f8    BPL &1ec9 ; find_slot_for_laser_loop
+&1ed1 60       RTS
+; found_slot
+&1ed2 a9 01    LDA #&01
+&1ed4 9d 00 0e STA &0e00,X ; lasers_present                         # Set to non-zero to indicate laser in slot
+&1ed7 a5 84    LDA &84 ; laser_x
+&1ed9 18       CLC
+&1eda 69 09    ADC #&09
+&1edc 9d 30 0e STA &0e30,X ; lasers_x
+&1edf 86 6b    STX &6b ; slot
+&1ee1 a5 85    LDA &85 ; laser_y
+&1ee3 9d 40 0e STA &0e40,X ; lasers_y
+&1ee6 a8       TAY
+&1ee7 bd 30 0e LDA &0e30,X ; lasers_x
+&1eea aa       TAX
+&1eeb 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&1eee a6 6b    LDX &6b ; slot
+&1ef0 a5 82    LDA &82 ; screen_address_low
+&1ef2 9d 10 0e STA &0e10,X ; lasers_screen_addresses_low
+&1ef5 a5 83    LDA &83 ; screen_address_high
+; skip_wraparound
+&1ef7 9d 20 0e STA &0e20,X ; lasers_screen_addresses_high
+&1efa a0 00    LDY #&00
+&1efc a9 3f    LDA #&3f ; colour 7
+&1efe 51 82    EOR (&82),Y ; screen_address
+&1f00 91 82    STA (&82),Y ; screen_address                         # Plot laser
+&1f02 60       RTS
+
+; update_lasers
+&1f03 a2 0f    LDX #&0f
+; update_lasers_loop
+&1f05 bd 00 0e LDA &0e00,X ; lasers_present                         # Non-zero if laser in slot
+&1f08 d0 04    BNE &1f0e ; update_laser
+&1f0a ca       DEX
+&1f0b 10 f8    BPL &1f05 ; update_lasers_loop
+&1f0d 60       RTS
+; update_laser
+&1f0e bd 10 0e LDA &0e10,X ; lasers_screen_addresses_low
+&1f11 85 82    STA &82 ; screen_address_low
+&1f13 bd 20 0e LDA &0e20,X ; lasers_screen_addresses_high
+&1f16 85 83    STA &83 ; screen_address_high
+&1f18 a0 00    LDY #&00
+&1f1a a9 3f    LDA #&3f ; colour 7
+&1f1c 51 82    EOR (&82),Y ; screen_address
+&1f1e 91 82    STA (&82),Y ; screen_address                         # Unplot laser
+&1f20 d0 3c    BNE &1f5e ; laser_hit_something
+&1f22 bd 30 0e LDA &0e30,X ; lasers_x
+&1f25 18       CLC
+&1f26 69 01    ADC #&01
+&1f28 c9 4f    CMP #&4f
+&1f2a b0 57    BCS &1f83 ; remove_laser                             # Remove laser at right edge of screen
+&1f2c 9d 30 0e STA &0e30,X ; lasers_x
+&1f2f 20 6d 1f JSR &1f6d ; move_right_two_columns
+&1f32 b1 82    LDA (&82),Y ; screen_address
+&1f34 d0 28    BNE &1f5e ; laser_hit_something
+&1f36 bd 30 0e LDA &0e30,X ; lasers_x
+&1f39 18       CLC
+&1f3a 69 01    ADC #&01
+&1f3c c9 4f    CMP #&4f
+&1f3e b0 43    BCS &1f83 ; remove_laser                             # Remove laser at right edge of screen
+&1f40 9d 30 0e STA &0e30,X ; lasers_x
+&1f43 a9 3f    LDA #&3f ; colour 7
+&1f45 51 82    EOR (&82),Y ; screen_address
+&1f47 c9 3f    CMP #&3f ; colour 7
+&1f49 d0 13    BNE &1f5e ; laser_hit_something
+&1f4b 91 82    STA (&82),Y ; screen_address                         # Plot laser
+&1f4d a5 82    LDA &82 ; screen_address_low
+&1f4f 9d 10 0e STA &0e10,X ; lasers_screen_addresses_low
+&1f52 a5 83    LDA &83 ; screen_address_high
+&1f54 9d 20 0e STA &0e20,X ; lasers_screen_addresses_high
+; consider_next_laser
+&1f57 ca       DEX
+&1f58 30 03    BMI &1f5d ; leave
+&1f5a 4c 05 1f JMP &1f05 ; update_lasers_loop
+; leave
+&1f5d 60       RTS
+; laser_hit_something
+&1f5e a9 00    LDA #&00
+&1f60 9d 00 0e STA &0e00,X ; lasers_present                         # Set to zero to indicate no laser in slot
+&1f63 8a       TXA
+&1f64 48       PHA ; laser_slot
+&1f65 20 5f 28 JSR &285f ; check_for_collision_with_laser
+&1f68 68       PLA ; laser_slot
+&1f69 aa       TAX
+&1f6a 4c 57 1f JMP &1f57 ; consider_next_laser
+
+; move_right_two_columns
+&1f6d a5 82    LDA &82 ; screen_address_low
+&1f6f 18       CLC
+&1f70 69 10    ADC #&10                                             # Move right four pixels
+&1f72 85 82    STA &82 ; screen_address_low
+&1f74 a5 83    LDA &83 ; screen_address_high
+&1f76 69 00    ADC #&00
+&1f78 85 83    STA &83 ; screen_address_high
+&1f7a c9 80    CMP #&80
+&1f7c 90 04    BCC &1f82 ; skip_wraparound
+&1f7e a9 30    LDA #&30
+&1f80 85 83    STA &83 ; screen_address_high
+; skip_wraparound
+&1f82 60       RTS
+
+; remove_laser
+&1f83 a9 00    LDA #&00
+&1f85 9d 00 0e STA &0e00,X ; lasers_present                         # Set to zero to indicate no laser in slot
+&1f88 ca       DEX
+&1f89 30 03    BMI &1f8e ; leave
+&1f8b 4c 05 1f JMP &1f05 ; update_lasers_loop
+; leave
+&1f8e 60       RTS
+
+; add_laser_by_player
+&1f8f ad 19 2f LDA &2f19 ; player_x
+&1f92 85 84    STA &84 ; laser_x
+&1f94 ad 1a 2f LDA &2f1a ; player_y
+&1f97 18       CLC
+&1f98 69 07    ADC #&07
+&1f9a 85 85    STA &85 ; laser_y
+&1f9c 20 c7 1e JSR &1ec7 ; add_laser
+&1f9f 60       RTS
+
+; plot_lasers                                                       # Unused code
+&1fa0 a2 0f    LDX #&0f
+; plot_lasers_loop
+&1fa2 bd 00 0e LDA &0e00,X ; lasers_present
+&1fa5 f0 12    BEQ &1fb9 ; consider_next_laser
+&1fa7 bd 20 0e LDA &0e20,X ; lasers_screen_addresses_high
+&1faa 85 88    STA &88 ; screen_address_high
+&1fac bd 10 0e LDA &0e10,X ; lasers_screen_addresses_low
+&1faf 85 87    STA &87 ; screen_address_low
+&1fb1 a9 0f    LDA #&0f ; colour 3
+&1fb3 a0 00    LDY #&00
+&1fb5 51 87    EOR (&87),Y ; screen_address
+&1fb7 91 87    STA (&87),Y ; screen_address
+; consider_next_laser
+&1fb9 ca       DEX
+&1fba 10 e6    BPL &1fa2 ; plot_lasers_loop
+&1fbc 60       RTS
+
+; update_pellet
+&1fbd 8a       TXA
+&1fbe 48       PHA ; pellet_slot
+&1fbf bd 50 0f LDA &0f50,X ; pellets_present                        # &ff if no pellet in slot
+&1fc2 c9 ff    CMP #&ff
+&1fc4 f0 25    BEQ &1feb ; remove_pellet
+&1fc6 c9 00    CMP #&00                                             # Zero if pellet doesn't need unplotting
+&1fc8 f0 29    BEQ &1ff3 ; move_and_plot_pellet
+; unplot_pellet
+&1fca bd 48 0f LDA &0f48,X ; pellets_y
+&1fcd 29 fe    AND #&fe
+&1fcf a8       TAY
+&1fd0 bd 40 0f LDA &0f40,X ; pellets_x
+&1fd3 aa       TAX
+&1fd4 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&1fd7 a0 00    LDY #&00
+&1fd9 b1 82    LDA (&82),Y ; screen_address
+&1fdb 49 0f    EOR #&0f ; colour 3
+&1fdd 91 82    STA (&82),Y ; screen_address                         # Unplot pellet
+&1fdf 85 70    STA &70 ; pellet_collision                           # Unused variable
+&1fe1 c8       INY
+&1fe2 b1 82    LDA (&82),Y ; screen_address
+&1fe4 49 0f    EOR #&0f ; colour 3
+&1fe6 91 82    STA (&82),Y ; screen_address
+&1fe8 4c f3 1f JMP &1ff3 ; move_and_plot_pellet
+; remove_pellet
+&1feb 68       PLA ; pellet_slot
+&1fec aa       TAX
+&1fed a9 ff    LDA #&ff
+&1fef 9d 50 0f STA &0f50,X ; pellets_present                        # Set to &ff to indicate no pellet in slot
+&1ff2 60       RTS
+; move_and_plot_pellet
+&1ff3 68       PLA ; pellet_slot
+&1ff4 aa       TAX
+&1ff5 48       PHA ; pellet_slot
+&1ff6 a9 01    LDA #&01
+&1ff8 9d 50 0f STA &0f50,X ; pellets_present                        # Set to non-zero to indicate pellet needs unplotting
+&1ffb bd 48 0f LDA &0f48,X ; pellets_y
+&1ffe 38       SEC
+&1fff e9 06    SBC #&06                                             # Move pellet up six rows
+&2001 9d 48 0f STA &0f48,X ; pellets_y
+&2004 29 fe    AND #&fe
+&2006 a8       TAY
+&2007 c9 26    CMP #&26
+&2009 90 e0    BCC &1feb ; remove_pellete                           # Remove pellet at top of world
+&200b bd 40 0f LDA &0f40,X ; pellets_x
+&200e f0 db    BEQ &1feb ; remove_pellete
+&2010 aa       TAX
+&2011 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&2014 a0 00    LDY #&00
+&2016 b1 82    LDA (&82),Y ; screen_address
+&2018 49 0f    EOR #&0f ; colour 3
+&201a 91 82    STA (&82),Y ; screen_address                         # Plot pellet
+&201c c8       INY
+&201d b1 82    LDA (&82),Y ; screen_address
+&201f 49 0f    EOR #&0f ; colour 3
+&2021 91 82    STA (&82),Y ; screen_address
+&2023 68       PLA ; pellet_slot
+&2024 aa       TAX
+&2025 60       RTS
+
+; update_pellets
+&2026 a2 07    LDX #&07
+; update_pellets_loop
+&2028 20 bd 1f JSR &1fbd ; update_pellet
+&202b ca       DEX
+&202c 10 fa    BPL &2028 ; update_pellets_loop
+&202e 60       RTS
+
+; consider_adding_pellet
+&202f ad 29 2f LDA &2f29 ; mission
+&2032 f0 20    BEQ &2054 ; leave                                    # Shooters don't fire pellets on missions A or C
+&2034 c9 02    CMP #&02
+&2036 f0 1c    BEQ &2054 ; leave
+&2038 bd 50 0e LDA &0e50,X ; enemies_x
+&203b 18       CLC
+&203c 69 02    ADC #&02
+&203e 85 70    STA &70 ; x
+&2040 bd 70 0e LDA &0e70,X ; enemies_y
+&2043 85 71    STA &71 ; y
+&2045 8a       TXA
+&2046 48       PHA ; enemy_slot
+&2047 a2 07    LDX #&07
+; find_free_slot_for_pellet_loop
+&2049 bd 50 0f LDA &0f50,X ; pellets_present                        # &ff if no pellet in slot
+&204c 30 07    BMI &2055 ; add_pellet
+&204e ca       DEX
+&204f 10 f8    BPL &2049 ; find_free_slot_for_pellet_loop
+; leave_after_restoring_X
+&2051 68       PLA ; enemy_slot
+&2052 aa       TAX
+&2053 60       RTS                                                  # Unnecessary code
+; leave
+&2054 60       RTS
+; add_pellet
+&2055 a5 70    LDA &70 ; x
+&2057 9d 40 0f STA &0f40,X ; pellets_x
+&205a a5 71    LDA &71 ; y
+&205c 9d 48 0f STA &0f48,X ; pellets_y
+&205f a9 00    LDA #&00
+&2061 9d 50 0f STA &0f50,X ; pellets_present                        # Set to zero to indicate pellet present, but not plotted
+&2064 4c 51 20 JMP &2051 ; leave_after_restoring_X
+
+; animate_exploding_player
+&2067 a9 00    LDA #&00 ; SPRITE_PLAYER
+&2069 ae 19 2f LDX &2f19 ; player_x
+&206c ac 1a 2f LDY &2f1a ; player_y
+&206f 20 be 1c JSR &1cbe ; plot_sprite                              # Unplot player
+&2072 a2 1f    LDX #&1f
+; initialise_fragments_loop
+&2074 86 7f    STX &7f ; fragment
+&2076 a9 01    LDA #&01
+&2078 9d f0 0e STA &0ef0,X ; fragments_present                      # Set to non-zero to indicate fragment present
+&207b a9 00    LDA #&00
+&207d 9d 10 0f STA &0f10,X ; fragments_timer
+&2080 a5 7f    LDA &7f ; fragment
+&2082 29 0f    AND #&0f
+&2084 9d 90 0e STA &0e90,X ; fragment_state
+&2087 a5 7f    LDA &7f ; fragment
+&2089 29 10    AND #&10
+&208b 4a       LSR A
+&208c 4a       LSR A
+&208d 85 7f    STA &7f ; speed                                      # Half the fragments have 0, other half have 4
+&208f ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&2092 0a       ASL A
+&2093 0a       ASL A
+&2094 0a       ASL A
+&2095 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&2098 29 03    AND #&03                                             # Get a random number between 0 and 3
+&209a 05 7f    ORA &7f ; speed
+&209c 18       CLC
+&209d 69 01    ADC #&01
+&209f 9d b0 0e STA &0eb0,X ; fragments_speed                        # Speed is 1 - 4 or 5 - 8
+&20a2 ad 19 2f LDA &2f19 ; player_x
+&20a5 18       CLC
+&20a6 69 04    ADC #&04
+&20a8 0a       ASL A
+&20a9 9d 50 0e STA &0e50,X ; fragments_x
+&20ac ad 1a 2f LDA &2f1a ; player_y
+&20af 18       CLC
+&20b0 69 08    ADC #&08
+&20b2 9d 70 0e STA &0e70,X ; fragments_y
+&20b5 20 15 21 JSR &2115 ; plot_explosion_fragment                  # Plot fragment
+&20b8 ca       DEX
+&20b9 10 b9    BPL &2074 ; initialise_fragments_loop
+; animate_exploding_player_loop
+&20bb a2 6e    LDX #&6e
+&20bd 8a       TXA
+&20be 48       PHA ; count
+&20bf 20 19 1b JSR &1b19 ; wait_for_vsync
+&20c2 58       CLI
+&20c3 a2 1f    LDX #&1f
+; update_fragments_loop
+&20c5 bd f0 0e LDA &0ef0,X ; fragments_present
+&20c8 f0 42    BEQ &210c ; consider_next_fragment
+&20ca fe 10 0f INC &0f10,X ; fragments_timer
+&20cd bd 10 0f LDA &0f10,X ; fragments_timer
+&20d0 dd b0 0e CMP &0eb0,X ; fragments_speed
+&20d3 d0 37    BNE &210c ; consider_next_fragment
+&20d5 a9 00    LDA #&00
+&20d7 9d 10 0f STA &0f10,X ; fragments_timer
+&20da 20 15 21 JSR &2115 ; plot_explosion_fragment                  # Unplot fragment
+&20dd bd 90 0e LDA &0e90,X ; fragment_state
+&20e0 a8       TAY
+&20e1 b9 0f 2e LDA &2e0f,Y ; fragment_x_velocities
+&20e4 18       CLC
+&20e5 7d 50 0e ADC &0e50,X ; fragments_x
+&20e8 c9 a0    CMP #&a0
+&20ea b0 1b    BCS &2107 ; remove_fragment                          # Remove fragment at left or right edge of screen
+&20ec 9d 50 0e STA &0e50,X ; fragments_x
+&20ef bd 90 0e LDA &0e90,X ; fragment_state
+&20f2 a8       TAY
+&20f3 b9 1f 2e LDA &2e1f,Y ; fragment_y_velocities
+&20f6 18       CLC
+&20f7 7d 70 0e ADC &0e70,X ; fragments_y
+&20fa c9 26    CMP #&26
+&20fc 90 09    BCC &2107 ; remove_fragment                          # Remove fragment at top or bottom edge of world
+&20fe 9d 70 0e STA &0e70,X ; fragments_y
+&2101 20 15 21 JSR &2115 ; plot_explosion_fragment                  # Plot fragment
+&2104 4c 0c 21 JMP &210c ; consider_next_fragment
+; remove_fragment
+&2107 a9 00    LDA #&00
+&2109 9d f0 0e STA &0ef0,X ; fragments_present                      # Set to zero to indicate no fragment in slot
+; consider_next_fragment
+&210c ca       DEX
+&210d 10 b6    BPL &20c5 ; update_fragments_loop
+&210f 68       PLA ; count
+&2110 aa       TAX
+&2111 ca       DEX
+&2112 d0 a9    BNE &20bd ; animate_exploding_player_loop
+&2114 60       RTS
+
+; plot_explosion_fragment
+&2115 8a       TXA
+&2116 48       PHA ; fragment_slot
+&2117 bd 70 0e LDA &0e70,X ; fragments_y
+&211a a8       TAY
+&211b bd 50 0e LDA &0e50,X ; fragments_x
+&211e 4a       LSR A
+&211f aa       TAX
+&2120 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&2123 a9 3f    LDA #&3f ; colour 7
+&2125 a0 00    LDY #&00
+&2127 51 82    EOR (&82),Y ; screen_address
+&2129 91 82    STA (&82),Y ; screen_address
+&212b 20 79 1b JSR &1b79 ; move_down_a_row
+&212e a9 3f    LDA #&3f ; colour 7
+&2130 a0 00    LDY #&00
+&2132 51 82    EOR (&82),Y ; screen_address
+&2134 91 82    STA (&82),Y ; screen_address
+&2136 20 79 1b JSR &1b79 ; move_down_a_row
+&2139 a9 3f    LDA #&3f ; colour 7
+&213b a0 00    LDY #&00
+&213d 51 82    EOR (&82),Y ; screen_address
+&213f 91 82    STA (&82),Y ; screen_address
+&2141 20 79 1b JSR &1b79 ; move_down_a_row
+&2144 a9 3f    LDA #&3f ; colour 7
+&2146 a0 00    LDY #&00
+&2148 51 82    EOR (&82),Y ; screen_address
+&214a 91 82    STA (&82),Y ; screen_address
+&214c 68       PLA ; fragment_slot
+&214d aa       TAX
+&214e 60       RTS
+
+; enemy_x
+&214f 00
+
+; enemy_y
+&2150 00
+
+; enemy_type
+&2151 00
+
+; add_enemy
+&2152 8e 4f 21 STX &214f ; enemy_x
+&2155 8c 50 21 STY &2150 ; enemy_y
+&2158 8d 51 21 STA &2151 ; enemy_type
+&215b a2 1f    LDX #&1f ; ENEMIES_LAST
+; find_free_slot_for_enemy_loop
+&215d bd 90 0e LDA &0e90,X ; enemies_type                           # Zero if no enemy in slot
+&2160 c9 00    CMP #&00 ; ENEMY_NONE
+&2162 d0 28    BNE &218c ; consider_next_slot
+&2164 ad 4f 21 LDA &214f ; enemy_x
+&2167 9d 50 0e STA &0e50,X ; enemies_x
+&216a ad 50 21 LDA &2150 ; enemy_y
+&216d 9d 70 0e STA &0e70,X ; enemies_y
+&2170 a9 00    LDA #&00
+&2172 9d b0 0e STA &0eb0,X ; enemies_flags_or_timer
+&2175 ad 51 21 LDA &2151 ; enemy_type
+&2178 9d 90 0e STA &0e90,X ; enemies_type
+&217b a8       TAY
+&217c b9 b3 2e LDA &2eb3,Y ; enemy_type_heights
+&217f 9d 10 0f STA &0f10,X ; enemies_height
+&2182 b9 a4 2e LDA &2ea4,Y ; enemy_type_widths
+&2185 9d f0 0e STA &0ef0,X ; enemies_width
+&2188 20 90 21 JSR &2190 ; plot_enemy                               # Plot enemy
+&218b 60       RTS
+; consider_next_slot
+&218c ca       DEX
+&218d 10 ce    BPL &215d ; find_free_slot_for_enemy_loop
+&218f 60       RTS
+
+; plot_enemy
+&2190 bc 90 0e LDY &0e90,X ; enemies_type                           # Zero if no enemy in slot
+&2193 d0 01    BNE &2196 ; is_present
+&2195 60       RTS
+; is_present
+&2196 8a       TXA
+&2197 48       PHA ; enemy_slot
+&2198 b9 95 2e LDA &2e95,Y ; enemy_type_sprites
+&219b 48       PHA ; sprite
+&219c bc 70 0e LDY &0e70,X ; enemies_y
+&219f bd 50 0e LDA &0e50,X ; enemies_x
+&21a2 aa       TAX
+&21a3 68       PLA ; sprite
+&21a4 20 be 1c JSR &1cbe ; plot_sprite
+&21a7 68       PLA ; enemy_slot
+&21a8 aa       TAX
+&21a9 60       RTS
+
+; initialise_envelopes_and_auto_repeat
+&21aa a9 08    LDA #&08 ; Define a sound envelope
+&21ac a2 3b    LDX #&3b ; &2f3b = envelope_1
+&21ae a0 2f    LDY #&2f
+&21b0 20 f1 ff JSR &fff1 ; OSWORD
+&21b3 a9 08    LDA #&08 ; Define a sound envelope
+&21b5 a2 49    LDX #&49 ; &2f49 = envelope_2
+&21b7 a0 2f    LDY #&2f
+&21b9 20 f1 ff JSR &fff1 ; OSWORD
+&21bc a9 08    LDA #&08 ; Define a sound envelope
+&21be a2 57    LDX #&57 ; &2f57 = envelope_3
+&21c0 a0 2f    LDY #&2f
+&21c2 20 f1 ff JSR &fff1 ; OSWORD
+&21c5 a9 08    LDA #&08 ; Define a sound envelope
+&21c7 a2 65    LDX #&65 ; &2f65 = envelope_4
+&21c9 a0 2f    LDY #&2f
+&21cb 20 f1 ff JSR &fff1 ; OSWORD
+&21ce a0 00    LDY #&00
+&21d0 a9 0b    LDA #&0b ; Set auto-repeat delay
+&21d2 a2 00    LDX #&00 ; disable auto-repeat
+&21d4 20 f4 ff JSR &fff4 ; OSBYTE
+&21d7 a0 00    LDY #&00
+&21d9 a9 0c    LDA #&0c ; Set auto-repeat period
+&21db a2 00    LDX #&00 ; use default
+&21dd 20 f4 ff JSR &fff4 ; OSBYTE
+&21e0 60       RTS
+
+; setup_text
+&21e1 16 02                                           ; MODE 2
+&21e3 13 02 01 00 00 00 00                            ; Set colour 2 to red
+&21ea 13 0f 02 00 00 00 05                            ; Set colour 15 to green
+&21f1 12 00 03                                        ; GCOL 0, 3
+&21f4 19 04 00 00 70 03                               ; MOVE &0000, &0370
+&21fa 19 05 f8 04 70 03                               ; DRAW &04f8, &0370               # Plot line under status section
+&2200 12 00 0f                                        ; GCOL 0, 15
+&2203 19 04 00 00 a0 03                               ; MOVE &0000, &03a0
+&2209 19 04 00 00 bc 03                               ; MOVE &0000, &03bc
+&220f 19 55 80 04 a0 03                               ; PLOT TRIANGLE &0480, &03a0      # Plot full fuel bar
+&2215 19 55 80 04 bc 03                               ; PLOT TRIANGLE &0480, &03bc
+&221b ff 
+
+; joystick_fire
+&221c 00
+
+; joystick_x
+&221d 00
+
+; joystick_y
+&221e 00
+
+; landscape_pixel_values
+&221f 0f 0f 0c 0c ; &00 ground  0  : 33 33 22 22
+&2223 05 0f 0e 0c ; &01 ground -2  ; 03 33 32 22
+&2227 05 05 0e 0e ; &02 ground -4  ; 03 03 32 32
+&222b 0a 0f 0d 0c ; &03 ground +2  ; 30 33 23 22
+&222f 0a 0a 0d 0d ; &04 ground +4  ; 30 30 23 23
+&2233 0f 0f 0c 0c ; &05 (unused)   ; 33 33 22 22
+&2237 0f 0f 0c 0c ; &06 (unused)   ; 33 33 22 22
+&223b 0f 0f 0c 0c ; &07 (unused)   ; 33 33 22 22
+&223f 0c 0c 0f 0f ; &08 ceiling  0 ; 33 33 22 22
+&2243 0c 0e 0f 05 ; &09 ceiling +2 ; 22 32 33 03
+&2247 0e 0e 05 05 ; &0a ceiling +4 ; 32 32 03 03
+&224b 0c 0d 0f 0a ; &0b ceiling -2 ; 30 33 23 22
+&224f 0d 0d 0a 0a ; &0c ceiling -4 ; 23 23 30 30
+&2253 0c 0c 0f 0f ; &0d (unused)   ; 33 33 22 22
+&2257 0c 0c 0f 0f ; &0e (unused)   ; 33 33 22 22
+&225b 0c 0c 0f 0f ; &0f (unused)   ; 33 33 22 22
+
+; height_change_table
+;      0  1  2  3  4  5  6  7                                       # Ground (5 - 7 unused)
+&225f 00 fe fc 02 04 00 00 00
+;      8  9  a  b  c  d  e  f                                       # Ceiling (d - f unused)
+&2267 00 02 04 fe fc 00 00 00
+
+; landscape_sections_data                                           # + is towards bottom of screen, - is towards top
+&226f 00 01 00 00 03 00 00 00 ; &00 :    -2       +2           LANDSCAPE_FLAT
+&2277 00 01 00 01 01 01 00 01 ; &01 :    -2    -2 -2 -2    -2  LANDSCAPE_SLOPE_UP
+&227f 01 02 02 02 02 02 01 01 ; &02 : -2 -4 -4 -4 -4 -4 -2 -2  LANDSCAPE_STEEP_SLOPE_UP
+&2287 03 04 04 04 03 04 04 03 ; &03 : +2 +4 +4 +4 +2 +4 +4 +2  LANDSCAPE_STEEP_SLOPE_DOWN
+&228f 00 03 00 03 03 03 00 03 ; &04 :    +2    +2 +2 +2    +2  LANDSCAPE_SLOPE_DOWN
+&2297 03 03 00 03 01 00 01 01 ; &05 : +2 +2    +2 -2    -2 -2  (unused)
+&229f 03 01 00 00 00 00 00 00 ; &06 : +2 -2                    LANDSCAPE_ENEMY
+&22a7 01 01 00 03 03 03 01 00 ; &07 : -2 -2    +2 +2 +2 -2     (unused)
+&22af 00 00 01 00 00 03 00 00 ; &08 :       -2       +2        LANDSCAPE_FUELLING_STATION
+&22b7 00 00 01 00 00 03 00 00 ; &09 :       -2       +2        LANDSCAPE_SATELLITE
+&22bf 00 00 01 00 00 03 00 00 ; &0a :       -2       +2        LANDSCAPE_ALIEN
+&22c7 00 00 01 00 00 03 00 00 ; &0b :       -2       +2        (unused)
+&22cf 00 00 01 00 00 03 00 00 ; &0c :       -2       +2        (unused)
+&22d7 00 00 01 00 00 03 00 00 ; &0d :       -2       +2        (unused)
+&22df 00 00 01 00 00 03 00 00 ; &0e :       -2       +2        (unused)
+&22e7 00 00 01 00 00 03 00 00 ; &0f :       -2       +2        LANDSCAPE_END
+&22ef 00 00 01 00 00 03 00 00 ; &10 :       -2       +2        (unused)
+
+; palette_update_cooldown
+&22f7 02
+
+; previous_ten_thousands
+&22f8 00
+
+; ten_thousands
+&22f9 00
+
+; start_game
+&22fa a9 46    LDA #&46                                             # Unnecessary code
+&22fc 8d 20 2f STA &2f20 ; player_fuel
+&22ff a9 03    LDA #&03                                             # Player starts game with three lives
+&2301 8d 24 2f STA &2f24 ; player_lives
+&2304 20 aa 21 JSR &21aa ; initialise_envelopes_and_auto_repeat
+&2307 a0 00    LDY #&00
+&2309 a9 0b    LDA #&0b ; Set auto-repeat delay
+&230b a2 00    LDX #&00 ; disable auto-repeat
+&230d 20 f4 ff JSR &fff4 ; OSBYTE
+&2310 a0 00    LDY #&00
+&2312 a9 0f    LDA #&0f ; Flush all buffers
+&2314 a2 00    LDX #&00
+&2316 20 f4 ff JSR &fff4 ; OSBYTE
+&2319 ad 06 0c LDA &0c06 ; selected_stage
+&231c 0a       ASL A
+&231d 8d 27 2f STA &2f27 ; stage
+&2320 ad 20 0c LDA &0c20 ; selected_mission
+&2323 8d 29 2f STA &2f29 ; mission
+&2326 20 61 1c JSR &1c61 ; initialise_score
+&2329 a9 00    LDA #&00
+&232b 8d f9 22 STA &22f9 ; ten_thousands
+; start_life
+&232e a9 46    LDA #&46                                             # Player starts life with full fuel
+&2330 8d 20 2f STA &2f20 ; player_fuel
+&2333 ae 29 2f LDX &2f29 ; mission
+&2336 bd 2b 2f LDA &2f2b,X ; maximum_fuel_drain_cooldown_per_mission
+&2339 8d 2a 2f STA &2f2a ; maximum_fuel_drain_cooldown
+&233c a2 1f    LDX #&1f ; ENEMIES_LAST
+&233e a9 00    LDA #&00 ; ENEMY_NONE
+; initialise_enemies_loop
+&2340 9d 90 0e STA &0e90,X ; enemies_type                           # Set to zero to indicate no enemy in slot
+&2343 ca       DEX
+&2344 10 fa    BPL &2340 ; initialise_enemies_loop
+&2346 a9 00    LDA #&00 ; &3000 = screen memory
+&2348 85 80    STA &80 ; screen_start_address_low
+&234a a9 30    LDA #&30
+&234c 85 81    STA &81 ; screen_start_address_high
+&234e a0 01    LDY #&01 ; disable interlacing
+&2350 a9 90    LDA #&90 ; Set TV offset and interlacing
+&2352 a2 ff    LDX #&ff
+&2354 20 f4 ff JSR &fff4 ; OSBYTE
+&2357 a9 e1    LDA #&e1 ; &21e1 = setup_text
+&2359 85 60    STA &60 ; text_address_low
+&235b a9 21    LDA #&21
+&235d 85 61    STA &61 ; text_address_high
+&235f 20 1b 19 JSR &191b ; write_text                               # Change to MODE 2 and plot status section
+&2362 20 eb 1a JSR &1aeb ; set_crtc_start_address
+&2365 20 2b 1a JSR &1a2b ; plot_score
+&2368 a9 e6    LDA #&e6
+&236a 8d 16 2f STA &2f16 ; ground_height
+&236d a9 26    LDA #&26
+&236f 85 65    STA &65 ; ceiling_height
+&2371 a9 00    LDA #&00
+&2373 8d 25 2f STA &2f25 ; player_exploding                         # Set to zero to indicate player not exploding
+&2376 a9 05    LDA #&05
+&2378 8d 19 2f STA &2f19 ; player_x
+&237b a9 58    LDA #&58
+&237d 8d 1a 2f STA &2f1a ; player_y
+&2380 20 68 1d JSR &1d68 ; plot_player                              # Plot player
+&2383 20 a9 1e JSR &1ea9 ; remove_lasers_pellets_and_bombs
+&2386 a9 01    LDA #&01
+&2388 8d 1e 2f STA &2f1e ; suppress_firing                          # Set to non-zero to suppress firing
+&238b 8d 1f 2f STA &2f1f ; suppress_bombing                         # Set to non-zero to suppress bombing
+&238e ad 27 2f LDA &2f27 ; stage
+&2391 20 ee 27 JSR &27ee ; initialise_stage
+&2394 a9 00    LDA #&00
+&2396 85 60    STA &60 ; landscape_x_fraction
+&2398 85 61    STA &61 ; ground_section_offset, artificial_landscape_ground_height
+&239a a2 1f    LDX #&1f                                             # Unnecessary code
+&239c a9 00    LDA #&00                                             # Unnecessary code
+&239e 20 bc 23 JSR &23bc ; main_game_loop
+&23a1 ce 24 2f DEC &2f24 ; player_lives
+&23a4 d0 88    BNE &232e ; start_life
+&23a6 a0 00    LDY #&00
+&23a8 a9 0f    LDA #&0f ; Flush all buffers
+&23aa a2 00    LDX #&00
+&23ac 20 f4 ff JSR &fff4 ; OSBYTE
+&23af ad 22 2f LDA &2f22 ; score
+&23b2 8d 02 0c STA &0c02 ; final_score
+&23b5 ad 23 2f LDA &2f23 ; score + 1
+&23b8 8d 03 0c STA &0c03 ; final_score + 1
+&23bb 60       RTS
+
+; main_game_loop
+&23bc 20 c2 29 JSR &29c2 ; update_enemies
+&23bf 20 01 25 JSR &2501 ; update_game
+&23c2 ad 25 2f LDA &2f25 ; player_exploding                         # Non-zero if player is exploding
+&23c5 f0 03    BEQ &23ca ; not_exploding
+&23c7 4c 91 24 JMP &2491 ; explode_player
+; not_exploding
+&23ca 20 19 1b JSR &1b19 ; wait_for_vsync
+&23cd a2 1f    LDX #&1f ; ENEMIES_LAST                              # Update odd enemies
+&23cf 20 79 2a JSR &2a79 ; update_active_enemies
+&23d2 20 03 1f JSR &1f03 ; update_lasers
+&23d5 20 c9 19 JSR &19c9 ; check_for_player_movement
+&23d8 20 c2 24 JSR &24c2 ; check_for_player_attacks
+&23db 20 4b 1c JSR &1c4b ; consider_draining_fuel
+&23de 20 bf 1d JSR &1dbf ; consider_updating_palette
+&23e1 20 09 19 JSR &1909 ; check_for_escape
+&23e4 20 26 20 JSR &2026 ; update_pellets
+&23e7 58       CLI
+&23e8 a2 0f    LDX #&0f                                             # Set colour 15 to green
+&23ea a0 02    LDY #&02
+&23ec 20 3b 1e JSR &1e3b ; set_palette
+&23ef ad 28 2f LDA &2f28 ; fuelling_station_x
+&23f2 f0 44    BEQ &2438 ; skip_fuelling                            # Is the fuelling station present?
+&23f4 ad 1a 2f LDA &2f1a ; player_y
+&23f7 c9 50    CMP #&50
+&23f9 90 3d    BCC &2438 ; skip_fuelling                            # If so, is the player in the fuelling station?
+&23fb c9 76    CMP #&76
+&23fd b0 39    BCS &2438 ; skip_fuelling
+&23ff ad 28 2f LDA &2f28 ; fuelling_station_x
+&2402 18       CLC
+&2403 69 08    ADC #&08
+&2405 cd 19 2f CMP &2f19 ; player_x
+&2408 90 2e    BCC &2438 ; skip_fuelling
+&240a ad 19 2f LDA &2f19 ; player_x
+&240d 18       CLC
+&240e 69 06    ADC #&06
+&2410 cd 28 2f CMP &2f28 ; fuelling_station_x
+&2413 90 23    BCC &2438 ; skip_fuelling
+&2415 a2 0f    LDX #&0f                                             # Set colour 15 to flashing yellow/blue
+&2417 a0 0b    LDY #&0b
+&2419 20 3b 1e JSR &1e3b ; set_palette
+&241c 20 05 1c JSR &1c05 ; plot_fuel
+&241f ee 20 2f INC &2f20 ; player_fuel                              # If so, increase fuel
+&2422 ad 20 2f LDA &2f20 ; player_fuel
+&2425 c9 45    CMP #&45
+&2427 d0 03    BNE &242c ; not_fully_fuelled
+&2429 20 4f 2b JSR &2b4f ; play_sound_for_fully_fuelled
+; not_fully_fuelled
+&242c ad 20 2f LDA &2f20 ; player_fuel
+&242f c9 47    CMP #&47
+&2431 d0 05    BNE &2438 ; skip_fuelling
+&2433 a9 46    LDA #&46
+&2435 8d 20 2f STA &2f20 ; player_fuel
+; skip_fuelling
+&2438 ad 29 2f LDA &2f29 ; mission
+&243b c9 02    CMP #&02
+&243d 90 2a    BCC &2469 ; skip_double_speed                        # On mission C onwards, game runs at double speed
+&243f 20 b9 1b JSR &1bb9 ; wipe_column
+&2442 a2 0c    LDX #&0c ; &0c7b = 4 * &280 + 79 * 8 + 3
+&2444 a0 7b    LDY #&7b
+&2446 20 3e 1b JSR &1b3e ; calculate_screen_address_from_offset
+&2449 a0 00    LDY #&00
+&244b a9 0f    LDA #&0f ; colour 3
+&244d 91 82    STA (&82),Y ; screen_address                         # Redraw right edge of status section bar
+&244f 20 05 1c JSR &1c05 ; plot_fuel
+&2452 20 31 1c JSR &1c31 ; copy_score_buffer_to_screen
+&2455 20 c2 29 JSR &29c2 ; update_enemies
+&2458 20 01 25 JSR &2501 ; update_game
+&245b 20 c9 19 JSR &19c9 ; check_for_player_movement
+&245e 20 c2 24 JSR &24c2 ; check_for_player_attacks
+&2461 ad 25 2f LDA &2f25 ; player_exploding                         # Non-zero if player is exploding
+&2464 f0 03    BEQ &2469 ; not_exploding
+&2466 4c 91 24 JMP &2491 ; explode_player
+; not_exploding
+; skip_double_speed
+&2469 20 19 1b JSR &1b19 ; wait_for_vsync
+&246c a2 1e    LDX #&1e ; ENEMIES_LAST - 1                          # Update even enemies
+&246e 20 79 2a JSR &2a79 ; update_active_enemies
+&2471 20 03 1f JSR &1f03 ; update_lasers
+&2474 20 26 20 JSR &2026 ; update_pellets
+&2477 20 b9 1b JSR &1bb9 ; wipe_column
+&247a a2 0c    LDX #&0c ; &0c7b = 4 * &280 + 79 * 8 + 3
+&247c a0 7b    LDY #&7b
+&247e 20 3e 1b JSR &1b3e ; calculate_screen_address_from_offset
+&2481 a0 00    LDY #&00
+&2483 a9 0f    LDA #&0f ; colour 3
+&2485 91 82    STA (&82),Y ; screen_address                         # Redraw right edge of status section bar
+&2487 20 31 1c JSR &1c31 ; copy_score_buffer_to_screen
+&248a 20 05 1c JSR &1c05 ; plot_fuel
+&248d 58       CLI
+&248e 4c bc 23 JMP &23bc ; main_game_loop
+
+; explode_player
+&2491 a9 08    LDA #&08 ; Define a sound envelope
+&2493 a2 65    LDX #&65 ; &2f65 = envelope_4
+&2495 a0 2f    LDY #&2f
+&2497 20 f1 ff JSR &fff1 ; OSWORD
+&249a ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&249d d0 09    BNE &24a8 ; skip_sound
+&249f a2 a7    LDX #&a7 ; &2fa7 = sound_3
+&24a1 a0 2f    LDY #&2f
+&24a3 a9 07    LDA #&07 ; Generate a sound
+&24a5 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for player explosion
+; skip_sound
+&24a8 ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&24ab d0 09    BNE &24b6 ; skip_sound
+&24ad a2 af    LDX #&af ; &2faf = sound_4
+&24af a0 2f    LDY #&2f
+&24b1 a9 07    LDA #&07 ; Generate a sound
+&24b3 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for player explosion
+; skip_sound
+&24b6 a0 01    LDY #&01
+&24b8 a9 0f    LDA #&0f ; Flush input buffer
+&24ba a2 01    LDX #&01
+&24bc 20 f4 ff JSR &fff4 ; OSBYTE
+&24bf 4c 67 20 JMP &2067 ; animate_exploding_player
+
+; check_for_player_attacks
+&24c2 a5 05    LDA &05 ; bomb_pressed
+&24c4 30 08    BMI &24ce ; consider_bombing
+&24c6 a9 00    LDA #&00
+&24c8 8d 1f 2f STA &2f1f ; suppress_bombing                         # Set to zero to allow bombing
+&24cb 4c db 24 JMP &24db ; skip_bombing
+; consider_bombing
+&24ce ad 1f 2f LDA &2f1f ; suppress_bombing                         # Non-zero if bombing suppressed
+&24d1 d0 08    BNE &24db ; skip_bombing
+&24d3 20 67 29 JSR &2967 ; add_bomb
+&24d6 a9 01    LDA #&01
+&24d8 8d 1f 2f STA &2f1f ; suppress_bombing                         # Set to non-zero to suppress bombing
+; skip_bombing
+&24db a5 04    LDA &04 ; fire_pressed
+&24dd 30 06    BMI &24e5 ; consider_firing
+&24df a9 00    LDA #&00
+&24e1 8d 1e 2f STA &2f1e ; suppress_firing                          # Set to zero to allow firing
+&24e4 60       RTS
+; consider_firing
+&24e5 ad 1e 2f LDA &2f1e ; suppress_firing                          # Non-zero if firing suppressed
+&24e8 d0 16    BNE &2500 ; leave
+&24ea a9 01    LDA #&01
+&24ec 8d 1e 2f STA &2f1e ; suppress_firing                          # Set to non-zero to suppress firing
+&24ef 20 8f 1f JSR &1f8f ; add_laser_by_player
+&24f2 ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&24f5 d0 09    BNE &2500 ; leave
+&24f7 a2 8f    LDX #&8f ; &2f8f = sound_0
+&24f9 a0 2f    LDY #&2f
+&24fb a9 07    LDA #&07 ; Generate a sound
+&24fd 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for firing
+; leave
+&2500 60       RTS
+
+; update_game
+&2501 20 22 1b JSR &1b22 ; scroll_screen_right
+&2504 20 03 1f JSR &1f03 ; update_lasers
+&2507 20 c7 28 JSR &28c7 ; update_bombs
+&250a 20 73 1d JSR &1d73 ; replot_player
+&250d ae 27 2f LDX &2f27 ; stage
+&2510 bd 83 2e LDA &2e83,X ; stages_with_artificial_landscapes
+&2513 f0 04    BEQ &2519 ; update_organic_landscape
+&2515 20 8b 26 JSR &268b ; update_artificial_landscape
+&2518 60       RTS
+; update_organic_landscape
+&2519 a6 61    LDX &61 ; ground_section_offset
+&251b bd 6f 22 LDA &226f,X ; landscape_sections_data
+&251e 85 72    STA &72 ; height_change_offset
+&2520 ad 16 2f LDA &2f16 ; ground_height
+&2523 85 70    STA &70 ; edge_row
+&2525 a9 00    LDA #&00 ; colour 0
+&2527 85 73    STA &73 ; above_fill_pixel_value
+&2529 a9 0c    LDA #&0c ; colour 2
+&252b 85 74    STA &74 ; below_fill_pixel_value
+&252d 20 80 27 JSR &2780 ; plot_organic_landscape_column            # Plot ground
+&2530 20 a9 1b JSR &1ba9 ; change_ground_height
+&2533 ae 27 2f LDX &2f27 ; stage
+&2536 bd 47 2e LDA &2e47,X ; stages_with_ceiling                    # If stage 2,
+&2539 f0 2b    BEQ &2566 ; skip_ceiling
+&253b a2 4f    LDX #&4f
+&253d a0 23    LDY #&23
+&253f 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&2542 a9 23    LDA #&23
+&2544 85 71    STA &71 ; row
+&2546 a5 65    LDA &65 ; ceiling_height
+&2548 85 70    STA &70 ; edge_row
+&254a a6 66    LDX &66 ; ceiling_section_offset
+&254c bd 6f 22 LDA &226f,X ; landscape_sections_data
+&254f 18       CLC
+&2550 69 08    ADC #&08
+&2552 85 72    STA &72 ; height_change_offset
+&2554 a9 0c    LDA #&0c ; colour 2
+&2556 85 73    STA &73 ; above_fill_pixel_value
+&2558 a9 00    LDA #&00 ; colour 0
+&255a 85 74    STA &74 ; below_fill_pixel_value
+&255c a9 00    LDA #&00 ; colour 0
+&255e 20 8f 27 JSR &278f ; plot_organic_landscape_column_loop       # Plot ceiling
+&2561 20 e0 27 JSR &27e0 ; change_ceiling_height
+&2564 e6 66    INC &66 ; ceiling_section_offset
+; skip_ceiling
+&2566 e6 60    INC &60 ; landscape_x_fraction
+&2568 e6 61    INC &61 ; ground_section_offset
+&256a a5 60    LDA &60 ; landscape_x_fraction
+&256c c9 08    CMP #&08
+&256e 58       CLI
+&256f 90 4e    BCC &25bf ; leave                                    # Is this the start of a new landscape section?
+&2571 a9 00    LDA #&00
+&2573 85 60    STA &60 ; landscape_x_fraction
+&2575 4c 47 26 JMP &2647 ; consider_adding_meteor                   # Continues to add_landscape_details
+
+; add_landscape_details
+&2578 a5 63    LDA &63 ; ground_section_type
+&257a c9 06    CMP #&06 ; LANDSCAPE_ENEMY
+&257c f0 45    BEQ &25c3 ; add_random_landscape_enemy
+&257e c9 08    CMP #&08 ; LANDSCAPE_FUELLING_STATION
+&2580 f0 3e    BEQ &25c0 ; to_add_fuelling_station_or_satellite_or_alien
+&2582 c9 09    CMP #&09 ; LANDSCAPE_SATELLITE
+&2584 f0 3a    BEQ &25c0 ; to_add_fuelling_station_or_satellite_or_alien
+&2586 c9 0a    CMP #&0a ; LANDSCAPE_ALIEN
+&2588 f0 36    BEQ &25c0 ; to_add_fuelling_station_or_satellite_or_alien
+; consider_next_landscape_section
+&258a a4 62    LDY &62 ; landscape_data_offset
+&258c b1 67    LDA (&67),Y ; landscape_data_address                 # Get byte of landscape data for next section
+&258e 29 0f    AND #&0f
+&2590 85 63    STA &63 ; ground_section_type                        # Low nibble sets type of ground
+&2592 b1 67    LDA (&67),Y ; landscape_data_address                 # Unnecessary code
+&2594 29 0f    AND #&0f
+&2596 c9 0f    CMP #&0f
+&2598 d0 15    BNE &25af ; not_end_of_stage                         # &f indicates end of stage
+&259a ee 27 2f INC &2f27 ; stage
+&259d a9 e6    LDA #&e6
+&259f 8d 16 2f STA &2f16 ; ground_height
+&25a2 a9 26    LDA #&26
+&25a4 85 65    STA &65 ; ceiling_height
+&25a6 ad 27 2f LDA &2f27 ; stage
+&25a9 20 ee 27 JSR &27ee ; initialise_stage
+&25ac 4c bf 25 JMP &25bf ; leave
+; not_end_of_stage
+&25af 0a       ASL A
+&25b0 0a       ASL A
+&25b1 0a       ASL A
+&25b2 85 61    STA &61 ; ground_section_offset
+&25b4 a4 62    LDY &62 ; landscape_data_offset
+&25b6 b1 67    LDA (&67),Y ; landscape_data_address
+&25b8 29 f0    AND #&f0                                             # Top nibble sets type of ceiling
+&25ba 4a       LSR A
+&25bb 85 66    STA &66 ; ceiling_section_offset
+&25bd e6 62    INC &62 ; landscape_data_offset
+; leave
+&25bf 60       RTS
+
+; to_add_fuelling_station_or_satellite_or_alien
+&25c0 4c e1 25 JMP &25e1 ; add_fuelling_station_or_satellite
+
+; add_random_landscape_enemy
+&25c3 ad 16 2f LDA &2f16 ; ground_height
+&25c6 38       SEC
+&25c7 e9 10    SBC #&10                                             # Put enemy above landscape
+&25c9 a8       TAY
+&25ca ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&25cd 0a       ASL A
+&25ce 0a       ASL A
+&25cf 0a       ASL A
+&25d0 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&25d3 29 07    AND #&07                                             # Add random enemy
+&25d5 aa       TAX
+&25d6 bd eb 2e LDA &2eeb,X ; landscape_enemies
+&25d9 a2 4c    LDX #&4c                                             # at right of screen
+&25db 20 52 21 JSR &2152 ; add_enemy
+&25de 4c 8a 25 JMP &258a ; consider_next_landscape_section
+
+; add_fuelling_station_or_satellite_or_alien
+&25e1 c9 08    CMP #&08 ; LANDSCAPE_FUELLING_STATION
+&25e3 d0 1a    BNE &25ff ; not_fuelling_station
+; add_fuelling_station
+&25e5 a9 06    LDA #&06 ; SPRITE_FUELLING_STATION_TOP
+&25e7 a2 44    LDX #&44                                             # Use fixed position at right of screen for fuelling station
+&25e9 a0 4e    LDY #&4e
+&25eb 20 be 1c JSR &1cbe ; plot_sprite
+&25ee a9 07    LDA #&07 ; SPRITE_FUELLING_STATION_BOTTOM
+&25f0 a2 44    LDX #&44
+&25f2 a0 76    LDY #&76
+&25f4 20 be 1c JSR &1cbe ; plot_sprite
+&25f7 a9 44    LDA #&44
+&25f9 8d 28 2f STA &2f28 ; fuelling_station_x
+&25fc 4c 44 26 JMP &2644 ; to_consider_next_landscape_section
+; not_fuelling_station
+&25ff c9 09    CMP #&09 ; LANDSCAPE_SATELLITE
+&2601 d0 27    BNE &262a ; not_satellite
+; add_satellite
+&2603 ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&2606 d0 09    BNE &2611 ; skip_sound
+&2608 a2 bf    LDX #&bf ; &2fbf = sound_6
+&260a a0 2f    LDY #&2f
+&260c a9 07    LDA #&07 ; Generate a sound
+&260e 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for satellite appearing
+; skip_sound
+&2611 ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&2614 0a       ASL A
+&2615 0a       ASL A
+&2616 0a       ASL A
+&2617 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&261a 29 7f    AND #&7f
+&261c 18       CLC
+&261d 69 32    ADC #&32
+&261f a8       TAY                                                  # Use random y position for satellite
+&2620 a9 04    LDA #&04 ; SPRITE_SATELLITE
+&2622 a2 4c    LDX #&4c                                             # at right of screen
+&2624 20 be 1c JSR &1cbe ; plot_sprite
+&2627 4c 44 26 JMP &2644 ; to_consider_next_landscape_section
+; not_satellite
+&262a c9 0a    CMP #&0a ; LANDSCAPE_ALIEN
+&262c d0 16    BNE &2644 ; not_alien                                # Should never branch
+; add_alien
+&262e ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&2631 0a       ASL A
+&2632 0a       ASL A
+&2633 0a       ASL A
+&2634 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&2637 29 3f    AND #&3f
+&2639 18       CLC
+&263a 69 54    ADC #&54
+&263c a8       TAY                                                  # Use random y position for alien
+&263d a2 4c    LDX #&4c                                             # at right of screen
+&263f a9 06    LDA #&06 ; ENEMY_ALIEN_DOWN
+&2641 20 52 21 JSR &2152 ; add_enemy
+; not_alien
+; to_consider_next_landscape_section
+&2644 4c 8a 25 JMP &258a ; consider_next_landscape_section
+
+; consider_adding_meteor
+&2647 ae 27 2f LDX &2f27 ; stage
+&264a bd 5f 2e LDA &2e5f,X ; stages_with_meteors                    # If stage 3,
+&264d d0 03    BNE &2652 ; add_meteor
+&264f 4c 78 25 JMP &2578 ; add_landscape_details
+; add_meteor
+&2652 ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&2655 0a       ASL A
+&2656 0a       ASL A
+&2657 0a       ASL A
+&2658 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&265b 29 01    AND #&01                                             # Randomly place meteor at top or bottom
+&265d f0 19    BEQ &2678 ; add_bottom_meteor
+; add_top_meteor
+&265f a2 4a    LDX #&4a
+&2661 ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&2664 0a       ASL A
+&2665 0a       ASL A
+&2666 0a       ASL A
+&2667 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&266a 29 3f    AND #&3f
+&266c 18       CLC
+&266d 69 28    ADC #&28
+&266f a8       TAY                                                  # Use random y position for meteor
+&2670 a9 07    LDA #&07 ; ENEMY_METEOR
+&2672 20 52 21 JSR &2152 ; add_enemy
+&2675 4c 78 25 JMP &2578 ; add_landscape_details
+; add_bottom_meteor
+&2678 a2 4a    LDX #&4a
+&267a ad 44 fe LDA &fe44 ; System VIA timer 1 counter LSB
+&267d 29 3f    AND #&3f
+&267f 18       CLC
+&2680 69 76    ADC #&76
+&2682 a8       TAY                                                  # Use random y position for meteor
+&2683 a9 07    LDA #&07 ; ENEMY_METEOR
+&2685 20 52 21 JSR &2152 ; add_enemy
+&2688 4c 78 25 JMP &2578 ; add_landscape_details
+
+; update_artificial_landscape
+&268b a5 61    LDA &61 ; artificial_landscape_ground_height
+&268d c9 e4    CMP #&e4
+&268f d0 23    BNE &26b4 ; skip_adding_base
+&2691 a5 60    LDA &60 ; landscape_x_fraction
+&2693 d0 1f    BNE &26b4 ; skip_adding_fuelling_station
+&2695 a2 46    LDX #&46                                             # Use fixed position at right of screen for base
+&2697 a0 ab    LDY #&ab
+&2699 a9 06    LDA #&06 ; SPRITE_FUELLING_STATION_TOP
+&269b 20 be 1c JSR &1cbe ; plot_sprite
+&269e a2 46    LDX #&46
+&26a0 a0 be    LDY #&be
+&26a2 a9 0d    LDA #&0d ; ENEMY_BASE
+&26a4 20 52 21 JSR &2152 ; add_enemy
+&26a7 a2 46    LDX #&46
+&26a9 a0 d2    LDY #&d2
+&26ab a9 07    LDA #&07 ; SPRITE_FUELLING_STATION_BOTTOM
+&26ad 20 be 1c JSR &1cbe ; plot_sprite
+&26b0 a9 e6    LDA #&e6
+&26b2 85 61    STA &61 ; artificial_landscape_ground_height
+; skip_adding_base
+; plot_artificial_landscape_column
+&26b4 a5 61    LDA &61 ; artificial_landscape_ground_height
+&26b6 d0 04    BNE &26bc ; skip_setting_ground
+&26b8 a9 e6    LDA #&e6
+&26ba 85 61    STA &61 ; artificial_landscape_ground_height
+; skip_setting_ground
+&26bc a5 61    LDA &61 ; artificial_landscape_ground_height
+&26be 8d 16 2f STA &2f16 ; ground_height
+&26c1 a5 66    LDA &66 ; artificial_landscape_ceiling_height
+&26c3 85 65    STA &65 ; ceiling_height
+&26c5 a2 4f    LDX #&4f
+&26c7 a0 01    LDY #&01
+&26c9 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&26cc a9 01    LDA #&01
+&26ce 85 71    STA &71 ; row
+&26d0 a2 00    LDX #&00
+&26d2 a5 66    LDA &66 ; artificial_landscape_ceiling_height
+&26d4 f0 02    BEQ &26d8 ; skip_ceiling_colour
+&26d6 a2 0c    LDX #&0c ; colour 2
+; skip_ceiling_colour
+&26d8 86 72    STX &72 ; ceiling_pixel_value
+&26da a9 00    LDA #&00 ; colour 0
+&26dc 85 70    STA &70 ; pixel_value
+; plot_artificial_landscape_column_loop
+&26de a5 70    LDA &70 ; pixel_value
+&26e0 a0 00    LDY #&00
+&26e2 91 82    STA (&82),Y ; screen_address                         # Plot ceiling, middle or ground
+&26e4 a5 71    LDA &71 ; row
+&26e6 c5 66    CMP &66 ; artificial_landscape_ceiling_height
+&26e8 d0 09    BNE &26f3 ; not_ceiling_edge
+&26ea a9 00    LDA #&00 ; colour 0
+&26ec 85 70    STA &70 ; pixel_value
+&26ee a8       TAY
+&26ef a9 0f    LDA #&0f ; colour 3
+&26f1 91 82    STA (&82),Y ; screen_address                         # Plot edge of ceiling
+; not_ceiling_edge
+&26f3 a5 71    LDA &71 ; row
+&26f5 c9 24    CMP #&24
+&26f7 d0 04    BNE &26fd ; not_ceiling_start
+&26f9 a5 72    LDA &72 ; ceiling_pixel_value
+&26fb 85 70    STA &70 ; pixel_value
+; not_ceiling_start
+&26fd a5 71    LDA &71 ; row
+&26ff c5 61    CMP &61 ; artificial_landscape_ground_height
+&2701 d0 0a    BNE &270d ; not_ground_edge
+&2703 a9 0c    LDA #&0c ; colour 2
+&2705 85 70    STA &70 ; pixel_value
+&2707 a0 00    LDY #&00
+&2709 a9 0f    LDA #&0f ; colour 3
+&270b 91 82    STA (&82),Y ; screen_address                         # Plot edge of ground
+; not_ground_edge
+&270d 20 79 1b JSR &1b79 ; move_down_a_row
+&2710 e6 71    INC &71 ; row
+&2712 a5 71    LDA &71 ; row
+&2714 c9 fb    CMP #&fb
+&2716 d0 c6    BNE &26de ; plot_artificial_landscape_column_loop
+&2718 e6 60    INC &60 ; landscape_x_fraction
+&271a a5 60    LDA &60 ; landscape_x_fraction
+&271c c9 08    CMP #&08
+&271e 58       CLI
+&271f 90 58    BCC &2779 ; not_new_section
+&2721 a9 00    LDA #&00
+&2723 85 60    STA &60 ; landscape_x_fraction
+&2725 a4 62    LDY &62 ; landscape_data_offset
+&2727 b1 67    LDA (&67),Y ; landscape_data_address                 # Get byte of data for ground height
+&2729 c9 ff    CMP #&ff
+&272b d0 12    BNE &273f ; not_end_of_stage                         # &ff indicates end of stage
+&272d ee 27 2f INC &2f27 ; stage                                    # If so, move to next stage
+&2730 a9 e6    LDA #&e6
+&2732 8d 16 2f STA &2f16 ; ground_height
+&2735 a9 26    LDA #&26
+&2737 85 65    STA &65 ; ceiling_height
+&2739 ad 27 2f LDA &2f27 ; stage
+&273c 4c ee 27 JMP &27ee ; initialise_stage
+; not_end_of_stage
+&273f 85 61    STA &61 ; artificial_landscape_ground_height
+&2741 e6 62    INC &62 ; landscape_data_offset
+&2743 a4 62    LDY &62 ; landscape_data_offset
+&2745 b1 67    LDA (&67),Y ; landscape_data_address                 # Get byte of data for ceiling height
+&2747 85 66    STA &66 ; artificial_landscape_ceiling_height
+&2749 e6 62    INC &62 ; landscape_data_offset
+&274b a5 61    LDA &61 ; artificial_landscape_ground_height
+&274d 29 01    AND #&01
+&274f d0 28    BNE &2779 ; skip_adding_enemy                        # If lowest bit of ground height is clear,
+&2751 ad 16 2f LDA &2f16 ; ground_height
+&2754 38       SEC
+&2755 e9 10    SBC #&10
+&2757 a8       TAY
+&2758 ae 27 2f LDX &2f27 ; stage
+&275b bd 47 2e LDA &2e47,X ; stages_with_fuel                       # If stages 5 or 6
+&275e d0 12    BNE &2772 ; add_enemy_fuel                           # always add enemy fuel
+&2760 ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&2763 0a       ASL A
+&2764 0a       ASL A
+&2765 0a       ASL A
+&2766 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&2769 29 07    AND #&07                                             # Otherwise, add random enemy
+&276b aa       TAX
+&276c bd eb 2e LDA &2eeb,X ; landscape_enemies
+&276f 4c 74 27 JMP &2774 ; add_enemy_to_artificial_landscape
+; add_enemy_fuel
+&2772 a9 0b    LDA #&0b ; ENEMY_FUEL
+; add_enemy_to_artificial_landscape
+&2774 a2 4c    LDX #&4c                                             # at right of screen
+&2776 20 52 21 JSR &2152 ; add_enemy
+; skip_adding_enemy
+; not_new_section
+&2779 a5 61    LDA &61 ; artificial_landscape_ground_height
+&277b 29 fe    AND #&fe
+&277d 85 61    STA &61 ; artificial_landscape_ground_height
+&277f 60       RTS
+
+; plot_organic_landscape_column
+&2780 a2 02    LDX #&02 ; &0278 = 79 * 8
+&2782 a0 78    LDY #&78
+&2784 20 3e 1b JSR &1b3e ; calculate_screen_address_from_offset
+&2787 86 83    STX &83 ; screen_address_high
+&2789 84 82    STY &82 ; screen_address_low
+&278b a9 00    LDA #&00 ; colour 0
+&278d 85 71    STA &71 ; row
+; plot_organic_landscape_column_loop
+&278f a0 00    LDY #&00
+&2791 91 82    STA (&82),Y ; screen_address
+&2793 48       PHA ; fill_pixel_value
+&2794 20 79 1b JSR &1b79 ; move_down_a_row
+&2797 e6 71    INC &71 ; row
+&2799 a5 71    LDA &71 ; row
+&279b c9 24    CMP #&24
+&279d d0 06    BNE &27a5 ; not_end_of_status_area
+&279f 68       PLA ; fill_pixel_value
+&27a0 a5 73    LDA &73 ; above_fill_pixel_value
+&27a2 48       PHA ; fill_pixel_value
+&27a3 a5 71    LDA &71 ; row
+; not_end_of_status_area
+&27a5 c5 70    CMP &70 ; edge_row
+&27a7 d0 03    BNE &27ac ; consider_next_row
+&27a9 4c b8 27 JMP &27b8 ; plot_organic_landscape_edge
+; consider_next_row
+&27ac a5 71    LDA &71 ; row
+&27ae c9 ff    CMP #&ff
+&27b0 f0 04    BEQ &27b6 ; leave_after_pla
+&27b2 68       PLA ; fill_pixel_value
+&27b3 4c 8f 27 JMP &278f ; plot_organic_landscape_column_loop
+; leave_after_pla
+&27b6 68       PLA ; fill_pixel_value
+&27b7 60       RTS
+
+; plot_organic_landscape_edge
+&27b8 a5 72    LDA &72 ; height_change_offset
+&27ba 29 0f    AND #&0f
+&27bc 0a       ASL A
+&27bd 0a       ASL A
+&27be aa       TAX
+&27bf a9 04    LDA #&04
+&27c1 85 73    STA &73 ; count
+; plot_organic_landscape_edge_loop
+&27c3 bd 1f 22 LDA &221f,X ; landscape_pixel_values
+&27c6 a0 00    LDY #&00
+&27c8 91 82    STA (&82),Y ; screen_address                         # Plot edge of ground or ceiling
+&27ca e6 71    INC &71 ; row
+&27cc e8       INX
+&27cd 20 79 1b JSR &1b79 ; move_down_a_row
+&27d0 e6 71    INC &71 ; row
+&27d2 c6 73    DEC &73 ; count
+&27d4 d0 ed    BNE &27c3 ; plot_four_rows_of_landscape_loop
+&27d6 68       PLA ; pixel_value
+&27d7 a5 74    LDA &74 ; below_fill_pixel_value
+&27d9 f0 04    BEQ &27df ; leave
+&27db 48       PHA ; pixel_value
+&27dc 4c ac 27 JMP &27ac ; consider_next_row
+; leave
+&27df 60       RTS
+
+; change_ceiling_height
+&27e0 a5 72    LDA &72 ; height_change_offset
+&27e2 29 0f    AND #&0f
+&27e4 aa       TAX
+&27e5 a5 65    LDA &65 ; ceiling_height
+&27e7 18       CLC
+&27e8 7d 5f 22 ADC &225f,X ; height_change_table
+&27eb 85 65    STA &65 ; ceiling_height
+&27ed 60       RTS
+
+; initialise_stage
+&27ee c9 0c    CMP #&0c ; 6 * 2
+&27f0 90 16    BCC &2808 ; not_new_mission
+&27f2 a9 00    LDA #&00
+&27f4 8d 27 2f STA &2f27 ; stage
+&27f7 ee 29 2f INC &2f29 ; mission                                  # Move to next mission
+&27fa ad 29 2f LDA &2f29 ; mission
+&27fd c9 08    CMP #&08
+&27ff 90 05    BCC &2806 ; skip_ceiling
+&2801 a9 07    LDA #&07                                             # Repeat mission H
+&2803 8d 29 2f STA &2f29 ; mission
+; skip_ceiling
+&2806 a9 00    LDA #&00
+; not_new_mission
+&2808 0a       ASL A
+&2809 aa       TAX
+&280a bd 2f 2e LDA &2e2f,X ; landscape_data_addresses
+&280d 85 67    STA &67 ; landscape_data_address_low
+&280f bd 30 2e LDA &2e30,X ; landscape_data_addresses + 1
+&2812 85 68    STA &68 ; landscape_data_address_high
+&2814 a9 00    LDA #&00
+&2816 85 62    STA &62 ; landscape_data_offset
+&2818 85 61    STA &61 ; ground_section_offset, artificial_landscape_ground_height
+&281a 85 66    STA &66 ; ceiling_section_offset, artificial_landscape_ceiling_height
+&281c 85 60    STA &60 ; landscape_x_fraction
+&281e 85 63    STA &63 ; ground_section_type
+&2820 ad 27 2f LDA &2f27 ; stage
+&2823 4a       LSR A
+&2824 aa       TAX
+&2825 bd 35 2f LDA &2f35,X ; stage_colours
+&2828 a8       TAY
+&2829 a2 02    LDX #&02                                             # Set colour 2 to stage colour
+&282b 20 3b 1e JSR &1e3b ; set_palette
+&282e ad 27 2f LDA &2f27 ; stage
+&2831 c9 02    CMP #&02
+&2833 d0 1a    BNE &284f ; skip_alien_sound
+&2835 a9 08    LDA #&08 ; Define a sound envelope
+&2837 a2 81    LDX #&81 ; &2f81 = envelope_6
+&2839 a0 2f    LDY #&2f
+&283b 20 f1 ff JSR &fff1 ; OSWORD
+&283e ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&2841 d0 09    BNE &284c ; skip_sound
+&2843 a2 cf    LDX #&cf ; &2fcf = sound_8
+&2845 a0 2f    LDY #&2f
+&2847 a9 07    LDA #&07 ; Generate a sound
+&2849 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for aliens
+; skip_sound
+&284c 4c 5d 28 JMP &285d ; skip_clearing_alien_sound
+; skip_alien_sound
+&284f ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&2852 d0 09    BNE &285d ; skip_clearing_alien_sound
+&2854 a2 d7    LDX #&d7 ; &2fd7 = sound_9
+&2856 a0 2f    LDY #&2f
+&2858 a9 07    LDA #&07 ; Generate a sound
+&285a 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for silence
+; skip_clearing_alien_sound
+&285d 60       RTS
+
+; laser_slot
+&285e 00
+
+; check_for_collision_with_laser
+&285f 8e 5e 28 STX &285e ; laser_slot                               # Unused variable
+&2862 bd 40 0e LDA &0e40,X ; lasers_y
+&2865 85 89    STA &89 ; laser_or_bomb_y
+&2867 bd 30 0e LDA &0e30,X ; lasers_x
+&286a 85 88    STA &88 ; laser_or_bomb_x
+; check_for_collision_with_laser_or_bomb
+&286c a2 1f    LDX #&1f ; ENEMIES_LAST                              # For each enemy,
+; check_for_collision_with_enemies_loop
+&286e bd 90 0e LDA &0e90,X ; enemies_type                           # Zero if no enemy in slot
+&2871 f0 50    BEQ &28c3 ; consider_next_enemy
+&2873 c9 07    CMP #&07
+&2875 f0 4c    BEQ &28c3 ; consider_next_enemy
+&2877 bd 70 0e LDA &0e70,X ; enemies_y
+&287a 38       SEC
+&287b e9 02    SBC #&02
+&287d c5 89    CMP &89 ; laser_or_bomb_y
+&287f b0 42    BCS &28c3 ; consider_next_enemy
+&2881 38       SEC
+&2882 7d 10 0f ADC &0f10,X ; enemies_height
+&2885 69 02    ADC #&02
+&2887 c5 89    CMP &89 ; laser_or_bomb_y
+&2889 90 38    BCC &28c3 ; consider_next_enemy
+&288b bd 50 0e LDA &0e50,X ; enemies_x
+&288e 38       SEC
+&288f e9 02    SBC #&02
+&2891 c5 88    CMP &88 ; laser_or_bomb_x
+&2893 b0 2e    BCS &28c3 ; consider_next_enemy
+&2895 38       SEC
+&2896 7d f0 0e ADC &0ef0,X ; enemies_width
+&2899 69 02    ADC #&02
+&289b c5 88    CMP &88 ; laser_or_bomb_x
+&289d 90 24    BCC &28c3 ; consider_next_enemy                      # has the laser or bomb hit the enemy?
+&289f a9 80    LDA #&80 ; ENEMY_FLAG_DESTROYED
+&28a1 9d b0 0e STA &0eb0,X ; enemies_flags_or_timer                 # If so, mark enemy as destroyed
+&28a4 bc 90 0e LDY &0e90,X ; enemies_type
+&28a7 86 7e    STX &7e ; destroyed_enemy_slot                       # Unused variable
+&28a9 be dc 2e LDX &2edc,Y ; enemy_type_scores
+&28ac 84 7f    STY &7f ; destroyed_enemy_type
+&28ae 20 71 1a JSR &1a71 ; add_to_score                             # Score depending on enemy type
+&28b1 ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&28b4 d0 09    BNE &28bf ; skip_sound
+&28b6 a2 9f    LDX #&9f ; &2f9f = sound_2
+&28b8 a0 2f    LDY #&2f
+&28ba a9 07    LDA #&07 ; Generate a sound
+&28bc 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for destroying enemy
+; skip_sound
+&28bf 20 4d 2a JSR &2a4d ; remove_enemy
+&28c2 60       RTS
+; consider_next_enemy
+&28c3 ca       DEX
+&28c4 10 a8    BPL &286e ; check_for_collision_with_enemies_loop
+&28c6 60       RTS
+
+; update_bombs
+&28c7 a2 01    LDX #&01
+; update_bombs_loop
+&28c9 bd 30 0f LDA &0f30,X ; bombs_present                          # Non-zero if bomb in slot
+&28cc d0 04    BNE &28d2 ; update_bomb
+; consider_next_bomb
+&28ce ca       DEX
+&28cf 10 f8    BPL &28c9 ; update_bombs_loop
+&28d1 60       RTS
+; update_bomb
+&28d2 bd 32 0f LDA &0f32,X ; bombs_screen_address_low
+&28d5 85 88    STA &88 ; bomb_screen_address_low
+&28d7 bd 34 0f LDA &0f34,X ; bombs_screen_address_high
+&28da 85 89    STA &89 ; bomb_screen_address_high
+&28dc a0 00    LDY #&00
+&28de b1 88    LDA (&88),Y ; bomb_screen_address
+&28e0 49 1e    EOR #&1e ; colour 3, colour 5
+&28e2 91 88    STA (&88),Y ; bomb_screen_address                    # Unplot bomb
+&28e4 c8       INY
+&28e5 b1 88    LDA (&88),Y ; bomb_screen_address
+&28e7 49 1e    EOR #&1e ; colour 3, colour 5
+&28e9 91 88    STA (&88),Y ; bomb_screen_address
+&28eb bd 3a 0f LDA &0f3a,X ; bombs_velocity_state
+&28ee c9 10    CMP #&10
+&28f0 f0 06    BEQ &28f8 ; skip_changing_velocity
+&28f2 18       CLC
+&28f3 69 01    ADC #&01
+&28f5 9d 3a 0f STA &0f3a,X ; bombs_velocity_state
+; skip_changing_velocity
+&28f8 a8       TAY
+&28f9 b9 05 2f LDA &2f05,Y ; bomb_x_velocities
+&28fc 18       CLC
+&28fd 7d 36 0f ADC &0f36,X ; bombs_x
+&2900 9d 36 0f STA &0f36,X ; bombs_x
+&2903 b9 f3 2e LDA &2ef3,Y ; bomb_y_velocities
+&2906 18       CLC
+&2907 7d 38 0f ADC &0f38,X ; bombs_y
+&290a 9d 38 0f STA &0f38,X ; bombs_y
+&290d bd 36 0f LDA &0f36,X ; bombs_x
+&2910 c9 4f    CMP #&4f
+&2912 f0 32    BEQ &2946 ; remove_bomb                              # Remove bomb at right of screen (should never happen)
+&2914 c9 4e    CMP #&4e
+&2916 f0 2e    BEQ &2946 ; remove_bomb
+&2918 8a       TXA
+&2919 48       PHA ; bomb_slot
+&291a bd 38 0f LDA &0f38,X ; bombs_y
+&291d a8       TAY
+&291e bd 36 0f LDA &0f36,X ; bombs_x
+&2921 aa       TAX
+&2922 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&2925 68       PLA ; bomb_slot
+&2926 aa       TAX
+&2927 a5 82    LDA &82 ; screen_address_low
+&2929 9d 32 0f STA &0f32,X ; bombs_screen_address_low
+&292c a5 83    LDA &83 ; screen_address_high
+&292e 9d 34 0f STA &0f34,X ; bombs_screen_address_high
+&2931 a0 00    LDY #&00
+&2933 b1 82    LDA (&82),Y ; screen_address
+&2935 d0 17    BNE &294e ; bomb_hit_something
+&2937 c8       INY
+&2938 b1 82    LDA (&82),Y ; screen_address
+&293a d0 12    BNE &294e ; bomb_hit_something
+&293c a9 1e    LDA #&1e ; colour 3, colour 5
+&293e 91 82    STA (&82),Y ; screen_address                         # Plot bomb
+&2940 88       DEY
+&2941 91 82    STA (&82),Y ; screen_address
+&2943 4c ce 28 JMP &28ce ; consider_next_bomb
+; remove_bomb
+&2946 a9 00    LDA #&00
+&2948 9d 30 0f STA &0f30,X ; bombs_present                          # Set to zero to indicate no bomb in slot
+&294b 4c ce 28 JMP &28ce ; consider_next_bomb
+; bomb_hit_something
+&294e bd 36 0f LDA &0f36,X ; bombs_x
+&2951 85 88    STA &88 ; laser_or_bomb_x
+&2953 bd 38 0f LDA &0f38,X ; bombs_y
+&2956 85 89    STA &89 ; laser_or_bomb_y
+&2958 a9 00    LDA #&00
+&295a 9d 30 0f STA &0f30,X ; bombs_present                          # Set to zero to indicate no bomb in slot
+&295d 8a       TXA
+&295e 48       PHA ; bomb_slot
+&295f 20 6c 28 JSR &286c ; check_for_collision_with_laser_or_bomb
+&2962 68       PLA ; bomb_slot
+&2963 aa       TAX
+&2964 4c ce 28 JMP &28ce ; consider_next_bomb
+
+; add_bomb
+&2967 a2 01    LDX #&01
+; find_free_slot_for_bomb_loop
+&2969 bd 30 0f LDA &0f30,X ; bombs_present                          # Zero if no bomb in slot
+&296c f0 04    BEQ &2972 ; found_slot
+&296e ca       DEX
+&296f 10 f8    BPL &2969 ; find_free_slot_for_bomb_loop
+&2971 60       RTS
+; found_slot
+&2972 ad 19 2f LDA &2f19 ; player_x
+&2975 18       CLC
+&2976 69 06    ADC #&06
+&2978 9d 36 0f STA &0f36,X ; bombs_x
+&297b 85 88    STA &88 ; laser_or_bomb_x
+&297d ad 1a 2f LDA &2f1a ; player_y
+&2980 18       CLC
+&2981 69 0e    ADC #&0e
+&2983 a8       TAY
+&2984 9d 38 0f STA &0f38,X ; bombs_y
+&2987 8a       TXA
+&2988 48       PHA ; bomb_slot
+&2989 a6 88    LDX &88 ; laser_or_bomb_x
+&298b 20 74 1c JSR &1c74 ; calculate_screen_address_from_X_and_Y
+&298e a9 1e    LDA #&1e ; colour 3, colour 5
+&2990 a0 00    LDY #&00
+&2992 51 82    EOR (&82),Y ; screen_address
+&2994 91 82    STA (&82),Y ; screen_address                         # Plot bomb
+&2996 c8       INY
+&2997 a9 1e    LDA #&1e ; colour 3, colour 5
+&2999 51 82    EOR (&82),Y ; screen_address
+&299b 91 82    STA (&82),Y ; screen_address
+&299d 68       PLA ; bomb_slot
+&299e aa       TAX
+&299f a5 82    LDA &82 ; screen_address_low
+&29a1 9d 32 0f STA &0f32,X ; bombs_screen_address_low
+&29a4 a5 83    LDA &83 ; screen_address_high
+&29a6 9d 34 0f STA &0f34,X ; bombs_screen_address_high
+&29a9 a9 01    LDA #&01
+&29ab 9d 30 0f STA &0f30,X ; bombs_present                          # Set to non-zero to indicate bomb in slot
+&29ae a9 00    LDA #&00
+&29b0 9d 3a 0f STA &0f3a,X ; bombs_velocity_state
+&29b3 ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&29b6 d0 09    BNE &29c1 ; skip_sound
+&29b8 a2 97    LDX #&97 ; &2f97 = sound_1
+&29ba a0 2f    LDY #&2f
+&29bc a9 07    LDA #&07 ; Generate a sound
+&29be 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for bombing
+; skip_sound
+&29c1 60       RTS
+
+; update_enemies
+&29c2 a2 1f    LDX #&1f ; ENEMIES_LAST
+; update_enemies_loop
+&29c4 e0 10    CPX #&10
+&29c6 b0 0a    BCS &29d2 ; skip_scrolling_laser_or_pellet
+&29c8 de 30 0e DEC &0e30,X ; lasers_x                               # Move laser left with scrolled screen
+&29cb e0 08    CPX #&08
+&29cd b0 03    BCS &29d2 ; skip_scrolling_laser_or_pellet
+&29cf de 40 0f DEC &0f40,X ; pellets_x                              # Move pellet left with scrolled screen
+; skip_scrolling_laser_or_pellet
+&29d2 de 50 0e DEC &0e50,X ; enemies_x                              # Move enemy left with scrolled screen
+&29d5 d0 05    BNE &29dc ; skip_removing_enemy                      # Has the enemy reached the left of the screen?
+&29d7 a9 00    LDA #&00 ; ENEMY_NONE
+&29d9 9d 90 0e STA &0e90,X ; enemies_type                           # If so, set to zero to indicate no enemy in slot
+; skip_removing_enemy
+&29dc bd 90 0e LDA &0e90,X ; enemies_type
+&29df c9 01    CMP #&01 ; ENEMY_INACTIVE_ROCKET
+&29e1 d0 18    BNE &29fb ; skip_launching_rocket
+&29e3 ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&29e6 0a       ASL A
+&29e7 0a       ASL A
+&29e8 0a       ASL A
+&29e9 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&29ec c9 08    CMP #&08
+&29ee b0 0b    BCS &29fb ; skip_launching_rocket                    # 1 in 32 chance of launching rocket
+&29f0 ac 27 2f LDY &2f27 ; stage
+&29f3 b9 53 2e LDA &2e53,Y ; stages_with_rockets
+&29f6 f0 03    BEQ &29fb ; skip_launching_rocket                    # on stages 1 and 4
+&29f8 20 47 2a JSR &2a47 ; launch_rocket
+; skip_launching_rocket
+&29fb bd 90 0e LDA &0e90,X ; enemies_type
+&29fe c9 09    CMP #&09 ; ENEMY_EXPLOSION
+&2a00 d0 15    BNE &2a17 ; skip_explosion                           # Always branches
+&2a02 de b0 0e DEC &0eb0,X ; enemies_flags_or_timer
+&2a05 bd b0 0e LDA &0eb0,X ; enemies_flags_or_timer
+&2a08 c9 fd    CMP #&fd
+&2a0a d0 0b    BNE &2a17 ; skip_explosion
+&2a0c fe 50 0e INC &0e50,X ; enemies_x
+&2a0f 20 90 21 JSR &2190 ; plot_enemy                               # Unplot explosion
+&2a12 a9 00    LDA #&00 ; ENEMY_NONE
+&2a14 9d 90 0e STA &0e90,X ; enemies_type                           # Set to zero to indicate no enemy in slot
+; skip_explosion
+&2a17 bd 90 0e LDA &0e90,X ; enemies_type
+&2a1a c9 0c    CMP #&0c ; ENEMY_SHOOTER
+&2a1c d0 1d    BNE &2a3b ; skip_adding_pellet
+&2a1e ad 45 fe LDA &fe45 ; System VIA timer 1 counter MSB
+&2a21 0a       ASL A
+&2a22 0a       ASL A
+&2a23 0a       ASL A
+&2a24 4d 44 fe EOR &fe44 ; System VIA timer 1 counter LSB
+&2a27 c9 10    CMP #&10
+&2a29 b0 10    BCS &2a3b ; skip_adding_pellet                       # 1 in 16 chance to shooter firing pellet
+&2a2b ac 27 2f LDY &2f27 ; stage
+&2a2e b9 77 2e LDA &2e77,Y ; stages_with_pellets
+&2a31 f0 08    BEQ &2a3b ; skip_adding_pellet                       # on all stages (never branches)
+&2a33 ad 29 2f LDA &2f29 ; mission
+&2a36 f0 03    BEQ &2a3b ; skip_adding_pellet                       # Unnecessary code; see &2032
+&2a38 20 2f 20 JSR &202f ; consider_adding_pellet
+; skip_adding_pellet
+&2a3b ca       DEX
+&2a3c 10 86    BPL &29c4 ; update_enemies_loop
+&2a3e ad 28 2f LDA &2f28 ; fuelling_station_x
+&2a41 f0 03    BEQ &2a46 ; skip_scrolling_fuelling_station
+&2a43 ce 28 2f DEC &2f28 ; fuelling_station_x
+; skip_scrolling_fuelling_station
+&2a46 60       RTS
+
+; launch_rocket
+&2a47 a9 02    LDA #&02 ; ENEMY_ACTIVE_ROCKET
+&2a49 9d 90 0e STA &0e90,X ; enemies_type
+&2a4c 60       RTS
+
+; remove_enemy
+&2a4d a5 7f    LDA &7f ; destroyed_enemy_type
+&2a4f c9 0b    CMP #&0b ; ENEMY_FUEL
+&2a51 f0 0b    BEQ &2a5e ; remove_enemy_fuel
+&2a53 c9 0d    CMP #&0d ; ENEMY_BASE
+&2a55 f0 1c    BEQ &2a73 ; remove_enemy_base
+; leave_after_unnecessary_check
+&2a57 a5 7f    LDA &7f ; destroyed_enemy_type
+&2a59 c9 09    CMP #&09 ; ENEMY_EXPLOSION
+&2a5b f0 00    BEQ &2a5d ; leave                                    # Unnecessary code
+; leave
+&2a5d 60       RTS
+; remove_enemy_fuel
+&2a5e 20 05 1c JSR &1c05 ; plot_fuel
+&2a61 ee 20 2f INC &2f20 ; player_fuel                              # Destroying enemy fuel increases player's fuel
+&2a64 ad 20 2f LDA &2f20 ; player_fuel
+&2a67 c9 47    CMP #&47
+&2a69 d0 ec    BNE &2a57 ; leave_after_unnecessary_check
+&2a6b a9 46    LDA #&46
+&2a6d 8d 20 2f STA &2f20 ; player_fuel
+&2a70 4c 57 2a JMP &2a57 ; leave_after_unnecessary_check
+; remove_enemy_base
+&2a73 20 5e 2b JSR &2b5e ; play_sound_for_extra_life
+&2a76 4c 57 2a JMP &2a57 ; leave_after_unnecessary_check
+
+; update_active_enemies
+; update_active_enemies_loop
+&2a79 bd b0 0e LDA &0eb0,X ; enemies_flags_or_timer
+&2a7c c9 80    CMP #&80 ; ENEMY_FLAG_DESTROYED
+&2a7e f0 1b    BEQ &2a9b ; remove_active_enemy
+&2a80 bd 90 0e LDA &0e90,X ; enemies_type
+&2a83 c9 02    CMP #&02 ; ENEMY_ACTIVE_ROCKET
+&2a85 f0 22    BEQ &2aa9 ; update_active_rocket
+&2a87 c9 07    CMP #&07 ; ENEMY_METEOR
+&2a89 f0 45    BEQ &2ad0 ; update_meteor
+&2a8b c9 06    CMP #&06 ; ENEMY_ALIEN_DOWN
+&2a8d f0 09    BEQ &2a98 ; to_update_alien
+&2a8f c9 05    CMP #&05 ; ENEMY_ALIEN_UP
+&2a91 f0 05    BEQ &2a98 ; to_update_alien
+; consider_next_active_enemy
+&2a93 ca       DEX                                                  # Only update half of the enemies
+&2a94 ca       DEX
+&2a95 10 e2    BPL &2a79 ; update_active_enemies_loop
+&2a97 60       RTS
+
+; to_update_alien
+&2a98 4c f7 2a JMP &2af7 ; update_alien
+
+; remove_active_enemy
+&2a9b 20 90 21 JSR &2190 ; plot_enemy
+&2a9e a9 00    LDA #&00 ; ENEMY_NONE
+&2aa0 9d 90 0e STA &0e90,X ; enemies_type                           # Set to zero to indicate no enemy in slot
+&2aa3 9d b0 0e STA &0eb0,X ; enemies_flags_or_timer
+&2aa6 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+
+; update_active_rocket 
+&2aa9 20 90 21 JSR &2190 ; plot_enemy                               # Unplot rocket
+&2aac bd 70 0e LDA &0e70,X ; enemies_y
+&2aaf 38       SEC
+&2ab0 e9 04    SBC #&04
+&2ab2 ac 29 2f LDY &2f29 ; mission
+&2ab5 c0 02    CPY #&02
+&2ab7 90 02    BCC &2abb ; not_faster_rocket
+&2ab9 e9 03    SBC #&03                                             # On mission C onwards, rockets move faster
+; not_faster_rocket
+&2abb c9 24    CMP #&24
+&2abd 90 09    BCC &2ac8 ; remove_rocket
+&2abf 9d 70 0e STA &0e70,X ; enemies_y
+&2ac2 20 90 21 JSR &2190 ; plot_enemy                               # Plot rocket
+&2ac5 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+; remove_rocket
+&2ac8 a9 00    LDA #&00 ; ENEMY_NONE
+&2aca 9d 90 0e STA &0e90,X ; enemies_type                           # Set to zero to indicate no enemy in slot
+&2acd 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+
+; update_meteor
+&2ad0 20 90 21 JSR &2190 ; plot_enemy
+&2ad3 bd 50 0e LDA &0e50,X ; enemies_x
+&2ad6 c9 06    CMP #&06
+&2ad8 90 15    BCC &2aef ; remove_meteor
+&2ada 38       SEC
+&2adb e9 03    SBC #&03
+&2add ac 29 2f LDY &2f29 ; mission
+&2ae0 c0 02    CPY #&02
+&2ae2 90 02    BCC &2ae6 ; not_faster_meteor
+&2ae4 e9 02    SBC #&02                                             # On mission C onwards, meteors move faster
+; not_faster_meteor
+&2ae6 9d 50 0e STA &0e50,X ; enemies_x
+&2ae9 20 90 21 JSR &2190 ; plot_enemy
+&2aec 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+; remove_meteor
+&2aef a9 00    LDA #&00 ; ENEMY_NONE
+&2af1 9d 90 0e STA &0e90,X ; enemies_type                           # Set to zero to indicate no enemy in slot
+&2af4 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+
+; update_alien
+&2af7 c9 05    CMP #&05 ; ENEMY_ALIEN_UP
+&2af9 f0 2a    BEQ &2b25 ; update_alien_moving_up
+; update_alien_moving_down
+&2afb bd 70 0e LDA &0e70,X ; enemies_y
+&2afe c9 b4    CMP #&b4
+&2b00 b0 1b    BCS &2b1d ; set_alien_moving_up
+&2b02 20 90 21 JSR &2190 ; plot_enemy                               # Unplot alien
+&2b05 bd 70 0e LDA &0e70,X ; enemies_y
+&2b08 18       CLC
+&2b09 69 08    ADC #&08
+&2b0b ac 29 2f LDY &2f29 ; mission
+&2b0e c0 02    CPY #&02
+&2b10 90 02    BCC &2b14 ; not_faster_alien
+&2b12 69 04    ADC #&04                                             # On mission C onwards, aliens move faster
+; not_faster_alien
+&2b14 9d 70 0e STA &0e70,X ; enemies_y
+&2b17 20 90 21 JSR &2190 ; plot_enemy                               # Plot alien
+&2b1a 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+; set_alien_moving_up
+&2b1d a9 05    LDA #&05 ; ENEMY_ALIEN_UP
+&2b1f 9d 90 0e STA &0e90,X ; enemies_type
+&2b22 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+; update_alien_moving_up
+&2b25 bd 70 0e LDA &0e70,X ; enemies_y
+&2b28 c9 58    CMP #&58
+&2b2a 90 1b    BCC &2b47 ; set_alien_moving_down
+&2b2c 20 90 21 JSR &2190 ; plot_enemy                               # Unplot alien
+&2b2f bd 70 0e LDA &0e70,X ; enemies_y
+&2b32 38       SEC
+&2b33 e9 08    SBC #&08
+&2b35 ac 29 2f LDY &2f29 ; mission
+&2b38 c0 02    CPY #&02
+&2b3a 90 02    BCC &2b3e ; not_faster_alien
+&2b3c e9 04    SBC #&04                                             # On mission C onwards, aliens move faster
+; not_faster_alien
+&2b3e 9d 70 0e STA &0e70,X ; enemies_y
+&2b41 20 90 21 JSR &2190 ; plot_enemy                               # Plot alien
+&2b44 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+; set_alien_moving_down
+&2b47 a9 06    LDA #&06 ; ENEMY_ALIEN_DOWN
+&2b49 9d 90 0e STA &0e90,X ; enemies_type
+&2b4c 4c 93 2a JMP &2a93 ; consider_next_active_enemy
+
+; play_sound_for_fully_fuelled
+&2b4f ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&2b52 d0 09    BNE &2b5d ; skip_sound
+&2b54 a2 b7    LDX #&b7 ; &2fb7 = sound_5
+&2b56 a0 2f    LDY #&2f
+&2b58 a9 07    LDA #&07 ; Generate a sound
+&2b5a 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for fully fuelled
+; skip_sound
+&2b5d 60       RTS
+
+; play_sound_for_extra_life
+&2b5e a9 08    LDA #&08 ; Define a sound envelope
+&2b60 a2 73    LDX #&73 ; &2f73 = envelope_5
+&2b62 a0 2f    LDY #&2f
+&2b64 20 f1 ff JSR &fff1 ; OSWORD
+&2b67 ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&2b6a d0 09    BNE &2b75 ; skip_sound
+&2b6c a2 c7    LDX #&c7 ; &2fc7 = sound_7
+&2b6e a0 2f    LDY #&2f
+&2b70 a9 07    LDA #&07 ; Generate a sound
+&2b72 20 f1 ff JSR &fff1 ; OSWORD                                   # Play sound for extra life
+; skip_sound
+&2b75 60       RTS
+
+; stage_6_landscape_data                                            # Artificial landscape
+;     g  c
+&2b76 e7 28
+&2b78 e7 28
+&2b7a e7 28
+&2b7c e7 28
+&2b7e 97 82
+&2b80 96 82 ; FUEL
+&2b82 96 82 ; FUEL
+&2b84 96 82 ; FUEL
+&2b86 e7 28
+&2b88 e7 28
+&2b8a e7 28
+&2b8c e7 ce
+&2b8e e7 ce
+&2b90 e7 ce
+&2b92 e7 82
+&2b94 e7 82
+&2b96 9b 82
+&2b98 9b 82
+&2b9a 9b 82
+&2b9c 9b 82
+&2b9e 9b 28
+&2ba0 9b 28
+&2ba2 3d 28
+&2ba4 3d 28
+&2ba6 9b 28
+&2ba8 9b 28
+&2baa 9b 82
+&2bac 9b 82
+&2bae 9b 82
+&2bb0 b5 82
+&2bb2 b5 82
+&2bb4 b5 9b
+&2bb6 b5 9b
+&2bb8 b5 9b
+&2bba cf 9b
+&2bbc cf 9b
+&2bbe cf b6
+&2bc0 cf b6
+&2bc2 cf b6
+&2bc4 cf 28
+&2bc6 cf 28
+&2bc8 cf 28
+&2bca b5 9b
+&2bcc b4 9b ; FUEL
+&2bce b4 9b ; FUEL
+&2bd0 b4 9b ; FUEL
+&2bd2 b4 82 ; FUEL
+&2bd4 b4 82 ; FUEL
+&2bd6 9b 82
+&2bd8 9b 82
+&2bda 9b 82
+&2bdc 9b 82
+&2bde ab 65
+&2be0 ab 65
+&2be2 ab 65
+&2be4 79 65
+&2be6 79 65
+&2be8 e7 65
+&2bea e7 65
+&2bec e7 a1
+&2bee e5 a1 ; BASE
+&2bf0 e7 a1
+&2bf2 e7 a1
+&2bf4 e7 28
+&2bf6 e7 28
+&2bf8 e7 28
+&2bfa e7 28
+&2bfc e7 28
+&2bfe e7 28
+&2c00 e7 28
+&2c02 e7 28
+&2c04 ff ff ; landscape end
+
+; stage_1_landscape_data                                            # Organic landscape
+;     cg
+&2c06 00 ; LANDSCAPE_FLAT
+&2c07 01 ; LANDSCAPE_SLOPE_UP
+&2c08 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c09 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c0a 06 ; LANDSCAPE_ENEMY
+&2c0b 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c0c 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c0d 01 ; LANDSCAPE_SLOPE_UP
+&2c0e 00 ; LANDSCAPE_FLAT
+&2c0f 04 ; LANDSCAPE_SLOPE_DOWN
+&2c10 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c11 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c12 06 ; LANDSCAPE_ENEMY
+&2c13 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c14 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c15 06 ; LANDSCAPE_ENEMY
+&2c16 06 ; LANDSCAPE_ENEMY
+&2c17 01 ; LANDSCAPE_SLOPE_UP
+&2c18 06 ; LANDSCAPE_ENEMY
+&2c19 06 ; LANDSCAPE_ENEMY
+&2c1a 01 ; LANDSCAPE_SLOPE_UP
+&2c1b 04 ; LANDSCAPE_SLOPE_DOWN
+&2c1c 06 ; LANDSCAPE_ENEMY
+&2c1d 06 ; LANDSCAPE_ENEMY
+&2c1e 04 ; LANDSCAPE_SLOPE_DOWN
+&2c1f 06 ; LANDSCAPE_ENEMY
+&2c20 00 ; LANDSCAPE_FLAT
+&2c21 06 ; LANDSCAPE_ENEMY
+&2c22 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c23 04 ; LANDSCAPE_SLOPE_DOWN
+&2c24 06 ; LANDSCAPE_ENEMY
+&2c25 06 ; LANDSCAPE_ENEMY
+&2c26 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c27 04 ; LANDSCAPE_SLOPE_DOWN
+&2c28 06 ; LANDSCAPE_ENEMY
+&2c29 06 ; LANDSCAPE_ENEMY
+&2c2a 01 ; LANDSCAPE_SLOPE_UP
+&2c2b 06 ; LANDSCAPE_ENEMY
+&2c2c 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c2d 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c2e 00 ; LANDSCAPE_FLAT
+&2c2f 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c30 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c31 06 ; LANDSCAPE_ENEMY
+&2c32 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c33 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c34 06 ; LANDSCAPE_ENEMY
+&2c35 06 ; LANDSCAPE_ENEMY
+&2c36 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c37 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c38 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c39 06 ; LANDSCAPE_ENEMY
+&2c3a 06 ; LANDSCAPE_ENEMY
+&2c3b 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c3c 06 ; LANDSCAPE_ENEMY
+&2c3d 06 ; LANDSCAPE_ENEMY
+&2c3e 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c3f 04 ; LANDSCAPE_SLOPE_DOWN
+&2c40 06 ; LANDSCAPE_ENEMY
+&2c41 01 ; LANDSCAPE_SLOPE_UP
+&2c42 04 ; LANDSCAPE_SLOPE_DOWN
+&2c43 06 ; LANDSCAPE_ENEMY
+&2c44 01 ; LANDSCAPE_SLOPE_UP
+&2c45 06 ; LANDSCAPE_ENEMY
+&2c46 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c47 06 ; LANDSCAPE_ENEMY
+&2c48 ff ; LANDSCAPE_END | &f0
+
+; stage_2_landscape_data                                            # Organic landscape with ceiling
+;     cg
+&2c49 01 ; LANDSCAPE_SLOPE_UP
+&2c4a 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c4b 04 ; LANDSCAPE_SLOPE_DOWN
+&2c4c 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2c4d 06 ; LANDSCAPE_ENEMY
+&2c4e 0a ; LANDSCAPE_ALIEN
+&2c4f 04 ; LANDSCAPE_SLOPE_DOWN
+&2c50 06 ; LANDSCAPE_ENEMY
+&2c51 06 ; LANDSCAPE_ENEMY
+&2c52 0a ; LANDSCAPE_ALIEN
+&2c53 01 ; LANDSCAPE_SLOPE_UP
+&2c54 06 ; LANDSCAPE_ENEMY
+&2c55 0a ; LANDSCAPE_ALIEN
+&2c56 06 ; LANDSCAPE_ENEMY
+&2c57 01 ; LANDSCAPE_SLOPE_UP
+&2c58 0a ; LANDSCAPE_ALIEN
+&2c59 24 ; CEILING_STEEP_SLOPE_DOWN | LANDSCAPE_SLOPE_DOWN
+&2c5a 16 ; CEILING_SLOPE_DOWN | LANDSCAPE_ENEMY
+&2c5b 0a ; LANDSCAPE_ALIEN
+&2c5c 06 ; LANDSCAPE_ENEMY
+&2c5d 01 ; LANDSCAPE_SLOPE_UP
+&2c5e 0a ; LANDSCAPE_ALIEN
+&2c5f 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c60 44 ; CEILING_SLOPE_UP | LANDSCAPE_SLOPE_DOWN
+&2c61 0a ; LANDSCAPE_ALIEN
+&2c62 33 ; CEILING_STEEP_SLOPE_UP | LANDSCAPE_STEEP_SLOPE_DOWN
+&2c63 06 ; LANDSCAPE_ENEMY
+&2c64 0a ; LANDSCAPE_ALIEN
+&2c65 04 ; LANDSCAPE_SLOPE_DOWN
+&2c66 06 ; LANDSCAPE_ENEMY
+&2c67 0a ; LANDSCAPE_ALIEN
+&2c68 06 ; LANDSCAPE_ENEMY
+&2c69 21 ; CEILING_STEEP_SLOPE_DOWN | LANDSCAPE_SLOPE_UP
+&2c6a 0a ; LANDSCAPE_ALIEN
+&2c6b 16 ; CEILING_SLOPE_DOWN | LANDSCAPE_ENEMY
+&2c6c 06 ; LANDSCAPE_ENEMY
+&2c6d 0a ; LANDSCAPE_ALIEN
+&2c6e 06 ; LANDSCAPE_ENEMY
+&2c6f 01 ; LANDSCAPE_SLOPE_UP
+&2c70 0a ; LANDSCAPE_ALIEN
+&2c71 04 ; LANDSCAPE_SLOPE_DOWN
+&2c72 36 ; CEILING_STEEP_SLOPE_UP | LANDSCAPE_ENEMY
+&2c73 46 ; CEILING_SLOPE_UP | LANDSCAPE_ENEMY
+&2c74 0a ; LANDSCAPE_ALIEN
+&2c75 01 ; LANDSCAPE_SLOPE_UP
+&2c76 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c77 0a ; LANDSCAPE_ALIEN
+&2c78 04 ; LANDSCAPE_SLOPE_DOWN
+&2c79 13 ; CEILING_SLOPE_DOWN | LANDSCAPE_STEEP_SLOPE_DOWN
+&2c7a 0a ; LANDSCAPE_ALIEN
+&2c7b 26 ; CEILING_STEEP_SLOPE_DOWN | LANDSCAPE_ENEMY
+&2c7c 04 ; LANDSCAPE_SLOPE_DOWN
+&2c7d 0a ; LANDSCAPE_ALIEN
+&2c7e 06 ; LANDSCAPE_ENEMY
+&2c7f 06 ; LANDSCAPE_ENEMY
+&2c80 0a ; LANDSCAPE_ALIEN
+&2c81 41 ; CEILING_SLOPE_UP | LANDSCAPE_SLOPE_UP
+&2c82 36 ; CEILING_STEEP_SLOPE_UP | LANDSCAPE_ENEMY
+&2c83 0a ; LANDSCAPE_ALIEN
+&2c84 06 ; LANDSCAPE_ENEMY
+&2c85 01 ; LANDSCAPE_SLOPE_UP
+&2c86 0a ; LANDSCAPE_ALIEN
+&2c87 04 ; LANDSCAPE_SLOPE_DOWN
+&2c88 26 ; CEILING_STEEP_SLOPE_DOWN | LANDSCAPE_ENEMY
+&2c89 0a ; LANDSCAPE_ALIEN
+&2c8a 16 ; CEILING_SLOPE_DOWN | LANDSCAPE_ENEMY
+&2c8b 01 ; LANDSCAPE_SLOPE_UP
+&2c8c 0a ; LANDSCAPE_ALIEN
+&2c8d 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2c8e 04 ; LANDSCAPE_SLOPE_DOWN
+&2c8f 0a ; LANDSCAPE_ALIEN
+&2c90 33 ; CEILING_STEEP_SLOPE_UP | LANDSCAPE_STEEP_SLOPE_DOWN
+&2c91 46 ; CEILING_SLOPE_UP | LANDSCAPE_ENEMY
+&2c92 0a ; LANDSCAPE_ALIEN
+&2c93 04 ; LANDSCAPE_SLOPE_DOWN
+&2c94 06 ; LANDSCAPE_ENEMY
+&2c95 0a ; LANDSCAPE_ALIEN
+&2c96 01 ; LANDSCAPE_SLOPE_UP
+&2c97 04 ; LANDSCAPE_SLOPE_DOWN
+&2c98 0a ; LANDSCAPE_ALIEN
+&2c99 06 ; LANDSCAPE_ENEMY
+&2c9a 06 ; LANDSCAPE_ENEMY
+&2c9b 0a ; LANDSCAPE_ALIEN
+&2c9c 01 ; LANDSCAPE_SLOPE_UP
+&2c9d 0f ; LANDSCAPE_END 
+
+; fuelling_stage_landscape_data
+;     cg
+&2c9e 00 ; LANDSCAPE_FLAT
+&2c9f 00 ; LANDSCAPE_FLAT
+&2ca0 00 ; LANDSCAPE_FLAT
+&2ca1 00 ; LANDSCAPE_FLAT
+&2ca2 00 ; LANDSCAPE_FLAT
+&2ca3 09 ; LANDSCAPE_SATELLITE
+&2ca4 09 ; LANDSCAPE_SATELLITE
+&2ca5 09 ; LANDSCAPE_SATELLITE
+&2ca6 09 ; LANDSCAPE_SATELLITE
+&2ca7 09 ; LANDSCAPE_SATELLITE
+&2ca8 09 ; LANDSCAPE_SATELLITE
+&2ca9 09 ; LANDSCAPE_SATELLITE
+&2caa 09 ; LANDSCAPE_SATELLITE
+&2cab 09 ; LANDSCAPE_SATELLITE
+&2cac 09 ; LANDSCAPE_SATELLITE
+&2cad 09 ; LANDSCAPE_SATELLITE
+&2cae 00 ; LANDSCAPE_FLAT
+&2caf 00 ; LANDSCAPE_FLAT
+&2cb0 08 ; LANDSCAPE_FUELLING_STATION
+&2cb1 00 ; LANDSCAPE_FLAT
+&2cb2 00 ; LANDSCAPE_FLAT
+&2cb3 09 ; LANDSCAPE_SATELLITE
+&2cb4 09 ; LANDSCAPE_SATELLITE
+&2cb5 09 ; LANDSCAPE_SATELLITE
+&2cb6 09 ; LANDSCAPE_SATELLITE
+&2cb7 09 ; LANDSCAPE_SATELLITE
+&2cb8 09 ; LANDSCAPE_SATELLITE
+&2cb9 09 ; LANDSCAPE_SATELLITE
+&2cba 09 ; LANDSCAPE_SATELLITE
+&2cbb 00 ; LANDSCAPE_FLAT
+&2cbc 00 ; LANDSCAPE_FLAT
+&2cbd 00 ; LANDSCAPE_FLAT
+&2cbe 00 ; LANDSCAPE_FLAT
+&2cbf 0f ; LANDSCAPE_END
+&2cc0 09 ; LANDSCAPE_SATELLITE
+&2cc1 00 ; LANDSCAPE_FLAT
+&2cc2 09 ; LANDSCAPE_SATELLITE
+&2cc3 00 ; LANDSCAPE_FLAT
+&2cc4 09 ; LANDSCAPE_SATELLITE
+&2cc5 00 ; LANDSCAPE_FLAT
+&2cc6 09 ; LANDSCAPE_SATELLITE
+&2cc7 00 ; LANDSCAPE_FLAT
+&2cc8 09 ; LANDSCAPE_SATELLITE
+&2cc9 00 ; LANDSCAPE_FLAT
+&2cca 00 ; LANDSCAPE_FLAT
+&2ccb 0f ; LANDSCAPE_END 
+
+; stage_3_landscape_data                                            # Organic landscape
+;     cg
+&2ccc 01 ; LANDSCAPE_SLOPE_UP
+&2ccd 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2cce 04 ; LANDSCAPE_SLOPE_DOWN
+&2ccf 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2cd0 06 ; LANDSCAPE_ENEMY
+&2cd1 04 ; LANDSCAPE_SLOPE_DOWN
+&2cd2 06 ; LANDSCAPE_ENEMY
+&2cd3 06 ; LANDSCAPE_ENEMY
+&2cd4 01 ; LANDSCAPE_SLOPE_UP
+&2cd5 06 ; LANDSCAPE_ENEMY
+&2cd6 06 ; LANDSCAPE_ENEMY
+&2cd7 01 ; LANDSCAPE_SLOPE_UP
+&2cd8 04 ; LANDSCAPE_SLOPE_DOWN
+&2cd9 06 ; LANDSCAPE_ENEMY
+&2cda 06 ; LANDSCAPE_ENEMY
+&2cdb 01 ; LANDSCAPE_SLOPE_UP
+&2cdc 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2cdd 04 ; LANDSCAPE_SLOPE_DOWN
+&2cde 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2cdf 06 ; LANDSCAPE_ENEMY
+&2ce0 04 ; LANDSCAPE_SLOPE_DOWN
+&2ce1 06 ; LANDSCAPE_ENEMY
+&2ce2 06 ; LANDSCAPE_ENEMY
+&2ce3 01 ; LANDSCAPE_SLOPE_UP
+&2ce4 06 ; LANDSCAPE_ENEMY
+&2ce5 06 ; LANDSCAPE_ENEMY
+&2ce6 01 ; LANDSCAPE_SLOPE_UP
+&2ce7 04 ; LANDSCAPE_SLOPE_DOWN
+&2ce8 06 ; LANDSCAPE_ENEMY
+&2ce9 06 ; LANDSCAPE_ENEMY
+&2cea 01 ; LANDSCAPE_SLOPE_UP
+&2ceb 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2cec 04 ; LANDSCAPE_SLOPE_DOWN
+&2ced 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2cee 06 ; LANDSCAPE_ENEMY
+&2cef 04 ; LANDSCAPE_SLOPE_DOWN
+&2cf0 06 ; LANDSCAPE_ENEMY
+&2cf1 06 ; LANDSCAPE_ENEMY
+&2cf2 01 ; LANDSCAPE_SLOPE_UP
+&2cf3 06 ; LANDSCAPE_ENEMY
+&2cf4 06 ; LANDSCAPE_ENEMY
+&2cf5 01 ; LANDSCAPE_SLOPE_UP
+&2cf6 04 ; LANDSCAPE_SLOPE_DOWN
+&2cf7 06 ; LANDSCAPE_ENEMY
+&2cf8 06 ; LANDSCAPE_ENEMY
+&2cf9 01 ; LANDSCAPE_SLOPE_UP
+&2cfa 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2cfb 04 ; LANDSCAPE_SLOPE_DOWN
+&2cfc 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2cfd 06 ; LANDSCAPE_ENEMY
+&2cfe 04 ; LANDSCAPE_SLOPE_DOWN
+&2cff 06 ; LANDSCAPE_ENEMY
+&2d00 06 ; LANDSCAPE_ENEMY
+&2d01 01 ; LANDSCAPE_SLOPE_UP
+&2d02 06 ; LANDSCAPE_ENEMY
+&2d03 06 ; LANDSCAPE_ENEMY
+&2d04 01 ; LANDSCAPE_SLOPE_UP
+&2d05 04 ; LANDSCAPE_SLOPE_DOWN
+&2d06 06 ; LANDSCAPE_ENEMY
+&2d07 06 ; LANDSCAPE_ENEMY
+&2d08 01 ; LANDSCAPE_SLOPE_UP
+&2d09 02 ; LANDSCAPE_STEEP_SLOPE_UP
+&2d0a 04 ; LANDSCAPE_SLOPE_DOWN
+&2d0b 03 ; LANDSCAPE_STEEP_SLOPE_DOWN
+&2d0c 06 ; LANDSCAPE_ENEMY
+&2d0d 04 ; LANDSCAPE_SLOPE_DOWN
+&2d0e 06 ; LANDSCAPE_ENEMY
+&2d0f 06 ; LANDSCAPE_ENEMY
+&2d10 01 ; LANDSCAPE_SLOPE_UP
+&2d11 06 ; LANDSCAPE_ENEMY
+&2d12 06 ; LANDSCAPE_ENEMY
+&2d13 01 ; LANDSCAPE_SLOPE_UP
+&2d14 04 ; LANDSCAPE_SLOPE_DOWN
+&2d15 06 ; LANDSCAPE_ENEMY
+&2d16 06 ; LANDSCAPE_ENEMY
+&2d17 00 ; LANDSCAPE_FLAT
+&2d18 0f ; LANDSCAPE_END 
+
+; stage_4_landscape_data                                            # Artificial landscape
+;     g  c
+&2d19 e6 00 ; ENEMY
+&2d1b e6 00 ; ENEMY
+&2d1d e6 00 ; ENEMY
+&2d1f e6 00 ; ENEMY
+&2d21 e6 00 ; ENEMY
+&2d23 e6 00 ; ENEMY
+&2d25 e6 00 ; ENEMY
+&2d27 e6 00 ; ENEMY
+&2d29 e6 00 ; ENEMY
+&2d2b 78 00 ; ENEMY
+&2d2d 64 00 ; ENEMY
+&2d2f 78 00 ; ENEMY
+&2d31 64 00 ; ENEMY
+&2d33 50 00 ; ENEMY
+&2d35 64 00 ; ENEMY
+&2d37 50 00 ; ENEMY
+&2d39 3c 00 ; ENEMY
+&2d3b 50 00 ; ENEMY
+&2d3d 64 00 ; ENEMY
+&2d3f 78 00 ; ENEMY
+&2d41 8c 00 ; ENEMY
+&2d43 8c 00 ; ENEMY
+&2d45 8c 00 ; ENEMY
+&2d47 8c 00 ; ENEMY
+&2d49 8c 00 ; ENEMY
+&2d4b b4 00 ; ENEMY
+&2d4d b4 00 ; ENEMY
+&2d4f c8 00 ; ENEMY
+&2d51 c8 00 ; ENEMY
+&2d53 d2 00 ; ENEMY
+&2d55 d2 00 ; ENEMY
+&2d57 c8 00 ; ENEMY
+&2d59 c8 00 ; ENEMY
+&2d5b dc 00 ; ENEMY
+&2d5d e6 00 ; ENEMY
+&2d5f e6 00 ; ENEMY
+&2d61 64 00 ; ENEMY
+&2d63 3c 00 ; ENEMY
+&2d65 46 00 ; ENEMY
+&2d67 50 00 ; ENEMY
+&2d69 5a 00 ; ENEMY
+&2d6b 64 00 ; ENEMY
+&2d6d 6e 00 ; ENEMY
+&2d6f 6e 00 ; ENEMY
+&2d71 6e 00 ; ENEMY
+&2d73 6e 00 ; ENEMY
+&2d75 78 00 ; ENEMY
+&2d77 8c 00 ; ENEMY
+&2d79 a0 00 ; ENEMY
+&2d7b b4 00 ; ENEMY
+&2d7d d2 00 ; ENEMY
+&2d7f e6 00 ; ENEMY
+&2d81 e6 00 ; ENEMY
+&2d83 e6 00 ; ENEMY
+&2d85 ff ff ; landscape end
+
+; stage_5_landscape_data                                            # Artificial landscape
+;     g  c
+&2d87 e7 28
+&2d89 e6 28 ; FUEL
+&2d8b 46 28 ; FUEL
+&2d8d 46 28 ; FUEL
+&2d8f 46 28 ; FUEL
+&2d91 46 28 ; FUEL
+&2d93 ab 28
+&2d95 ab 28
+&2d97 ab 28
+&2d99 ab 82
+&2d9b aa 82 ; FUEL
+&2d9d aa 82 ; FUEL
+&2d9f aa 28 ; FUEL
+&2da1 ab 28
+&2da3 ab 28
+&2da5 47 28
+&2da7 46 28 ; FUEL
+&2da9 97 28
+&2dab 97 28
+&2dad 97 6e
+&2daf 96 6e ; FUEL
+&2db1 96 6e ; FUEL
+&2db3 96 6e ; FUEL
+&2db5 e6 6e ; FUEL
+&2db7 e7 6e
+&2db9 e7 6e
+&2dbb e7 be
+&2dbd e6 be ; FUEL
+&2dbf e6 be ; FUEL
+&2dc1 e6 be ; FUEL
+&2dc3 e6 be ; FUEL
+&2dc5 e7 28
+&2dc7 e7 28
+&2dc9 e7 28
+&2dcb e7 28
+&2dcd e7 28
+&2dcf e7 28
+&2dd1 47 28
+&2dd3 47 28
+&2dd5 47 28
+&2dd7 e7 28
+&2dd9 e7 28
+&2ddb e7 be
+&2ddd e7 be
+&2ddf e7 be
+&2de1 e7 be
+&2de3 e7 28
+&2de5 e7 28
+&2de7 e7 28
+&2de9 47 28
+&2deb 47 28
+&2ded 47 28
+&2def 47 28
+&2df1 47 28
+&2df3 e7 28
+&2df5 e7 28
+&2df7 e7 be
+&2df9 e7 be
+&2dfb e7 be
+&2dfd e7 be
+&2dff e7 28
+&2e01 e7 28
+&2e03 e7 28
+&2e05 47 28
+&2e07 47 28
+&2e09 47 28
+&2e0b 47 28
+&2e0d ff ff ; landscape end
+
+; fragment_x_velocities
+&2e0f 01 02 03 03 02 03 02 01 ff fe fd fd fe fd fe ff 
+
+; fragment_y_velocities
+&2e1f ff fe fb fc 01 02 03 04 04 05 02 01 ff fe fd fc 
+
+; landscape_data_addresses
+&2e2f 06 2c ; &2c06 = stage_1_landscape_data
+&2e31 9e 2c ; &2c9e = fuelling_stage_landscape_data
+&2e33 49 2c ; &2c49 = stage_2_landscape_data
+&2e35 9e 2c ; &2c9e = fuelling_stage_landscape_data
+&2e37 cc 2c ; &2ccc = stage_3_landscape_data
+&2e39 9e 2c ; &2c9e = fuelling_stage_landscape_data
+&2e3b 19 2d ; &2d19 = stage_4_landscape_data
+&2e3d 9e 2c ; &2c9e = fuelling_stage_landscape_data
+&2e3f 87 2d ; &2d87 = stage_5_landscape_data
+&2e41 9e 2c ; &2c9e = fuelling_stage_landscape_data
+&2e43 76 2b ; &2b76 = stage_6_landscape_data
+&2e45 9e 2c ; &2c9e = fuelling_stage_landscape_data
+
+; stages_with_ceiling                                               # If organic landscape, set if stage has ceiling
+; stages_with_fuel                                                  # If artificial landscape, set if stage has enemy fuel
+;      1     2     3     4     5     6
+&2e47 00 00 01 00 00 00 00 00 01 00 01 00
+
+; stages_with_rockets                                               # Set if stage has rockets that launch
+;      1     2     3     4     5     6
+&2e53 01 00 00 00 00 00 01 01 00 01 00 00
+
+; stages_with_meteors                                               # If organic landscape, set if stage has meteors
+;      1     2     3     4     5     6
+&2e5f 00 00 00 00 01 00 00 00 00 00 00 00
+
+; stages_with_aliens                                                # Unused; aliens are set in landscape data
+;      1     2     3     4     5     6
+&2e6b 00 00 01 00 00 00 00 00 00 00 00 00
+
+; stages_with_pellets                                               # Set if stage has shooters that fire
+;      1     2     3     4     5     6
+&2e77 01 01 01 01 01 01 01 01 01 01 01 01 
+
+; stages_with_artificial_landscapes                                 # Set if stage has artificial, not organic landscape
+;      1     2     3     4     5     6
+&2e83 00 00 00 00 00 00 01 00 01 00 01 00
+
+; standard_keys
+&2e8f a6 ; DELETE
+&2e90 96 ; COPY
+&2e91 ef ; Q
+&2e92 be ; A
+&2e93 ff ; SHIFT
+&2e94 9f ; TAB
+
+; enemy_type_sprites
+&2e95 00 ; &00 ENEMY_NONE            : SPRITE_PLAYER        scores   0
+&2e96 01 ; &01 ENEMY_INACTIVE_ROCKET : SPRITE_ROCKET        scores  10
+&2e97 01 ; &02 ENEMY_ACTIVE_ROCKET   : SPRITE_ROCKET        scores  40
+&2e98 02 ; &03 ENEMY_SCANNER         : SPRITE_SCANNER       scores   5
+&2e99 02 ; &04 unused                : SPRITE_SCANNER       scores   5
+&2e9a 03 ; &05 ENEMY_ALIEN_UP        : SPRITE_ALIEN         scores  10
+&2e9b 03 ; &06 ENEMY_ALIEN_DOWN      : SPRITE_ALIEN         scores  10
+&2e9c 05 ; &07 ENEMY_METEOR          : SPRITE_METEOR        scores  20
+&2e9d 05 ; &08 unused                : SPRITE_METEOR        scores   0
+&2e9e 09 ; &09 ENEMY_EXPLOSION       : SPRITE_EXPLOSION     scores   0
+&2e9f 09 ; &0a unused                : SPRITE_EXPLOSION     scores   0
+&2ea0 08 ; &0b ENEMY_FUEL            : SPRITE_FUEL          scores  15
+&2ea1 0a ; &0c ENEMY_SHOOTER         : SPRITE_SHOOTER       scores  30
+&2ea2 0b ; &0d ENEMY_BASE            : SPRITE_BASE          scores 100
+&2ea3 0b ; &0e unused                : SPRITE_BASE          scores 100
+
+; enemy_type_widths
+;      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e
+&2ea4 04 03 03 04 04 04 04 04 04 04 04 04 04 08 08
+
+; enemy_type_heights
+;      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e
+&2eb3 08 0f 0f 0f 0f 07 07 07 07 08 08 0f 0f 0f 0f
+
+; sprite_widths_table                                               # (width - 1) * 8
+;      0  1  2  3  4  5  6  7  8  9  a  b  c
+&2ec2 38 10 18 10 18 18 38 38 18 18 18 38 38
+
+; sprite_heights_table                                              # height - 1
+;      0  1  2  3  4  5  6  7  8  9  a  b  c
+&2ecf 0f 0f 0f 06 07 06 0f 0f 0f 07 0f 0f 0f
+
+; enemy_type_scores
+;      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e
+&2edc 00 0a 28 05 05 0a 0a 14 00 00 00 0f 1e 64 64
+
+; landscape_enemies
+&2eeb 01 ; ENEMY_INACTIVE_ROCKET
+&2eec 01 ; ENEMY_INACTIVE_ROCKET
+&2eed 0c ; ENEMY_SHOOTER
+&2eee 03 ; ENEMY_SCANNER
+&2eef 03 ; ENEMY_SCANNER 
+&2ef0 0b ; ENEMY_FUEL
+&2ef1 0b ; ENEMY_FUEL
+&2ef2 0c ; ENEMY_SHOOTER
+
+; bomb_y_velocities
+;      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f 10
+&2ef3 02 02 04 04 04 06 06 06 06 06 06 06 06 06 06 06 06
+
+; unused
+&2f04 06 
+
+; bomb_x_velocities
+;      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f 10
+&2f05 02 02 02 01 01 01 01 00 00 00 00 00 00 00 00 00 00 
+
+; ground_height
+&2f16 00
+
+; unused
+&2f17 00 26
+
+; player_x
+&2f19 00
+
+; player_y
+&2f1a 00
+
+; vertical_movement
+&2f1b 00
+
+; horizontal_movement
+&2f1c 00
+
+; first_palette_timer
+&2f1d 00
+
+; suppress_firing
+&2f1e 00
+
+; suppress_bombing
+&2f1f 00
+
+; player_fuel
+&2f20 46
+
+; fuel_drain_cooldown
+&2f21 1e
+
+; score
+&2f22 02 00
+
+; player_lives
+&2f24 03
+
+; player_exploding
+&2f25 00
+
+; second_palette_timer
+&2f26 00
+
+; stage
+&2f27 00
+
+; fuelling_station_x
+&2f28 00
+
+; mission
+&2f29 00
+
+; maximum_fuel_drain_cooldown
+&2f2a 46
+
+; maximum_fuel_drain_cooldown_per_mission
+;      0  1  2  3  4  5  6  7
+;      A  B  C  D  E  F  G  H
+&2f2b 19 14 0f 0a 0a 0a 0a 0a
+
+; unused
+&2f33 0a 0a 
+
+; stage_colours
+&2f35 01 05 02 04 01 02
+
+; envelope_1                                                        # Firing
+&2f3b 01 01 fe fe fe ff ff ff 1e fe fe fe 64 05 
+
+; envelope_2                                                        # Bombing
+&2f49 02 02 ff ff ff ff ff ff 64 fe fe fe 64 50 
+
+; envelope_3                                                        # Destroying enemy
+&2f57 03 01 00 00 00 ff ff ff 64 fe fe fe 64 50 
+
+; envelope_4                                                        # Player explosion
+&2f65 04 01 ff ff ff ff ff ff 64 ff ff ff 64 50 
+
+; envelope_5                                                        # Extra life
+&2f73 04 01 f1 f1 f1 ff ff ff 7e 00 00 ff 7e 64 
+
+; envelope_6                                                        # Aliens
+&2f81 04 02 fe 02 fe 0a 14 0a 7e 00 00 00 50 50
+
+; sound_0                                                           # Firing
+;     chan  vol   pitch dur
+&2f8f 12 00 01 00 8c 00 01 00
+
+; sound_1                                                           # Bombing
+;     chan  vol   pitch dur
+&2f97 13 00 02 00 3c 00 01 00
+
+; sound_2                                                           # Destroying enemy
+;     chan  vol   pitch dur
+&2f9f 10 00 03 00 06 00 14 00
+
+; sound_3                                                           # Player explosion
+;     chan  vol   pitch dur
+&2fa7 10 00 f1 ff 07 00 28 00
+
+; sound_4                                                           # Player explosion
+;     chan  vol   pitch dur
+&2faf 11 00 04 00 c8 00 28 00
+
+; sound_5                                                           # Fully fuelled
+;     chan  vol   pitch dur
+&2fb7 11 00 f1 ff 32 00 08 00
+
+; sound_6                                                           # Satellite appearing
+;     chan  vol   pitch dur
+&2fbf 11 00 fb ff c8 00 01 00
+
+; sound_7                                                           # Extra life
+;     chan  vol   pitch dur
+&2fc7 11 00 04 00 64 00 14 00
+
+; sound_8                                                           # Aliens
+;     chan  vol   pitch dur
+&2fcf 01 00 04 00 c8 00 01 00
+
+; sound_9                                                           # Silence
+;     chan  vol   pitch dur
+&2fd7 11 00 00 00 00 00 00 00 
+
+; unused
+&2fdf 00 00
+
+; unused                                                            # Source code fragment
+&2fe1 20 42 52 4b 3a 2e 62 6c 6f 63 6b 20 3a 5d 50 25 ;       ... BRK:.block :]P%=P%+16
+&2ff1 3d 50 25 2b 31 36 0d
+&2ff8 4e ca 05 20 0d                                  ; 20170
+&2ffd 4e cc 23                                        ; 20172 ...
+
+# &3000 - &37ff is moved to &1000 - &17ff at &1ada
+
+; sprite_data
+
+; sprite_0 (SPRITE_PLAYER)
+&1000 00 00 00 00 00 00 54 f3 05 0f 05 00 00 f1 f8 f8
+&1010 0f 0f 0f 0f 05 fc f6 f3 0f 87 0f 0f 0f 0f ad fc
+&1020 00 0a 00 00 0a 0f 0f 0f 00 00 00 00 00 0a 0f f1
+&1030 00 00 00 00 00 00 0f ad 00 00 00 00 00 00 00 0f
+&1040 f3 54 00 00 00 00 00 00 f8 f8 f1 00 00 05 0f 05
+&1050 f3 f6 fc 05 0f 0f 0f 0f fc ad 0f 0f 0f 0f 87 0f
+&1060 0f 0f 0f 0a 00 00 0a 00 f1 0f 0a 00 00 00 00 00
+&1070 ad 0f 00 00 00 00 00 00 0f 00 00 00 00 00 00 00
+
+; sprite_1 (SPRITE_ROCKET)
+&1080 00 00 00 00 00 00 00 00 01 01 0b 0b 0b 03 03 03
+&1090 00 00 02 02 02 02 02 02 00 00 00 00 00 00 00 00
+&10a0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&10b0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&10c0 00 00 00 05 05 05 05 05 03 03 0f 0f 0a 00 00 00
+&10d0 02 02 0a 0f 0f 05 05 05 00 00 00 00 00 00 00 00
+&10e0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&10f0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_2 (SPRITE_SCANNER)
+&1100 00 45 45 10 10 30 30 38 00 10 98 c9 61 30 30 30
+&1110 30 30 30 30 90 90 34 3c 20 34 34 34 3c 3c 28 28
+&1120 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1130 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1140 14 00 00 00 00 00 00 55 3c 3c 00 00 00 55 ff ff
+&1150 3c 28 00 55 ff ab 03 ff 00 aa ff ff 57 57 57 ff
+&1160 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1170 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_3 (SPRITE_ALIEN)
+&1180 55 aa ff af ff 55 00 00 ff ff ff ff 0f ff 00 00
+&1190 aa 55 ff 5f ff aa 00 00 00 00 00 00 00 00 00 00
+&11a0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&11b0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&11c0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&11d0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&11e0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&11f0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_4 (SPRITE_SATELLITE)
+&1200 2a 3f 15 01 01 15 3f 2a 01 03 03 03 03 03 03 01
+&1210 02 03 03 03 03 03 03 02 15 3f 2a 02 02 2a 3f 15
+&1220 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1230 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1240 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1250 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1260 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1270 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_5 (SPRITE_METEOR)
+&1280 11 23 23 23 23 23 11 00 02 07 03 03 03 07 02 00
+&1290 00 02 0b 0b 0b 02 00 00 00 00 0a 07 0a 00 00 00
+&12a0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&12b0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&12c0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&12d0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&12e0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&12f0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_6 (SPRITE_FUELLING_STATION_TOP)
+&1300 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 55
+&1310 00 00 00 00 00 00 55 ff 00 00 00 00 00 00 ff ff
+&1320 00 00 00 00 00 00 ff ff 00 00 00 00 00 00 aa ff
+&1330 00 00 00 00 00 00 00 aa 00 00 00 00 00 00 00 00
+&1340 00 55 55 ff ff ff 00 00 ff ff ff ff ef ee 41 40
+&1350 ff ff ff ff df dd 82 80 aa 40 40 aa ff ff 00 00
+&1360 55 80 80 55 ff ff 00 00 ff ff ff ff ef ee 41 40
+&1370 ff ff ff ff df dd 82 80 00 aa aa ff ff ff 00 00
+
+; sprite_7 (SPRITE_FUELLING_STATION_BOTTOM)
+&1380 00 00 ff ff ff 55 55 00 40 41 ee ef ff ff ff ff
+&1390 80 82 dd df ff ff ff ff 00 00 ff ff aa 44 44 aa
+&13a0 00 00 ff ff 55 88 88 55 40 41 ee ef ff ff ff ff
+&13b0 80 82 dd df ff ff ff ff 00 00 ff ff ff aa aa 00
+&13c0 00 00 00 00 00 00 00 00 55 00 00 00 00 00 00 00
+&13d0 ff 55 00 00 00 00 00 00 ff ff 00 00 00 00 00 00
+&13e0 ff ff 00 00 00 00 00 00 ff aa 00 00 00 00 00 00
+&13f0 aa 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_8 (SPRITE_FUEL)
+&1400 00 00 00 00 00 55 ff fa 00 00 00 00 ff fa fb f6
+&1410 00 00 00 00 ff f5 f7 f9 00 00 00 00 00 aa ff f5
+&1420 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1430 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1440 fa fa ff 55 00 55 ff 03 f6 f6 fb fa ff ff aa 00
+&1450 f9 f9 f7 f5 ff ff 55 00 f5 f5 ff aa 00 aa ff 03
+&1460 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1470 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_9 (SPRITE_EXPLOSION)                                       # Unused sprite
+&1480 40 00 41 80 41 c4 00 40 40 82 88 45 88 ce 82 40
+&1490 40 c9 44 88 ce 44 82 40 00 00 80 82 80 00 80 00
+&14a0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&14b0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&14c0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&14d0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&14e0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&14f0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_a (SPRITE_SHOOTER)
+&1500 00 00 00 00 00 00 00 00 40 40 40 41 41 41 44 44
+&1510 80 80 80 82 82 82 88 88 00 00 00 00 00 00 00 00
+&1520 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1530 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1540 00 15 15 15 3f 3f 6a 3f 6e 6f 6f 6f c0 c0 c0 3f
+&1550 9d 9f 9f 9f c0 c0 c0 3f 00 2a 2a 2a 3f 3f 95 3f
+&1560 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1570 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; sprite_b (SPRITE_BASE)
+&1580 00 00 55 55 55 01 01 01 55 ff ab 03 03 03 03 03
+&1590 ff 03 03 17 3f 03 03 a9 03 03 2b 2b 21 03 07 07
+&15a0 03 03 17 17 12 03 0b 0b ff 03 03 2b 3f 03 03 56
+&15b0 aa ff 57 03 03 03 03 03 00 00 aa aa aa 02 02 02
+&15c0 01 01 01 00 00 00 00 00 56 f9 56 03 03 01 15 15
+&15d0 f6 f1 f2 f9 56 03 2b 3f 03 fc f3 f0 f3 fc 03 2a
+&15e0 03 fc f3 f0 f3 fc 03 15 f9 f2 f1 f6 a9 03 17 3f
+&15f0 a9 f6 a9 03 03 02 2a 2a 02 02 02 00 00 00 00 00
+
+; number_sprites
+&1600 ff aa aa aa aa aa ff 00 aa aa aa aa aa aa aa 00 ; "0"
+&1610 55 ff 55 55 55 55 ff 00 00 00 00 00 00 00 aa 00 ; "1"
+&1620 ff 00 00 ff aa aa ff 00 aa aa aa aa 00 00 aa 00 ; "2"
+&1630 ff 00 00 ff 00 00 ff 00 aa aa aa aa aa aa aa 00 ; "3"
+&1640 aa aa aa ff 00 00 00 00 aa aa aa aa aa aa aa 00 ; "4"
+&1650 ff aa aa ff 00 00 ff 00 aa 00 00 aa aa aa aa 00 ; "5"
+&1660 aa aa aa ff aa aa ff 00 00 00 00 aa aa aa aa 00 ; "6"
+&1670 ff 00 00 00 00 00 00 00 aa aa aa aa aa aa aa 00 ; "7"
+&1680 ff aa aa ff aa aa ff 00 aa aa aa aa aa aa aa 00 ; "8"
+&1690 ff aa aa ff 00 00 00 00 aa aa aa aa aa aa aa 00 ; "9"
+&16a0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ; " "
+&16b0 00 55 55 00 00 55 55 00 00 00 00 00 00 00 00 00 ; ":"
+
+; unused
+&16c0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&16d0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&16e0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&16f0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+; score_buffer                                                      # &1768 - &17ff is overwritten
+&1700 00 00 00 00 00 00 00 00 ff aa aa ff 00 00 ff 00
+&1710 aa 00 00 aa aa aa aa 00 ff aa aa aa aa aa ff 00
+&1720 aa 00 00 00 00 00 aa 00 ff aa aa aa aa aa ff 00
+&1730 aa aa aa aa aa aa aa 00 ff aa aa ff aa aa aa 00
+&1740 aa aa aa aa aa aa aa 00 ff aa aa ff aa aa ff 00
+&1750 aa 00 00 aa 00 00 aa 00 00 00 55 55 00 55 55 00
+&1760 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1770 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1780 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&1790 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&17a0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&17b0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+&17c0 00 00 00 00 00 00 00 00 00 03 00 00 00 fc 03 00
+&17d0 00 78 00 32 00 00 00 0d 00 00 00 08 04 04 00 84
+&17e0 8d 43 6f 04 04 04 00 05 00 00 00 ef ff 9d b0 9d
+&17f0 1f 9c 78 9b 4e 9b 05 9b 04 98 73 8b b9 22 05 00
+
+# &3800 - &3bff is moved to &0400 - &07ff at &3df1
+
+; to_hall_of_fame_screen
+&0400 4c 1d 04 JMP &041d ; hall_of_fame_screen
+
+; to_move_memory_second_stage                                       # Used unrelocated
+&3803 4c ef 3d JMP &3def ; move_memory_second_stage
+
+; to_initialise_high_scores
+&0406 4c b6 05 JMP &05b6 ; initialise_high_scores
+
+; write_string
+&0409 98       TYA
+&040a 48       PHA ; tmp_y
+&040b a0 00    LDY #&00
+; write_string_loop
+&040d b1 70    LDA (&70),Y ; string_address
+&040f c9 ff    CMP #&ff                                             # &ff indicates end of string
+&0411 f0 07    BEQ &041a ; leave_after_restoring_Y
+&0413 20 ee ff JSR &ffee ; OSWRCH
+&0416 c8       INY
+&0417 4c 0d 04 JMP &040d ; write_string_loop
+; leave_after_restoring_Y
+&041a 68       PLA ; tmp_y
+&041b 98       TYA
+&041c 60       RTS
+
+; hall_of_fame_screen 
+&041d a9 00    LDA #&00
+&041f 8d 00 0c STA &0c00 ; sound_muted                              # Set to zero to indicate sound not muted
+&0422 8d 06 0c STA &0c06 ; selected_stage                           # Stage 1
+&0425 8d 01 0c STA &0c01 ; input_method                             # Set to zero to use standard keys
+&0428 8d 20 0c STA &0c20 ; selected_mission                         # Mission A
+&042b a9 0d    LDA #&0d ; CR
+&042d 20 ee ff JSR &ffee ; OSWRCH
+&0430 a9 04    LDA #&04 ; Define action of cursor editing keys
+&0432 a2 01    LDX #&01 ; Cursor keys return ASCII values 135-139
+&0434 20 f4 ff JSR &fff4 ; OSBYTE
+; hall_of_fame_loop
+&0437 20 cf 06 JSR &06cf ; write_hall_of_fame
+&043a 48       PHA ; unused
+&043b a9 9a    LDA #&9a ; &099a = disable_cursor_string
+&043d 85 70    STA &70 ; string_address_low
+&043f a9 09    LDA #&09
+&0441 85 71    STA &71 ; string_address_high
+&0443 20 09 04 JSR &0409 ; write_string
+&0446 68       PLA ; unused
+&0447 20 d3 04 JSR &04d3 ; handle_hall_of_fame_keys
+&044a a9 00    LDA #&00
+&044c 8d 02 0c STA &0c02 ; final_score
+&044f 8d 03 0c STA &0c03 ; final_score + 1
+&0452 ad 0e 18 LDA &180e ; high_scores + 14
+&0455 8d 04 0c STA &0c04 ; highest_score                            # Unused variable
+&0458 ad 0f 18 LDA &180f ; high_scores + 15
+&045b 8d 05 0c STA &0c05 ; highest_score + 1                        # Unused variable
+&045e 20 03 19 JSR &1903 ; to_start_game
+&0461 20 d2 05 JSR &05d2 ; check_for_high_score                     # Returns zero if new high score, &07 if not
+&0464 c9 07    CMP #&07
+&0466 f0 cf    BEQ &0437 ; hall_of_fame_loop
+&0468 a5 72    LDA &72 ; check_rank
+&046a 85 6f    STA &6f ; player_rank
+&046c 20 bd 07 JSR &07bd ; flush_buffers
+&046f 20 cf 06 JSR &06cf ; write_hall_of_fame
+&0472 48       PHA ; unused
+&0473 a9 b2    LDA #&b2 ; &09b2 = enter_your_name_string
+&0475 85 70    STA &70 ; string_address_low
+&0477 a9 09    LDA #&09
+&0479 85 71    STA &71 ; string_address_high
+&047b 20 09 04 JSR &0409 ; write_string                             # Write "Enter your name"
+&047e 68       PLA ; unused
+&047f a9 1f    LDA #&1f                                             # TAB(&06, player_rank * 2 + 3)
+&0481 20 ee ff JSR &ffee ; OSWRCH
+&0484 a9 06    LDA #&06
+&0486 20 ee ff JSR &ffee ; OSWRCH
+&0489 a5 6f    LDA &6f ; player_rank
+&048b 18       CLC
+&048c 65 6f    ADC &6f ; player_rank
+&048e 69 03    ADC #&03
+&0490 20 ee ff JSR &ffee ; OSWRCH
+&0493 48       PHA ; unused
+&0494 a9 ec    LDA #&ec ; &09ec = question_mark_string              # Write "?"
+&0496 85 70    STA &70 ; string_address_low
+&0498 a9 09    LDA #&09
+&049a 85 71    STA &71 ; string_address_high
+&049c 20 09 04 JSR &0409 ; write_string
+&049f 68       PLA ; unused
+&04a0 a5 6f    LDA &6f ; player_rank
+&04a2 85 72    STA &72 ; rank
+&04a4 20 58 06 JSR &0658 ; get_high_score_name
+&04a7 4c 37 04 JMP &0437 ; hall_of_fame_loop
+
+; write_high_scores
+&04aa a9 00    LDA #&00
+; write_high_scores_loop
+&04ac 48       PHA ; rank
+&04ad 20 04 07 JSR &0704 ; write_high_score
+&04b0 68       PLA ; rank
+&04b1 18       CLC
+&04b2 69 01    ADC #&01
+&04b4 c9 07    CMP #&07
+&04b6 d0 f4    BNE &04ac ; write_high_scores_loop
+&04b8 48       PHA ; unused
+&04b9 a9 c6    LDA #&c6 ; &07c6 = sound_output_string
+&04bb 85 70    STA &70 ; string_address_low
+&04bd a9 07    LDA #&07
+&04bf 85 71    STA &71 ; string_address_high
+&04c1 20 09 04 JSR &0409 ; write_string                             # Write "Sound Output     (Y/N)"
+&04c4 68       PLA ; unused
+&04c5 48       PHA ; unused
+&04c6 a9 00    LDA #&00 ; &0900 = stage_skip_string
+&04c8 85 70    STA &70 ; string_address_low
+&04ca a9 09    LDA #&09
+&04cc 85 71    STA &71 ; string_address_high
+&04ce 20 09 04 JSR &0409 ; write_string                             # Write "Stage Skip level (1-6)"
+&04d1 68       PLA ; unused
+&04d2 60       RTS
+
+; handle_hall_of_fame_keys
+&04d3 20 8a 05 JSR &058a ; write_stage_and_selected_mission
+&04d6 48       PHA ; unused
+&04d7 a9 1c    LDA #&1c ; &091c = keys_user_joystick_string
+&04d9 85 70    STA &70 ; string_address_low
+&04db a9 09    LDA #&09
+&04dd 85 71    STA &71 ; string_address_high
+&04df 20 09 04 JSR &0409 ; write_string                             # Write "Keys,User,Joystick (K/U/J)"
+&04e2 68       PLA ; unused
+&04e3 ae 01 0c LDX &0c01 ; input_method
+&04e6 bd 40 09 LDA &0940,X ; input_method_characters
+&04e9 20 ee ff JSR &ffee ; OSWRCH                                   # Write input method
+&04ec ad 00 0c LDA &0c00 ; sound_muted                              # Non-zero if sound muted
+&04ef f0 6f    BEQ &0560 ; write_yes_and_enable_sound
+&04f1 4c 75 05 JMP &0575 ; write_no_and_disable_sound
+; get_and_process_keypress
+&04f4 20 7a 06 JSR &067a ; get_keypress
+&04f7 c9 59    CMP #&59 ; "Y"
+&04f9 f0 65    BEQ &0560 ; write_yes_and_enable_sound
+&04fb c9 79    CMP #&79 ; "y"
+&04fd f0 61    BEQ &0560 ; write_yes_and_enable_sound
+&04ff c9 4e    CMP #&4e ; "N"
+&0501 f0 72    BEQ &0575 ; write_no_and_disable_sound
+&0503 c9 6e    CMP #&6e ; "n"
+&0505 f0 6e    BEQ &0575 ; write_no_and_disable_sound
+&0507 c9 20    CMP #&20 ; " "
+&0509 d0 01    BNE &050c ; check_for_stage_input_and_mission_keys
+&050b 60       RTS                                                  # Leave if SPACE pressed
+; check_for_stage_input_and_mission_keys
+&050c c9 31    CMP #&31 ; "1"
+&050e 90 10    BCC &0520 ; skip_changing_stage
+&0510 c9 37    CMP #&37 ; "7"
+&0512 b0 0c    BCS &0520 ; skip_changing_stage
+&0514 38       SEC
+&0515 e9 31    SBC #&31 ; "1"
+&0517 8d 06 0c STA &0c06 ; selected_stage
+; to_write_stage_and_selected_mission
+&051a 20 8a 05 JSR &058a ; write_stage_and_selected_mission
+&051d 4c f4 04 JMP &04f4 ; get_and_process_keypress
+; skip_changing_stage
+&0520 29 5f    AND #&5f                                             # Convert character to uppercase
+&0522 a2 00    LDX #&00 ; INPUT_KEYBOARD
+&0524 c9 4b    CMP #&4b ; "K"
+&0526 f0 1c    BEQ &0544 ; change_input_method
+&0528 e8       INX ; 1 = INPUT_USER
+&0529 c9 55    CMP #&55 ; "U"
+&052b f0 17    BEQ &0544 ; change_input_method
+&052d e8       INX ; 2 = INPUT_JOYSTICK
+&052e c9 4a    CMP #&4a ; "J"
+&0530 f0 12    BEQ &0544 ; change_input_method
+&0532 38       SEC
+&0533 e9 41    SBC #&41 ; "A"
+&0535 30 0a    BMI &0541 ; skip_changing_selected_mission
+&0537 c9 04    CMP #&04 ; "D" - "A"
+&0539 b0 06    BCS &0541 ; skip_changing_selected_mission
+&053b 8d 20 0c STA &0c20 ; selected_mission
+&053e 4c 1a 05 JMP &051a ; to_write_stage_and_selected_mission
+; skip_changing_selected_mission
+&0541 4c f4 04 JMP &04f4 ; get_and_process_keypress
+; change_input_method
+&0544 8e 01 0c STX &0c01 ; input_method
+&0547 48       PHA ; unused
+&0548 a9 3c    LDA #&3c ; &093c = input_method_tab_string
+&054a 85 70    STA &70 ; string_address_low
+&054c a9 09    LDA #&09
+&054e 85 71    STA &71 ; string_address_high
+&0550 20 09 04 JSR &0409 ; write_string                             # TAB(&1f, &12)
+&0553 68       PLA ; unused
+&0554 ae 01 0c LDX &0c01 ; input_method
+&0557 bd 40 09 LDA &0940,X ; input_method_characters
+&055a 20 ee ff JSR &ffee ; OSWRCH                                   # Write input method
+&055d 4c f4 04 JMP &04f4 ; get_and_process_keypress
+
+; write_yes_and_enable_sound
+&0560 48       PHA ; unused
+&0561 a9 43    LDA #&43 ; &0943 = yes_string
+&0563 85 70    STA &70 ; string_address_low
+&0565 a9 09    LDA #&09
+&0567 85 71    STA &71 ; string_address_high
+&0569 20 09 04 JSR &0409 ; write_string                             # Write "YES"
+&056c 68       PLA ; unused
+&056d a9 00    LDA #&00
+&056f 8d 00 0c STA &0c00 ; sound_muted                              # Set to zero to indicate sound not muted
+&0572 4c f4 04 JMP &04f4 ; get_and_process_keypress
+
+; write_no_and_disable_sound
+&0575 48       PHA ; unused
+&0576 a9 4a    LDA #&4a ; &094a = no_string
+&0578 85 70    STA &70 ; string_address_low
+&057a a9 09    LDA #&09
+&057c 85 71    STA &71 ; string_address_high
+&057e 20 09 04 JSR &0409 ; write_string                             # Write "NO "
+&0581 68       PLA ; unused
+&0582 a9 01    LDA #&01
+&0584 8d 00 0c STA &0c00 ; sound_muted                              # Set to non-zero to indicate sound muted
+&0587 4c f4 04 JMP &04f4 ; get_and_process_keypress
+
+; write_stage_and_selected_mission
+&058a 48       PHA ; unused
+&058b a9 e8    LDA #&e8 ; &09e8 = stage_tab_string
+&058d 85 70    STA &70 ; string_address_low
+&058f a9 09    LDA #&09
+&0591 85 71    STA &71 ; string_address_high
+&0593 20 09 04 JSR &0409 ; write_string                             # TAB(&1f, &14)
+&0596 68       PLA ; unused
+&0597 ad 06 0c LDA &0c06 ; selected_stage
+&059a 18       CLC
+&059b 69 31    ADC #&31 ; "1"
+&059d 20 ee ff JSR &ffee ; OSWRCH                                   # Write stage number
+&05a0 48       PHA ; unused
+&05a1 a9 e2    LDA #&e2 ; &07e2 = mission_string
+&05a3 85 70    STA &70 ; string_address_low
+&05a5 a9 07    LDA #&07
+&05a7 85 71    STA &71 ; string_address_high
+&05a9 20 09 04 JSR &0409 ; write_string                             # Write "Mission        (A/B/C/D)"
+&05ac 68       PLA ; unused
+&05ad ad 20 0c LDA &0c20 ; selected_mission
+&05b0 18       CLC
+&05b1 69 41    ADC #&41 ; "A"
+&05b3 4c ee ff JMP &ffee ; OSWRCH                                   # Write mission letter
+
+; initialise_high_scores
+&05b6 a9 00    LDA #&00
+; initialise_high_scores_rank_loop
+&05b8 48       PHA ; rank
+&05b9 20 ec 06 JSR &06ec ; calculate_high_score_address
+&05bc a9 00    LDA #&00
+&05be a0 00    LDY #&00
+; initialise_high_scores_byte_loop
+&05c0 91 8e    STA (&8e),Y ; high_score_address
+&05c2 c8       INY
+&05c3 c0 10    CPY #&10
+&05c5 d0 f9    BNE &05c0 ; initialise_high_scores_byte_loop
+&05c7 68       PLA ; rank
+&05c8 18       CLC
+&05c9 69 01    ADC #&01
+&05cb c9 07    CMP #&07
+&05cd d0 e9    BNE &05b8 ; initialise_high_scores_rank_loop
+&05cf 4c 1d 04 JMP &041d ; hall_of_fame_screen
+
+; check_for_high_score
+&05d2 a9 00    LDA #&00; &1800 = high_scores
+&05d4 85 70    STA &70 ; check_address_low
+&05d6 a9 18    LDA #&18
+&05d8 85 71    STA &71 ; check_address_high
+&05da a9 00    LDA #&00
+&05dc 85 72    STA &72 ; check_rank
+; check_for_high_score_rank_loop
+&05de a0 0f    LDY #&0f
+&05e0 ad 03 0c LDA &0c03 ; final_score + 1
+&05e3 d1 70    CMP (&70),Y ; check_address
+&05e5 f0 12    BEQ &05f9 ; check_second_byte
+&05e7 b0 1a    BCS &0603 ; is_new_high_score
+; consider_next_rank
+&05e9 a5 70    LDA &70 ; check_address_low
+&05eb 18       CLC
+&05ec 69 10    ADC #&10
+&05ee 85 70    STA &70 ; check_address_low
+&05f0 e6 72    INC &72 ; check_rank
+&05f2 a5 72    LDA &72 ; check_rank
+&05f4 c9 07    CMP #&07
+&05f6 d0 e6    BNE &05de ; check_for_high_score_rank_loop
+&05f8 60       RTS                                                  # Leave with &07 to indicate not new high score
+; check_second_byte
+&05f9 88       DEY
+&05fa ad 02 0c LDA &0c02 ; final_score
+&05fd d1 70    CMP (&70),Y ; check_address
+&05ff f0 e8    BEQ &05e9 ; consider_next_rank
+&0601 90 e6    BCC &05e9 ; consider_next_rank
+; is_new_high_score
+&0603 20 16 06 JSR &0616 ; new_high_score
+&0606 a0 0f    LDY #&0f
+&0608 ad 03 0c LDA &0c03 ; final_score + 1
+&060b 91 70    STA (&70),Y ; check_address
+&060d 88       DEY
+&060e ad 02 0c LDA &0c02 ; final_score
+&0611 91 70    STA (&70),Y ; check_address
+&0613 a9 00    LDA #&00                                             # Leave with zero to indicate new high score
+&0615 60       RTS
+
+; new_high_score
+&0616 a5 72    LDA &72 ; check_rank
+&0618 c9 06    CMP #&06
+&061a f0 2b    BEQ &0647 ; skip_shuffling_scores
+&061c 85 73    STA &73 ; unused_rank                                # Unused variable
+&061e a9 06    LDA #&06
+; shuffle_high_scores_rank_loop
+&0620 48       PHA ; rank
+&0621 20 ec 06 JSR &06ec ; calculate_high_score_address
+&0624 a5 8e    LDA &8e ; high_score_address_low
+&0626 85 8c    STA &8c ; shuffle_address_low
+&0628 a5 8f    LDA &8f ; high_score_address_high
+&062a 85 8d    STA &8d ; shuffle_address_high
+&062c 68       PLA ; rank
+&062d 48       PHA ; rank
+&062e 38       SEC
+&062f e9 01    SBC #&01
+&0631 20 ec 06 JSR &06ec ; calculate_high_score_address
+&0634 a0 00    LDY #&00
+; shuffle_high_scores_byte_loop
+&0636 b1 8e    LDA (&8e),Y ; high_score_address
+&0638 91 8c    STA (&8c),Y ; shuffle_address
+&063a c8       INY
+&063b c0 10    CPY #&10
+&063d d0 f7    BNE &0636 ; shuffle_high_scores_byte_loop
+&063f 68       PLA ; rank
+&0640 38       SEC
+&0641 e9 01    SBC #&01
+&0643 c5 72    CMP &72 ; check_rank
+&0645 d0 d9    BNE &0620 ; shuffle_high_scores_rank_loop
+; skip_shuffling_scores
+&0647 a5 72    LDA &72 ; check_rank
+&0649 20 ec 06 JSR &06ec ; calculate_high_score_address
+&064c a0 00    LDY #&00
+&064e a9 14    LDA #&14 ; restore default logical colours           # Bug: should be &20, not 20
+; wipe_high_score_name_loop
+&0650 91 8e    STA (&8e),Y ; high_score_address
+&0652 c8       INY
+&0653 c0 0e    CPY #&0e
+&0655 d0 f9    BNE &0650 ; wipe_high_score_name_loop
+&0657 60       RTS
+
+; get_high_score_name
+&0658 a5 72    LDA &72 ; rank
+&065a 20 ec 06 JSR &06ec ; calculate_high_score_address
+&065d a5 8e    LDA &8e ; high_score_address_low
+&065f 85 78    STA &78 ; input_block
+&0661 a5 8f    LDA &8f ; high_score_address_high
+&0663 85 79    STA &79 ; input_block + 1
+&0665 a9 0d    LDA #&0d ; length
+&0667 85 7a    STA &7a ; input_block + 2
+&0669 a9 20    LDA #&20 ; " "
+&066b 85 7b    STA &7b ; input_block + 3
+&066d a9 7f    LDA #&7f ; DELETE
+&066f 85 7c    STA &7c ; input_block + 4
+&0671 a9 00    LDA #&00 ; Input line
+&0673 a2 78    LDX #&78 ; &0078 = input_block
+&0675 a0 00    LDY #&00
+&0677 4c f1 ff JMP &fff1 ; OSWORD
+
+; get_keypress
+&067a a9 81    LDA #&81 ; Read key with time limit
+&067c a2 00    LDX #&00
+&067e a0 00    LDY #&00
+&0680 20 f4 ff JSR &fff4 ; OSBYTE
+&0683 c0 1b    CPY #&1b ; ESCAPE
+&0685 f0 28    BEQ &06af ; escape_pressed
+&0687 c0 00    CPY #&00
+&0689 f0 16    BEQ &06a1 ; key_pressed
+&068b a9 80    LDA #&80 ; Read I/O device or buffer status
+&068d a2 00    LDX #&00 ; Joystick buttons
+&068f a0 00    LDY #&00
+&0691 20 f4 ff JSR &fff4 ; OSBYTE
+&0694 8a       TXA
+&0695 29 01    AND #&01
+&0697 f0 e1    BEQ &067a ; get_keypress
+&0699 a9 02    LDA #&02 ; INPUT_JOYSTICK
+&069b 8d 01 0c STA &0c01 ; input_method
+&069e a9 20    LDA #&20 ; " "                                       # Return " " (SPACE) if fire pressed
+&06a0 60       RTS
+; key_pressed
+&06a1 ad 01 0c LDA &0c01 ; input_method
+&06a4 c9 02    CMP #&02 ; INPUT_JOYSTICK
+&06a6 d0 05    BNE &06ad ; leave_with_x
+&06a8 a9 00    LDA #&00 ; INPUT_KEYS
+&06aa 8d 01 0c STA &0c01 ; input_method
+; leave_with_x
+&06ad 8a       TXA
+&06ae 60       RTS
+; escape_pressed
+&06af a9 7e    LDA #&7e ; Acknowledge ESCAPE condition
+&06b1 20 f4 ff JSR &fff4 ; OSBYTE
+&06b4 4c 1d 04 JMP &041d ; hall_of_fame_screen
+
+; unused_check_for_escape                                           # Unused code
+&06b7 a5 ff    LDA &ff ;  ; os_flags
+&06b9 30 f4    BMI &06af ; escape_pressed
+&06bb 60       RTS
+
+; delay                                                             # Unused code
+&06bc 48       PHA ; tmp_a
+&06bd 8a       TXA
+&06be 48       PHA ; tmp_x
+&06bf 98       TYA
+&06c0 48       PHA ; tmp_y                                          # Bug: never pulled from stack
+; delay_outer_loop
+&06c1 a9 00    LDA #&00
+; delay_inner_loop
+&06c3 38       SEC
+&06c4 e9 01    SBC #&01
+&06c6 d0 fb    BNE &06c3 ; delay_inner_loop
+&06c8 ca       DEX
+&06c9 d0 f6    BNE &06c1 ; delay_outer_loop
+&06cb 68       PLA ; tmp_x
+&06cc aa       TAX
+&06cd 68       PLA ; tmp_a
+&06ce 60       RTS
+
+; write_hall_of_fame
+&06cf 48       PHA ; unused
+&06d0 a9 51    LDA #&51 ; &0951 = hall_of_fame_string
+&06d2 85 70    STA &70 ; string_address_low
+&06d4 a9 09    LDA #&09
+&06d6 85 71    STA &71 ; string_address_high
+&06d8 20 09 04 JSR &0409 ; write_string
+&06db 68       PLA ; unused
+&06dc 48       PHA ; unused
+&06dd a9 c7    LDA #&c7 ; &09c7 = press_space_or_fire_to_start_string
+&06df 85 70    STA &70 ; string_address_low
+&06e1 a9 09    LDA #&09
+&06e3 85 71    STA &71 ; string_address_high
+&06e5 20 09 04 JSR &0409 ; write_string                             # Write "Press SPACE or FIRE to start"
+&06e8 68       PLA ; unused
+&06e9 4c aa 04 JMP &04aa ; write_high_scores
+
+; calculate_high_score_address
+&06ec c9 07    CMP #&07
+&06ee 90 09    BCC &06f9 ; not_lowest_rank
+&06f0 a9 70    LDA #&70 ; &1870 = high_scores + 7 * &10
+&06f2 85 8e    STA &8e ; high_score_address_low
+&06f4 a9 18    LDA #&18
+&06f6 85 8f    STA &8f ; high_score_address_high
+&06f8 60       RTS
+; not_lowest_rank
+&06f9 0a       ASL A
+&06fa 0a       ASL A
+&06fb 0a       ASL A
+&06fc 0a       ASL A
+&06fd 85 8e    STA &8e ; high_score_address_low
+&06ff a9 18    LDA #&18 ; &1800 = high_scores
+&0701 85 8f    STA &8f ; high_score_address_high
+&0703 60       RTS
+
+; write_high_score
+&0704 85 80    STA &80 ; rank
+&0706 20 ec 06 JSR &06ec ; calculate_high_score_address
+&0709 a9 1f    LDA #&1f                                             # TAB(&03, rank * 2 + 3)
+&070b 20 ee ff JSR &ffee ; OSWRCH
+&070e a9 03    LDA #&03
+&0710 20 ee ff JSR &ffee ; OSWRCH
+&0713 a5 80    LDA &80 ; rank
+&0715 18       CLC
+&0716 65 80    ADC &80 ; rank
+&0718 69 03    ADC #&03
+&071a 20 ee ff JSR &ffee ; OSWRCH
+&071d a5 80    LDA &80 ; rank
+&071f 18       CLC
+&0720 69 31    ADC #&31 ; "1"
+&0722 20 ee ff JSR &ffee ; OSWRCH                                   # Write rank number
+&0725 a9 2e    LDA #&2e ; "."
+&0727 20 ee ff JSR &ffee ; OSWRCH
+&072a a9 20    LDA #&20 ; " "
+&072c 20 ee ff JSR &ffee ; OSWRCH
+&072f a0 00    LDY #&00
+; write_high_score_name_loop
+&0731 b1 8e    LDA (&8e),Y ; high_score_address
+&0733 20 ee ff JSR &ffee ; OSWRCH                                   # Write high score name
+&0736 c9 0d    CMP #&0d ; CR
+&0738 f0 05    BEQ &073f ; write_high_score_score
+&073a c8       INY
+&073b c0 0e    CPY #&0e
+&073d d0 f2    BNE &0731 ; write_high_score_name_loop
+; write_high_score_score
+&073f a9 1f    LDA #&1f                                             # TAB(&16, rank * 2 + 3)
+&0741 20 ee ff JSR &ffee ; OSWRCH
+&0744 a9 16    LDA #&16
+&0746 20 ee ff JSR &ffee ; OSWRCH
+&0749 a5 80    LDA &80 ; rank
+&074b 18       CLC
+&074c 65 80    ADC &80 ; rank
+&074e 69 03    ADC #&03
+&0750 20 ee ff JSR &ffee ; OSWRCH
+&0753 a0 0e    LDY #&0e
+&0755 b1 8e    LDA (&8e),Y ; high_score_address
+&0757 85 70    STA &70 ; number
+&0759 c8       INY
+&075a b1 8e    LDA (&8e),Y ; high_score_address
+&075c 85 71    STA &71 ; number + 1
+&075e a5 70    LDA &70 ; number
+&0760 05 71    ORA &71 ; number + 1
+&0762 f0 03    BEQ &0767 ; skip_writing_number                      # If not zero,
+&0764 20 6a 07 JSR &076a ; write_number                             # Write high score score
+; skip_writing_number
+&0767 a5 80    LDA &80 ; rank
+&0769 60       RTS
+
+; write_number
+&076a a0 00    LDY #&00
+&076c a9 01    LDA #&01
+&076e 85 72    STA &72 ; leading_zeros                              # Set to non-zero to write zeros as spaces
+; write_number_digit_loop
+&0770 a2 00    LDX #&00
+; divide_by_power_of_ten_loop
+&0772 a5 70    LDA &70 ; number
+&0774 38       SEC
+&0775 f9 a9 09 SBC &09a9,Y ; truncated_powers_of_ten
+&0778 85 70    STA &70 ; number
+&077a a5 71    LDA &71 ; number + 1
+&077c c8       INY
+&077d f9 a9 09 SBC &09a9,Y ; truncated_powers_of_ten
+&0780 90 07    BCC &0789 ; finished_division
+&0782 85 71    STA &71 ; number + 1
+&0784 e8       INX
+&0785 88       DEY
+&0786 4c 72 07 JMP &0772 ; divide_by_power_of_ten_loop
+; finished_division
+&0789 88       DEY
+&078a a5 70    LDA &70 ; number
+&078c 79 a9 09 ADC &09a9,Y ; truncated_powers_of_ten
+&078f 85 70    STA &70 ; number
+&0791 20 a4 07 JSR &07a4 ; write_digit
+&0794 c8       INY
+&0795 c8       INY
+&0796 c0 08    CPY #&08
+&0798 90 d6    BCC &0770 ; write_number_digit_loop
+&079a a6 70    LDX &70 ; number
+&079c 20 a4 07 JSR &07a4 ; write_digit
+&079f a9 30    LDA #&30 ; "0"
+&07a1 4c ee ff JMP &ffee ; OSWRCH
+
+; write_digit
+&07a4 8a       TXA
+&07a5 c9 00    CMP #&00
+&07a7 d0 09    BNE &07b2 ; not_zero
+&07a9 a5 72    LDA &72 ; leading_zeros
+&07ab f0 0b    BEQ &07b8 ; not_leading_zero
+&07ad a9 20    LDA #&20 ; " "
+&07af 4c ee ff JMP &ffee ; OSWRCH
+; not_zero
+&07b2 48       PHA ; digit
+&07b3 a9 00    LDA #&00
+&07b5 85 72    STA &72 ; leading_zeros                              # Set to zero to write zeros as zero
+&07b7 68       PLA ; digit
+; not_leading_zero
+&07b8 09 30    ORA #&30 ; "0"
+&07ba 4c ee ff JMP &ffee ; OSWRCH
+
+; flush_buffers
+&07bd a9 0f    LDA #&0f ; Flush all buffers
+&07bf a2 00    LDX #&00
+&07c1 a0 00    LDY #&00
+&07c3 4c f4 ff JMP &fff4 ; OSBYTE
+
+; sound_output_string
+&07c6 1f 05 16                                        ; TAB(&05, &16)
+&07c9 86                                              ; CYAN
+&07ca 53 6f 75 6e 64 20 4f 75 74 70 75 74 20 20 20 20 ; "Sound Output     (Y/N)"
+&07da 20 28 59 2f 4e 29
+&07e0 87                                              ; WHITE
+&07e1 ff
+
+; mission_string
+&07e2 1f 05 15                                        ; TAB(&05, &15)
+&07e5 82                                              ; GREEN
+&07e6 4d 69 73 73 69 6f 6e 20 20 20 20 20 20 20 20 28 ; "Mission        (A/B/C/D)"
+&07f6 41 2f 42 2f 43 2f 44 29 
+&07fe 87                                              ; WHITE
+&07ff ff
+
+# &3c00 - &3cff is unrelocated
+
+; unused
+&3c00 29 87 ff 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c10 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c20 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c30 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c40 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c50 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c60 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c70 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c80 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3c90 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3ca0 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3cb0 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3cc0 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3cd0 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3ce0 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+&3cf0 00 00 00 0f 00 00 00 00 00 00 00 0f 00 00 00 00
+
+# &3d00 - &3dee is moved to &0900 - &09ee at &3e09
+
+; stage_skip_string
+&0900 1f 05 14                                        ; TAB(&05, &14)
+&0903 85                                              ; MAGENTA
+&0904 53 74 61 67 65 20 53 6b 69 70 20 6c 65 76 65 6c ; "Stage Skip level (1-6)"
+&0914 20 28 31 2d 36 29
+&091a 87                                              ; WHITE
+&091b ff
+
+; keys_user_joystick_string
+&091c 1f 03 12                                        ; TAB(&03, &12)
+&091f 82                                              ; GREEN
+&0920 4b 65 79 73 2c 55 73 65 72 2c 4a 6f 79 73 74 69 ; "Keys,User,Joystick (K/U/J)"
+&0930 63 6b 20 28 4b 2f 55 2f 4a 29 
+&093a 87                                              ; WHITE
+&093b ff
+
+; input_method_tab_string
+&093c 1f 1f 12                                        ; TAB(&1f, &12)
+&093f ff
+
+; input_method_characters
+&0940 4b ; "K"
+&0941 55 ; "U"
+&0942 4a ; "J"
+
+; yes_string
+&0943 1f 1d 16                                        ; TAB(&1d, &16)
+&0946 59 45 53                                        ; "YES"
+&0949 ff
+
+; no_string
+&094a 1f 1d 16                                        ; TAB(&1d, &16)
+&094d 4e 4f 20                                        ; "NO "
+&0950 ff
+
+; hall_of_fame_string
+&0951 16 07                                           ; MODE 7
+&0953 1f 01 00                                        ; TAB(&01, &00)
+&0956 8d 81 9d 83                                     ; DOUBLE_HEIGHT, RED, NEW_BACKGROUND, YELLOW
+&095a 4d 6f 6f 6e 20 52 61 69 64 65 72 20 20 48 41 4c ; "Moon Raider  HALL of FAME  "
+&096a 4c 20 6f 66 20 46 41 4d 45 20 20 
+&0975 9c                                              ; BLACK_BACKGROUND
+&0976 1f 01 01                                        ; TAB(&01, &01)
+&0979 8d 81 9d 83                                     ; DOUBLE_HEIGHT, RED, NEW_BACKGROUND, YELLOW
+&097d 4d 6f 6f 6e 20 52 61 69 64 65 72 20 20 48 41 4c ; "Moon Raider  HALL of FAME  "
+&098d 4c 20 6f 66 20 46 41 4d 45 20 20 
+&0998 9c                                              ; BLACK_BACKGROUND
+&0999 ff
+
+; disable_cursor_string
+&099a 17 00 0a 20 00 00 00 00 00 00                   ; disable cursor
+&09a4 1f 00 18                                        ; TAB(&00, &18)
+&09a7 88                                              ; FLASH
+&09a8 ff
+
+; truncated_powers_of_ten
+&09a9 10 27 ; 10000
+&09ab e8 03 ; 1000
+&09ad 64 00 ; 100
+&09af 0a 00 ; 10
+
+; unused
+&09b1 ff
+
+; enter_your_name_string
+&09b2 1f 08 11                                        ; TAB(&08, &11)
+&09b5 88 83
+&09b7 45 6e 74 65 72 20 79 6f 75 72 20 6e 61 6d 65    ; "Enter your name"
+&09c6 ff
+
+; press_space_or_fire_to_start_string
+&09c7 1f 03 18                                        ; TAB(&03, &18)
+&09ca 83                                              ; YELLOW
+&09cb 50 72 65 73 73 20 53 50 41 43 45 20 6f 72 20 46 ; "Press SPACE or FIRE to start"
+&09db 49 52 45 20 74 6f 20 73 74 61 72 74 
+&09e7 ff
+
+; stage_tab_string
+&09e8 1f 1f 14                                        ; TAB(&1f, &14)
+&09eb ff
+
+; question_mark_string
+&09ec 3f                                              ; "?"
+&09ed 08                                              ; BACKSPACE
+&09ee ff
+
+# &3def - &3e1f is used unrelocated
+
+; move_memory_second_stage
+&3def a2 ff    LDX #&ff
+; move_3800_to_3bff_and_3d00_to_3dff_loop
+&3df1 bd 00 38 LDA &3800,X                                          # Move &3800 - &3bff to &0400 - &07ff
+&3df4 9d 00 04 STA &0400,X
+&3df7 bd 00 39 LDA &3900,X
+&3dfa 9d 00 05 STA &0500,X
+&3dfd bd 00 3a LDA &3a00,X
+&3e00 9d 00 06 STA &0600,X
+&3e03 bd 00 3b LDA &3b00,X
+&3e06 9d 00 07 STA &0700,X
+&3e09 bd 00 3d LDA &3d00,X                                          # Move &3d00 - &3dff to &0900 - &09ff
+&3e0c 9d 00 09 STA &0900,X
+&3e0f ca       DEX
+&3e10 e0 ff    CPX #&ff
+&3e12 d0 dd    BNE &3df1 ; move_3800_to_3bff_and_3d00_to_3dff_loop
+&3e14 4c 06 04 JMP &0406 ; to_initialise_high_scores
+
+; unused
+&3e17 00
+
+; to_move_memory_first_stage
+&3e18 a0 8c    LDY #&8c                                             # Bug: should be LDA #&8c to select Tape FS
+&3e1a 20 f4 ff JSR &fff4 ; OSBYTE
+&3e1d 4c c8 1a JMP &1ac8 ; move_memory_first_stage
+

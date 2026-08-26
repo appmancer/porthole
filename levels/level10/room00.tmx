@@ -1,38 +1,50 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="9">
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="12">
  <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
  <layer id="1" name="Tile Layer 1" width="16" height="16">
   <data encoding="csv">
-54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,
-54,1,1,1,1,1,1,1,1,1,1,1,1,1,1,54,
-54,0,0,0,0,0,0,0,0,0,0,0,1,0,1,54,
-54,0,0,0,0,0,0,0,0,0,0,0,0,1,1,54,
-54,0,0,0,0,0,0,0,0,0,0,0,1,1,1,54,
-54,1,0,0,0,0,0,0,0,1,0,0,1,1,1,54,
-54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,54,
-54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,54,
-54,0,1,0,0,0,0,1,1,1,1,1,1,1,1,54,
-54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,54,
-54,1,0,0,0,0,0,0,1,1,1,1,1,1,1,54,
-54,1,0,0,0,0,0,0,1,1,1,1,1,1,1,54,
-54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,54,
-54,1,1,1,1,1,1,1,1,1,1,1,4,5,1,54,
-54,1,1,1,1,1,1,1,1,1,1,1,6,7,1,54,
-54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,54
+44,35,35,35,35,35,35,35,35,35,35,35,35,35,35,43,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+34,0,0,0,0,0,0,0,0,0,0,0,1,0,1,36,
+34,0,0,0,0,0,0,0,0,0,0,0,0,1,1,36,
+41,33,33,37,1,38,33,33,33,33,33,33,33,37,1,36,
+44,35,35,40,1,39,35,35,35,35,35,35,35,40,1,36,
+34,1,1,0,0,0,0,0,1,1,1,1,1,1,1,36,
+34,1,1,0,0,0,0,0,1,1,1,1,1,1,1,36,
+34,0,1,0,0,0,1,1,1,1,1,1,1,1,1,36,
+41,37,1,38,33,33,33,33,33,33,33,33,33,33,33,42,
+44,40,1,39,35,35,35,35,35,35,35,35,35,35,35,43,
+34,1,0,0,0,0,0,0,1,1,1,1,1,1,1,36,
+34,1,1,0,0,0,0,0,1,1,1,1,1,1,1,36,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+41,33,33,33,33,37,1,1,1,1,38,33,33,33,33,42,
+54,54,54,54,54,34,1,1,1,1,36,54,54,54,54,54
 </data>
  </layer>
  <objectgroup id="2" name="objects">
-  <object id="3" name="exit" type="exit" x="192" y="208">
+  <object id="9" name="sentry_4" type="sentry" x="208" y="128">
    <properties>
-    <property name="channel" value="0"/>
-    <property name="id" value="exit_00"/>
+    <property name="dir" value="left"/>
+    <property name="id" value="sentry_4"/>
    </properties>
    <point/>
   </object>
  </objectgroup>
  <objectgroup id="3" name="meta">
-  <object id="5" name="start" type="start" x="32" y="208">
+  <object id="5" name="start" type="start" x="32" y="16">
    <point/>
+  </object>
+  <object id="10" name="killzone_4" type="killzone" x="16" y="128" width="192" height="16">
+   <properties>
+    <property name="id" value="killzone_4"/>
+    <property name="sentry" value="sentry_4"/>
+   </properties>
+  </object>
+  <object id="11" name="edge_exit_01" type="edge_exit" x="96" y="240" width="64" height="16">
+   <properties>
+    <property name="id" value="edge_exit_01"/>
+    <property name="to" value="room01"/>
+   </properties>
   </object>
  </objectgroup>
 </map>

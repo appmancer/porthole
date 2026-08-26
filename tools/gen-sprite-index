@@ -1,0 +1,631 @@
+#!/usr/bin/env python3
+"""Generate a self-contained HTML sprite index for the PORTHOLE design brief.
+
+Renders every sprite and tile at 2:1 pixel aspect ratio (matching BBC Micro
+MODE 2/5 hardware), embeds them as base64 PNGs, and produces a single HTML
+file a designer can open in any browser.
+
+Usage:
+  ./tools/gen-sprite-index --out docs/sprite_index.html
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import re
+import struct
+import zlib
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent.parent
+
+# ---------------------------------------------------------------------------
+# Palette
+# ---------------------------------------------------------------------------
+
+# Current MODE 5 palette (will carry into MODE 2 foreground palette).
+# Shown as-is so the designer sees the existing colours.
+MODE5_PALETTE = {
+    "0": (0,   0,   0),    # black
+    "1": (255, 0,   0),    # red
+    "2": (0,   255, 255),  # cyan
+    "3": (255, 255, 0),    # yellow
+    ".": (220, 220, 220),  # transparent shown as light grey
+}
+
+# ---------------------------------------------------------------------------
+# PNG writer (no external deps)
+# ---------------------------------------------------------------------------
+
+def _png_chunk(typ: bytes, data: bytes) -> bytes:
+    crc = zlib.crc32(typ)
+    crc = zlib.crc32(data, crc) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + typ + data + struct.pack(">I", crc)
+
+def write_png_rgba(width: int, height: int, buf: bytearray) -> bytes:
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    stride = width * 4
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)
+        raw.extend(buf[y * stride:(y + 1) * stride])
+    idat = zlib.compress(bytes(raw), 9)
+    return (sig
+            + _png_chunk(b"IHDR", ihdr)
+            + _png_chunk(b"IDAT", idat)
+            + _png_chunk(b"IEND", b""))
+
+def png_to_data_uri(png_bytes: bytes) -> str:
+    return "data:image/png;base64," + base64.b64encode(png_bytes).decode()
+
+# ---------------------------------------------------------------------------
+# Sprite rendering
+# ---------------------------------------------------------------------------
+
+PIXEL_CELL_RE = re.compile(r"^[0-3.]+$")
+
+def pixels_from_line(line: str, max_w: int = 16) -> list[str]:
+    tokens: list[str] = []
+    for cell in line.split(","):
+        cell = cell.strip()
+        if not cell or not PIXEL_CELL_RE.match(cell):
+            continue
+        tokens.extend(list(cell))
+        if len(tokens) >= max_w:
+            break
+    if not tokens:
+        return []
+    if len(tokens) < max_w:
+        tokens += ["."] * (max_w - len(tokens))
+    return tokens[:max_w]
+
+def read_blocks(path: Path, max_w: int = 16) -> list[list[list[str]]]:
+    blocks: list[list[list[str]]] = []
+    current: list[list[str]] = []
+    for line in path.read_text().splitlines():
+        px = pixels_from_line(line, max_w)
+        if not px:
+            if current:
+                blocks.append(current)
+                current = []
+        else:
+            current.append(px)
+    if current:
+        blocks.append(current)
+    return blocks
+
+def read_tile_blocks(path: Path) -> list[tuple[str, list[list[str]]]]:
+    results: list[tuple[str, list[list[str]]]] = []
+    current_label = ""
+    current: list[list[str]] = []
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        # Tile label rows start with T followed by digits
+        if re.match(r"T\d+", stripped):
+            if current:
+                results.append((current_label, current))
+                current = []
+            parts = stripped.split(None, 1)
+            current_label = parts[0] if parts else ""
+            continue
+        tokens: list[str] = []
+        for cell in line.split(","):
+            cell = cell.strip()
+            if not cell or not PIXEL_CELL_RE.match(cell):
+                continue
+            tokens.extend(list(cell))
+        if not tokens:
+            if current:
+                results.append((current_label, current))
+                current = []
+            continue
+        if len(tokens) < 8:
+            tokens += ["."] * (8 - len(tokens))
+        current.append(tokens[:8])
+    if current:
+        results.append((current_label, current))
+    return results
+
+def render_sprite(block: list[list[str]], scale_x: int, scale_y: int) -> bytes:
+    """Render a pixel block to a PNG bytes object."""
+    rows = len(block)
+    cols = len(block[0]) if block else 16
+    w = cols * scale_x
+    h = rows * scale_y
+    buf = bytearray(w * h * 4)
+    for ry, row in enumerate(block):
+        for rx, ch in enumerate(row):
+            r, g, b = MODE5_PALETTE.get(ch, (255, 0, 255))
+            a = 80 if ch == "." else 255
+            for sy in range(scale_y):
+                for sx in range(scale_x):
+                    px = rx * scale_x + sx
+                    py = ry * scale_y + sy
+                    o = (py * w + px) * 4
+                    buf[o] = r; buf[o+1] = g; buf[o+2] = b; buf[o+3] = a
+    return write_png_rgba(w, h, buf)
+
+def sprite_uri(block: list[list[str]], scale_x: int = 8, scale_y: int = 4) -> str:
+    return png_to_data_uri(render_sprite(block, scale_x, scale_y))
+
+# ---------------------------------------------------------------------------
+# Colour swatch helpers
+# ---------------------------------------------------------------------------
+
+SWATCH_SIZE = 24  # px in the HTML
+
+def swatch_html(hex_color: str) -> str:
+    return (f'<span style="display:inline-block;width:{SWATCH_SIZE}px;height:{SWATCH_SIZE}px;'
+            f'background:{hex_color};border:1px solid #888;vertical-align:middle;'
+            f'margin-right:6px;border-radius:3px;"></span>')
+
+def rgb_to_hex(r: int, g: int, b: int) -> str:
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+# ---------------------------------------------------------------------------
+# Sprite catalogue
+# ---------------------------------------------------------------------------
+# Each entry: (id, description, fg_bg, csv_path, block_index, pixel_width)
+# fg_bg: "FG" or "BG"
+# block_index: which block in the CSV to render (0 = first / reference frame)
+# pixel_width: max pixel columns to read
+
+SPRITE_CATALOGUE = [
+    # --- Chell ---
+    ("CHELL_IDLE",   "Player standing still (single frame, facing right)",
+     "FG", "sprites/Chell Idle - Reference.csv", 0, 16),
+    ("CHELL_RUN1",   "Player run cycle — frame 1 of 3",
+     "FG", "sprites/Chell Run Right - Frame 1.csv", 0, 16),
+    ("CHELL_RUN2",   "Player run cycle — frame 2 of 3",
+     "FG", "sprites/Chell Run Right - Frame 2.csv", 0, 16),
+    ("CHELL_RUN3",   "Player run cycle — frame 3 of 3",
+     "FG", "sprites/Chell Run Right - Frame 3.csv", 0, 16),
+    ("CHELL_JUMP",   "Player in jump pose (rising)",
+     "FG", "sprites/Chell Jump - Reference.csv", 0, 16),
+    ("CHELL_FALL",   "Player in falling pose (descending)",
+     "FG", "sprites/Chell Falling - Reference.csv", 0, 16),
+    ("CHELL_DEAD",   "Player death state — flat on ground",
+     "FG", "sprites/Chell Dead - Reference.csv", 0, 16),
+
+    # --- Overlays (composited over Chell body) ---
+    ("OVERLAY_RGUN1", "Portal gun arm overlay — run frame 1 (composited over Chell)",
+     "FG", "sprites/Chell Running Overlays - R-Gun Frame 1.csv", 1, 16),
+    ("OVERLAY_RGUN2", "Portal gun arm overlay — run frame 2",
+     "FG", "sprites/Chell Running Overlays - R-Gun Frame 2.csv", 1, 16),
+    ("OVERLAY_RGUN3", "Portal gun arm overlay — run frame 3",
+     "FG", "sprites/Chell Running Overlays - R-Gun Frame 3.csv", 1, 16),
+    ("OVERLAY_CARRY", "Arms overlay when carrying a companion cube",
+     "FG", "sprites/Chell Overlays - Carrying.csv", 1, 16),
+    ("RETICLE_F0",    "Portal gun targeting reticle — frame 0 (idle ring)",
+     "FG", "sprites/Reticles - Reference.csv", 0, 16),
+    ("RETICLE_F1",    "Portal gun targeting reticle — frame 1 (active/pulsing ring)",
+     "FG", "sprites/Reticles - Reference.csv", 1, 16),
+
+    # --- Portals ---
+    ("PORTAL_V_RED",       "Vertical red portal on a wall surface (right-facing)",
+     "FG", "sprites/Portal V - Red (Right).csv", 0, 8),
+    ("PORTAL_V_YEL",       "Vertical yellow portal on a wall surface (right-facing)",
+     "FG", "sprites/Portal V - Yellow (Right).csv", 0, 8),
+    ("PORTAL_B_RED",       "Front-facing / big red portal (player walks through this face)",
+     "FG", "sprites/Portal B - Red.csv", 0, 16),
+    ("PORTAL_B_YEL",       "Front-facing / big yellow portal",
+     "FG", "sprites/Portal B - Yellow.csv", 0, 16),
+    ("PORTAL_H_RED_FLOOR", "Horizontal red portal on a floor surface",
+     "FG", "sprites/Portal H - Red (Floor).csv", 0, 16),
+    ("PORTAL_H_RED_CEIL",  "Horizontal red portal on a ceiling surface",
+     "FG", "sprites/Portal H - Red (Ceil).csv", 0, 16),
+    ("PORTAL_H_YEL_FLOOR", "Horizontal yellow portal on a floor surface",
+     "FG", "sprites/Portal H - Yellow (Floor).csv", 0, 16),
+    ("PORTAL_H_YEL_CEIL",  "Horizontal yellow portal on a ceiling surface",
+     "FG", "sprites/Portal H - Yellow (Ceil).csv", 0, 16),
+
+    # --- Objects ---
+    ("OBJ_CUBE",   "Companion cube — carryable block used to press buttons",
+     "FG", "sprites/Objects - Cube.csv", 0, 16),
+    ("OBJ_SENTRY", "Sentry turret — enemy that fires at the player; can be carried",
+     "FG", "sprites/Objects - Sentry.csv", 0, 16),
+]
+
+# Tile descriptions keyed by tile ID (e.g. "T01")
+TILE_DESCRIPTIONS = {
+    "T01": ("Button (inactive, cyan top)", "BG"),
+    "T02": ("Button (inactive, red top)", "BG"),
+    "T03": ("Exit door — top-left corner, closed", "BG"),
+    "T04": ("Exit door — top-right corner, closed", "BG"),
+    "T05": ("Exit door — bottom-left corner, closed", "BG"),
+    "T06": ("Exit door — bottom-right corner, closed", "BG"),
+    "T07": ("Exit door — top-left corner, open", "BG"),
+    "T08": ("Exit door — top-right corner, open", "BG"),
+    "T09": ("Exit door — bottom-left corner, open", "BG"),
+    "T10": ("Exit door — bottom-right corner, open", "BG"),
+    "T11": ("Acid bath / kill floor — lethal surface", "BG"),
+    "T12": ("Fizzler top — portal-erasing field, top cap", "BG"),
+    "T13": ("Fizzler body — repeating middle section", "BG"),
+    "T14": ("Cube spawn dispenser — delivers companion cubes", "BG"),
+    "T15": ("Laser beam — vertical segment", "BG"),
+    "T16": ("Laser beam — horizontal segment", "BG"),
+    "T17": ("Laser beam (vertical) over portal-able back tile", "BG"),
+    "T18": ("Laser beam (horizontal) over portal-able back tile", "BG"),
+    "T19": ("Laser emitter — mounted on left wall, inactive", "BG"),
+    "T20": ("Laser emitter — mounted on right wall, inactive", "BG"),
+    "T21": ("Laser emitter — mounted on floor, inactive", "BG"),
+    "T22": ("Laser emitter — mounted on ceiling, inactive", "BG"),
+    "T23": ("Laser emitter — left wall, active (beam firing right)", "BG"),
+    "T24": ("Laser emitter — right wall, active (beam firing left)", "BG"),
+    "T25": ("Laser emitter — floor, active (beam firing upward)", "BG"),
+    "T26": ("Laser emitter — ceiling, active (beam firing downward)", "BG"),
+    "T27": ("Laser crossroads — H and V beams crossing", "BG"),
+    "T28": ("Laser crossroads over portal-able back tile", "BG"),
+    "T29": ("Portal back tile — the checkered surface portals attach to", "BG"),
+    "T30": ("Barrier — open state, top cap (glowing energy field off)", "BG"),
+    "T31": ("Barrier — open state, bottom cap", "BG"),
+    "T32": ("Wall — bedrock corner top (╥ shape)", "BG"),
+    "T33": ("Wall — bedrock right edge (╢ shape)", "BG"),
+    "T34": ("Wall — bedrock corner bottom (╨ shape)", "BG"),
+    "T35": ("Wall — bedrock left edge (╟ shape)", "BG"),
+    "T36": ("Wall — rounded top-right corner (╮)", "BG"),
+    "T37": ("Wall — rounded top-left corner (╭)", "BG"),
+    "T38": ("Wall — rounded bottom-left corner (╰)", "BG"),
+    "T39": ("Wall — rounded bottom-right corner (╯)", "BG"),
+    "T40": ("Wall — sharp top-right corner (┐)", "BG"),
+    "T41": ("Wall — sharp top-left corner (┌)", "BG"),
+    "T42": ("Wall — sharp bottom-left corner (└)", "BG"),
+    "T43": ("Wall — sharp bottom-right corner (┘)", "BG"),
+    "T44": ("Platform — left end cap (╞)", "BG"),
+    "T45": ("Platform — top+bottom edge, middle section (═)", "BG"),
+    "T46": ("Platform — right end cap (╡)", "BG"),
+    "T47": ("Platform — left end, no bottom lip (╘)", "BG"),
+    "T48": ("Platform — right end, no bottom lip (╛)", "BG"),
+    "T49": ("Pressure pad — left half, inactive (yellow)", "BG"),
+    "T50": ("Pressure pad — right half, inactive (yellow)", "BG"),
+    "T51": ("Pressure pad — left half, active (red, pressed)", "BG"),
+    "T52": ("Pressure pad — right half, active (red, pressed)", "BG"),
+    "T53": ("Bedrock — solid impassable block, full interior", "BG"),
+    "T54": ("Barrier — closed, top cap (active energy field)", "BG"),
+    "T55": ("Barrier — closed, middle section (active energy field)", "BG"),
+    "T56": ("Barrier — closed, bottom cap (active energy field)", "BG"),
+    "T57": ("Zapper — left half, on (electrified hazard)", "BG"),
+    "T58": ("Zapper — middle section, on", "BG"),
+    "T59": ("Zapper — right half, on", "BG"),
+    "T60": ("Zapper — left half, off (safe)", "BG"),
+    "T61": ("Zapper — right half, off (safe)", "BG"),
+    "T62": ("Zapper with incoming laser from above", "BG"),
+    "T63": ("Zapper with incoming laser from below", "BG"),
+}
+
+# ---------------------------------------------------------------------------
+# HTML generation
+# ---------------------------------------------------------------------------
+
+CSS = """
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       background: #1a1a1a; color: #e8e8e8; line-height: 1.5; padding: 32px; }
+h1 { font-size: 2em; margin-bottom: 4px; color: #fff; }
+.subtitle { color: #888; margin-bottom: 32px; }
+h2 { font-size: 1.4em; margin: 36px 0 12px; border-bottom: 2px solid #444;
+     padding-bottom: 6px; color: #fff; }
+h3 { font-size: 1.1em; margin: 24px 0 8px; color: #aaa; }
+p { margin-bottom: 12px; color: #ccc; }
+code { background: #2a2a2a; padding: 2px 6px; border-radius: 3px;
+       font-family: monospace; font-size: 0.9em; color: #7fd; }
+
+/* Palette tables */
+.palette-grid { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0 24px; }
+.swatch-card { background: #2a2a2a; border-radius: 6px; padding: 12px 16px;
+               display: flex; align-items: center; gap: 12px; min-width: 220px; }
+.swatch-box { width: 36px; height: 36px; border-radius: 4px; border: 2px solid #555;
+              flex-shrink: 0; }
+.swatch-info { font-size: 0.85em; }
+.swatch-label { font-weight: 600; color: #fff; }
+.swatch-hex { color: #7fd; font-family: monospace; }
+.swatch-note { color: #888; font-size: 0.8em; }
+
+/* Split palette layout */
+.palette-split { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 24px; }
+.palette-half { background: #252525; border-radius: 8px; padding: 16px;
+                flex: 1; min-width: 280px; }
+.palette-half h4 { font-size: 0.95em; color: #aaa; margin-bottom: 12px;
+                    text-transform: uppercase; letter-spacing: 0.05em; }
+.badge-fg { background: #3a2200; color: #f90; border: 1px solid #f90;
+            padding: 1px 8px; border-radius: 10px; font-size: 0.75em;
+            font-weight: 600; vertical-align: middle; }
+.badge-bg { background: #00222a; color: #0cf; border: 1px solid #0cf;
+            padding: 1px 8px; border-radius: 10px; font-size: 0.75em;
+            font-weight: 600; vertical-align: middle; }
+
+/* Sprite tables */
+table { border-collapse: collapse; width: 100%; margin-bottom: 24px; }
+th { background: #2a2a2a; color: #aaa; text-align: left; padding: 8px 12px;
+     font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em;
+     border-bottom: 2px solid #444; }
+td { padding: 10px 12px; border-bottom: 1px solid #2a2a2a; vertical-align: middle; }
+tr:hover td { background: #222; }
+.sprite-id { font-family: monospace; font-size: 0.9em; color: #7fd; font-weight: 600; }
+.sprite-desc { color: #ccc; font-size: 0.9em; }
+.sprite-dims { font-family: monospace; color: #888; font-size: 0.8em; white-space: nowrap; }
+.sprite-img { image-rendering: pixelated; image-rendering: crisp-edges;
+              display: block; }
+
+/* Tile grid */
+.tile-grid { display: grid;
+             grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+             gap: 12px; margin-bottom: 24px; }
+.tile-card { background: #252525; border-radius: 6px; padding: 10px;
+             text-align: center; }
+.tile-card img { image-rendering: pixelated; image-rendering: crisp-edges;
+                 display: block; margin: 0 auto 6px; }
+.tile-id { font-family: monospace; font-size: 0.8em; color: #7fd; font-weight: 600; }
+.tile-desc { font-size: 0.72em; color: #888; line-height: 1.3; margin-top: 2px; }
+
+/* Callout box */
+.callout { background: #1e2d1e; border-left: 4px solid #4c4; border-radius: 0 6px 6px 0;
+           padding: 12px 16px; margin: 16px 0; font-size: 0.9em; color: #ccc; }
+.callout strong { color: #4c4; }
+.warn { background: #2d1e1e; border-left-color: #c44; }
+.warn strong { color: #c44; }
+"""
+
+def section(title: str) -> str:
+    return f"<h2>{title}</h2>\n"
+
+def subsection(title: str) -> str:
+    return f"<h3>{title}</h3>\n"
+
+def build_palette_section() -> str:
+    html = section("Colour Palette")
+
+    html += ("<p>All colours are drawn from the BBC Micro's fixed hardware palette of "
+             "8 physical colours. No custom colours, gradients, or anti-aliasing are possible. "
+             "Use exactly the hex values listed below.</p>\n")
+
+    # BBC physical colour table
+    bbc_colors = [
+        ("#000000", "Black",   "Background, outlines, shadows"),
+        ("#FF0000", "Red",     "Chell's legs, portals, laser beams, hazard accents"),
+        ("#00FF00", "Green",   "Available for background or foreground use"),
+        ("#FFFF00", "Yellow",  "Chell's hair, companion cube, button highlights"),
+        ("#0000FF", "Blue",    "Available — useful for deep background tones"),
+        ("#FF00FF", "Magenta", "Available"),
+        ("#00FFFF", "Cyan",    "Chell's top, walls, background fill"),
+        ("#FFFFFF", "White",   "Available — highlights"),
+    ]
+
+    html += "<h3>Available BBC Micro Physical Colours</h3>\n<div class=\"palette-grid\">\n"
+    for hex_val, name, note in bbc_colors:
+        html += (f'<div class="swatch-card">'
+                 f'<div class="swatch-box" style="background:{hex_val}"></div>'
+                 f'<div class="swatch-info">'
+                 f'<div class="swatch-label">{name}</div>'
+                 f'<div class="swatch-hex">{hex_val}</div>'
+                 f'<div class="swatch-note">{note}</div>'
+                 f'</div></div>\n')
+    html += "</div>\n"
+
+    html += ("<div class=\"callout\">"
+             "<strong>Split-nibble palette rule.</strong> "
+             "In MODE 2 the 16 palette slots are divided: "
+             "slots 0–7 are reserved for <strong>background tiles</strong>, "
+             "slots 8–15 for <strong>foreground sprites</strong>. "
+             "Sprites are composited onto tiles by a fast OR operation — no masking pass. "
+             "A sprite's &ldquo;transparent&rdquo; pixel must be drawn as colour index 8 "
+             "(mapped to black), which the OR leaves unchanged. "
+             "Design tiles and sprites using the sub-palettes below and "
+             "<em>do not mix them</em>.</div>\n")
+
+    html += "<h3>Colour Budget per Layer</h3>\n"
+    html += "<div class=\"palette-split\">\n"
+
+    # Background palette
+    html += "<div class=\"palette-half\">\n"
+    html += "<h4>Background (tiles &amp; static hazards) — 4 colours</h4>\n"
+    bg_colors = [
+        ("#000000", "Black",  "slot 0", "Deep shadow, void, outlines"),
+        ("#0000FF", "Blue",   "slot 1", "Suggested: wall base / bedrock tone — TBC"),
+        ("#00FFFF", "Cyan",   "slot 2", "Suggested: light panels, portal surfaces — TBC"),
+        ("#FFFFFF", "White",  "slot 3", "Suggested: highlights, lit surfaces — TBC"),
+    ]
+    html += "<div class=\"palette-grid\" style=\"gap:8px\">\n"
+    for hex_val, name, slot, note in bg_colors:
+        html += (f'<div class="swatch-card" style="min-width:180px">'
+                 f'<div class="swatch-box" style="background:{hex_val}"></div>'
+                 f'<div class="swatch-info">'
+                 f'<div class="swatch-label">{name} <span style="color:#888;font-size:0.8em">({slot})</span></div>'
+                 f'<div class="swatch-hex">{hex_val}</div>'
+                 f'<div class="swatch-note">{note}</div>'
+                 f'</div></div>\n')
+    html += "</div>\n</div>\n"
+
+    # Foreground palette
+    html += "<div class=\"palette-half\">\n"
+    html += "<h4>Foreground (sprites) — 3 colours + transparent</h4>\n"
+    fg_colors = [
+        ("#000000", "Transparent", "slot 8", "OR-transparent: leaves background unchanged"),
+        ("#FF0000", "Red",         "slot 9",  "Chell's legs, portal gun, portals"),
+        ("#FFFF00", "Yellow",      "slot 10", "Chell's hair, companion cube, highlights"),
+        ("#00FFFF", "Cyan",        "slot 11", "Chell's top, sentry body"),
+    ]
+    html += "<div class=\"palette-grid\" style=\"gap:8px\">\n"
+    for hex_val, name, slot, note in fg_colors:
+        border = "border:2px dashed #555" if hex_val == "#000000" else ""
+        bg_style = "background:#2a2a2a" if hex_val == "#000000" else f"background:{hex_val}"
+        html += (f'<div class="swatch-card" style="min-width:180px">'
+                 f'<div class="swatch-box" style="{bg_style};{border}"></div>'
+                 f'<div class="swatch-info">'
+                 f'<div class="swatch-label">{name} <span style="color:#888;font-size:0.8em">({slot})</span></div>'
+                 f'<div class="swatch-hex">{hex_val}</div>'
+                 f'<div class="swatch-note">{note}</div>'
+                 f'</div></div>\n')
+    html += "</div>\n</div>\n"
+
+    html += "</div>\n"  # end palette-split
+
+    html += ("<div class=\"callout warn\">"
+             "<strong>Note: BG palette is a proposal.</strong> "
+             "The current game uses black / red / cyan / yellow for both sprites and tiles. "
+             "The foreground colours above are confirmed (Chell keeps her existing look). "
+             "The four background colours marked 'TBC' should be agreed with the developer "
+             "before starting tile work — only BBC Micro physical colours are allowed.</div>\n")
+
+    return html
+
+def build_tech_section() -> str:
+    html = section("Technical Constraints")
+    html += ("<div class=\"callout\">"
+             "<strong>Pixel aspect ratio: 2 : 1 (wide).</strong> "
+             "BBC Micro MODE 2 pixels are twice as wide as they are tall on real hardware. "
+             "The sprite images in this document are already rendered at 2:1 — "
+             "what you see here is how sprites look on screen. "
+             "Design your art to look correct at this ratio; "
+             "do not draw in a square-pixel tool and submit without checking aspect.</div>\n")
+    html += ("<p>The pixel grid for each sprite category:</p>"
+             "<ul style='margin:8px 0 16px 24px;color:#ccc;'>"
+             "<li><strong>Character sprites (Chell, objects):</strong> "
+             "12 logical pixels wide &times; 24–32 pixels tall. "
+             "The data slot is 16 px wide; the rightmost 4 px are a shift-expansion zone "
+             "auto-generated by the build tools — keep visible content within the first 12 px.</li>"
+             "<li><strong>Portal sprites:</strong> 8 px wide (vertical wall portals) "
+             "or 16 px wide (horizontal / front-facing).</li>"
+             "<li><strong>Tiles:</strong> 8 logical pixels wide &times; 16 pixels tall "
+             "(one character cell wide, two cells tall).</li>"
+             "<li><strong>Subpixel pre-shifting:</strong> the engine pre-generates four "
+             "sub-character-cell variants (x0–x3) from each base sprite by shifting 0–3 px "
+             "right. These are synthesised automatically; you supply only the base frame.</li>"
+             "</ul>\n")
+    html += ("<p><strong>Delivery format:</strong> PNG with a transparent background, "
+             "using only the exact hex colours listed above. "
+             "Alternatively, the project's CSV pixel-grid format (0/1/2/3 per pixel, "
+             ". for transparent) — ask the developer for a template.</p>\n")
+    return html
+
+def build_sprite_table(sprites: list[tuple]) -> str:
+    html = "<table>\n<tr><th>ID</th><th>Layer</th><th>Description</th><th>Dimensions (logical px)</th><th>Current sprite</th></tr>\n"
+    for sid, desc, fg_bg, csv_rel, block_idx, max_w in sprites:
+        csv_path = BASE / csv_rel
+        badge = f'<span class="badge-fg">FG</span>' if fg_bg == "FG" else f'<span class="badge-bg">BG</span>'
+        if csv_path.exists():
+            blocks = read_blocks(csv_path, max_w)
+            if block_idx < len(blocks):
+                block = blocks[block_idx]
+                h_px = len(block)
+                w_px = max_w
+                img_uri = sprite_uri(block, scale_x=8, scale_y=4)
+                img_tag = f'<img class="sprite-img" src="{img_uri}" width="{w_px*8}" height="{h_px*4}" alt="{sid}">'
+                dims = f"{w_px}&thinsp;&times;&thinsp;{h_px}&thinsp;px"
+            else:
+                img_tag = "<em style='color:#666'>block not found</em>"
+                dims = "—"
+        else:
+            img_tag = "<em style='color:#666'>file missing</em>"
+            dims = "—"
+        html += (f"<tr>"
+                 f"<td class='sprite-id'>{sid}</td>"
+                 f"<td>{badge}</td>"
+                 f"<td class='sprite-desc'>{desc}</td>"
+                 f"<td class='sprite-dims'>{dims}</td>"
+                 f"<td>{img_tag}</td>"
+                 f"</tr>\n")
+    html += "</table>\n"
+    return html
+
+def build_tile_grid(tiles: list[tuple[str, list[list[str]]]]) -> str:
+    html = "<div class=\"tile-grid\">\n"
+    for label, block in tiles:
+        desc_text, fg_bg = TILE_DESCRIPTIONS.get(label, (label, "BG"))
+        badge = f'<span class="badge-fg">FG</span>' if fg_bg == "FG" else f'<span class="badge-bg">BG</span>'
+        h_px = len(block)
+        w_px = 8
+        img_uri = sprite_uri(block, scale_x=8, scale_y=4)
+        html += (f'<div class="tile-card">'
+                 f'<img class="sprite-img" src="{img_uri}" '
+                 f'width="{w_px*8}" height="{h_px*4}" alt="{label}">'
+                 f'<div class="tile-id">{label} {badge}</div>'
+                 f'<div class="tile-desc">{desc_text}</div>'
+                 f'</div>\n')
+    html += "</div>\n"
+    return html
+
+def build_document() -> str:
+    parts = [f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PORTHOLE — Sprite Index for Design Brief</title>
+<style>{CSS}</style>
+</head>
+<body>
+<h1>PORTHOLE</h1>
+<p class="subtitle">Sprite &amp; Tile Index — Graphics Designer Brief</p>
+<p>PORTHOLE is a 2D platformer demake of Valve&rsquo;s <em>Portal</em>, running on the
+BBC Master 128 — an 8-bit British home computer from 1986. This document lists every
+sprite and tile in the game with its function, layer assignment, and current artwork.
+All images in this document are rendered at the correct 2:1 pixel aspect ratio as they
+appear on real hardware.</p>
+"""]
+
+    parts.append(build_palette_section())
+    parts.append(build_tech_section())
+
+    # Foreground sprites
+    parts.append(section("Foreground Sprites"))
+    parts.append("<p>Foreground sprites composite over the tile background using the split-nibble "
+                 "OR technique. They use the FG sub-palette (3 colours + transparent). "
+                 "Left-facing variants are auto-generated by horizontal flip at runtime.</p>\n")
+
+    parts.append(subsection("Chell — Player Character"))
+    chell = [s for s in SPRITE_CATALOGUE if s[0].startswith("CHELL_")]
+    parts.append(build_sprite_table(chell))
+
+    parts.append(subsection("Overlays — Portal Gun Arm &amp; Reticle"))
+    parts.append("<p>These sprites are composited over the Chell body. They share the same "
+                 "16&thinsp;&times;&thinsp;16&thinsp;px canvas and align to the torso.</p>\n")
+    overlays = [s for s in SPRITE_CATALOGUE if s[0].startswith("OVERLAY_") or s[0].startswith("RETICLE_")]
+    parts.append(build_sprite_table(overlays))
+
+    parts.append(subsection("Portals"))
+    parts.append("<p>Portals appear in pairs (red and yellow). Vertical portals sit on walls; "
+                 "horizontal portals sit on floors and ceilings; the front-facing &ldquo;big&rdquo; "
+                 "portal is what the player walks through.</p>\n")
+    portals = [s for s in SPRITE_CATALOGUE if s[0].startswith("PORTAL_")]
+    parts.append(build_sprite_table(portals))
+
+    parts.append(subsection("Objects"))
+    parts.append("<p>Movable in-game objects. The companion cube can be carried and used to press "
+                 "pressure pads. The sentry turret is an enemy that can also be picked up and moved.</p>\n")
+    objects = [s for s in SPRITE_CATALOGUE if s[0].startswith("OBJ_")]
+    parts.append(build_sprite_table(objects))
+
+    # Background tiles
+    parts.append(section("Background Tiles"))
+    parts.append("<p>Tiles are static and compose the room geometry. They are drawn once per frame "
+                 "from the tilemap and use the BG sub-palette. Each tile is "
+                 "8&thinsp;&times;&thinsp;16 logical pixels. Tiles shown here at 2:1 aspect ratio.</p>\n")
+
+    tile_csv = BASE / "sprites" / "NewTiles - Grid.csv"
+    tiles = read_tile_blocks(tile_csv)
+    parts.append(build_tile_grid(tiles))
+
+    parts.append("</body>\n</html>\n")
+    return "".join(parts)
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", default="docs/sprite_index.html", help="Output HTML path")
+    args = parser.parse_args()
+
+    out = BASE / args.out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    html = build_document()
+    out.write_text(html, encoding="utf-8")
+    size_kb = len(html.encode()) // 1024
+    print(f"Sprite index: {out}  ({size_kb} KB)")
+
+if __name__ == "__main__":
+    main()

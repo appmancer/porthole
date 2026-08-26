@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="19">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+54,54,44,35,54,35,54,35,35,35,35,35,35,35,35,43,
+54,54,34,1,15,1,15,1,1,1,1,1,1,1,1,36,
+54,54,40,1,1,1,1,1,1,1,1,1,1,1,1,36,
+54,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+54,54,54,54,54,54,54,54,54,54,54,54,37,1,1,36,
+44,35,35,35,35,35,35,35,35,35,35,35,40,1,1,36,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+34,1,1,1,1,1,1,1,1,1,1,1,1,1,1,36,
+34,1,1,1,1,1,2,1,1,1,1,1,1,1,1,36,
+34,1,1,38,33,33,33,33,33,33,33,33,37,1,1,36,
+34,1,1,36,54,54,54,54,54,54,54,54,34,1,1,36,
+34,1,1,36,54,54,54,54,54,54,54,54,34,1,1,36,
+40,1,1,39,35,35,35,35,35,35,35,35,40,1,1,39,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="12" name="sentry_1" type="sentry" x="16" y="48">
+   <properties>
+    <property name="dir" value="right"/>
+    <property name="id" value="sentry_1"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="16" name="button_2" type="button" x="96" y="128" width="16" height="16">
+   <properties>
+    <property name="channel" value="5"/>
+    <property name="id" value="button_2"/>
+   </properties>
+  </object>
+  <object id="17" name="spawner_3" type="spawner" x="96" y="16">
+   <properties>
+    <property name="channel" value="5"/>
+    <property name="id" value="spawner_3"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="18" name="spawner_6" type="spawner" x="64" y="16">
+   <properties>
+    <property name="channel" value="6"/>
+    <property name="id" value="spawner_6"/>
+   </properties>
+   <point/>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="13" name="killzone" type="killzone" x="32" y="48" width="176" height="16">
+   <properties>
+    <property name="id" value="killzone"/>
+    <property name="sentry" value="sentry_1"/>
+   </properties>
+  </object>
+  <object id="14" name="edge_exit_11" type="edge_exit" x="240" y="208" width="16" height="32">
+   <properties>
+    <property name="id" value="edge_exit_11"/>
+    <property name="to" value="room04"/>
+   </properties>
+  </object>
+  <object id="15" name="edge_exit_12" type="edge_exit" x="0" y="208" width="16" height="32">
+   <properties>
+    <property name="id" value="edge_exit_12"/>
+    <property name="to" value="room06"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

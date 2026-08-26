@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="16" height="16" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#00ffff" nextlayerid="4" nextobjectid="9">
+ <tileset firstgid="1" source="../../tiled/porthole.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="16" height="16">
+  <data encoding="csv">
+54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,
+54,1,1,1,1,1,1,1,1,1,1,1,1,1,1,54,
+54,0,0,0,0,0,0,0,0,0,0,0,1,0,1,54,
+54,0,0,0,0,0,0,0,0,0,0,0,0,1,1,54,
+54,0,0,0,0,0,0,0,0,0,0,0,1,1,1,54,
+54,1,0,0,0,0,0,0,0,1,0,0,1,1,1,54,
+54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,54,
+54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,54,
+54,0,1,0,0,0,0,1,1,1,1,1,1,1,1,54,
+54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,54,
+54,1,0,0,0,0,0,0,1,1,1,1,1,1,1,54,
+54,1,0,0,0,0,0,0,1,1,1,1,1,1,1,54,
+54,1,1,0,0,0,0,0,1,1,1,1,1,1,1,54,
+54,1,1,1,1,1,1,1,1,1,1,1,4,5,1,54,
+54,1,1,1,1,1,1,1,1,1,1,1,6,7,1,54,
+54,54,54,54,54,54,54,54,54,54,54,54,54,54,54,54
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="3" name="exit" type="exit" x="192" y="208">
+   <properties>
+    <property name="channel" value="0"/>
+    <property name="id" value="exit_00"/>
+   </properties>
+   <point/>
+  </object>
+ </objectgroup>
+ <objectgroup id="3" name="meta">
+  <object id="5" name="start" type="start" x="32" y="208">
+   <point/>
+  </object>
+ </objectgroup>
+</map>
