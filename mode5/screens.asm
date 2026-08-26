@@ -29,12 +29,15 @@
 
 
 ; --- show_level_card ---
-; Display MODE 5 level title card: Aperture logo on cyan background.
+; Display MODE 5 level title card: Aperture logo on the background accent colour.
 ; Blocks until SPACE pressed.
 ; Input: current_level (0-indexed) in ZP.
 .show_level_card
-    ; Fill shadow screen RAM with cyan (handles ACCCON X=1 internally).
-    JSR clear_playfield_cyan
+
+    ; Fill shadow screen RAM with the background accent colour (handles
+    ; ACCCON X=1 internally).
+    JSR clear_playfield_bg
+
 
     ; Ensure CRTC R1=32 (128px wide) and R2=45 (centred) so the screen
     ; memory layout matches our 32-byte-per-row logo data.
@@ -50,6 +53,7 @@
     LDA ACCCON
     ORA #&01
     STA ACCCON
+
 
     ; Load Aperture logo from disc directly into shadow screen RAM at &5C00
     ; (tile rows 2-5). Use the shared OSFILE block / filename area.
@@ -98,6 +102,7 @@
     JSR set_palette
 
     ; Remap colour 0 from black to blue for the card display.
+
     ; VDU 19,0,4,0,0,0 — logical 0 -> physical 4 (blue)
     LDA #19 : JSR OSWRCH
     LDA #0  : JSR OSWRCH
@@ -258,7 +263,15 @@
     LDA #&FF
     LDX #<osfile_blk_templte
     LDY #>osfile_blk_templte
+    ; Sound and disc access conflict on the BBC: the sound interrupt disturbs
+    ; the timing-critical DFS transfer. OSBYTE &D2 only suppresses NEW sounds
+    ; -- notes already in the MOS buffers keep playing -- so flush every
+    ; channel first, then suppress across the load. (&D2: X=1 off, X=0 on.)
+    JSR sfx_silence_all
+    LDA #210 : LDX #1 : LDY #0 : JSR OSBYTE
     JSR OSFILE
+    LDA #210 : LDX #0 : LDY #0 : JSR OSBYTE
+
 
     ; Clear &8D (double-height) codes baked into template rows 12-14.
     ; These would interfere with our own double-height header above.

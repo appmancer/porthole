@@ -90,18 +90,15 @@ MAX_BEAM_STEPS = 32
 ;
 ; Clobbers: A,X,Y,temp,temp_y,screen_ptr,sprite_ptr,row_counter
 .retrace_all_beams
+    ; Beams trace across rooms, and non-current rooms live in SWRAM bank 6.
+    ; Paging it in does not hide main RAM, so the resident current-room page
+    ; stays readable and the trace needs no per-room branching.
+    JSR tilemap_bank_in
+
     JSR unstamp_beam_tiles
 
-    ; Clear target_lit flags.
-    LDX #0
-    LDA #0
-  .rab_clear_tgt
-    CPX #TARGET_COUNT
-    BCS rab_tgt_done
-    STA target_lit,X
-    INX
-    BNE rab_clear_tgt
-  .rab_tgt_done
+    ; target_lit is NOT cleared here any more.  Collectors latch when a spark
+    ; arrives and stay latched; init_beams clears them on level restart.
 
     ; Process each laser.
     LDX #0
@@ -126,8 +123,7 @@ MAX_BEAM_STEPS = 32
     LDA laser_defs+6,X        ; emitter_y
     STA trace_emitter_y
 
-    ; Static segment: check targets between emitter and wall.
-    JSR check_static_targets
+    ; The static segment no longer energises targets -- only a spark does.
 
     ; Portal redirect check: does wall-hit tile have a matching portal?
     JSR check_wall_portal
@@ -145,6 +141,7 @@ MAX_BEAM_STEPS = 32
     JMP rab_laser_loop
 
   .rab_done
+    JSR tilemap_bank_out
     RTS
 
 
@@ -232,8 +229,6 @@ MAX_BEAM_STEPS = 32
     CMP trace_room
     BNE cwp_check_b
     LDY portal_a_orient
-    CPY #PORTAL_ORIENT_BACK
-    BEQ cwp_check_b
     LDA entry_dir_table,Y
     CMP trace_dir
     BNE cwp_check_b
@@ -263,8 +258,6 @@ MAX_BEAM_STEPS = 32
     LDA portal_b_enabled
     BEQ cwp_fail_tramp
     LDY portal_b_orient
-    CPY #PORTAL_ORIENT_BACK
-    BEQ cwp_fail_tramp
     JMP cwp_a_exit_ok
   .cwp_fail_tramp
     JMP cwp_fail
@@ -289,8 +282,6 @@ MAX_BEAM_STEPS = 32
     CMP trace_room
     BNE cwp_fail
     LDY portal_b_orient
-    CPY #PORTAL_ORIENT_BACK
-    BEQ cwp_fail
     LDA entry_dir_table,Y
     CMP trace_dir
     BNE cwp_fail
@@ -320,8 +311,6 @@ MAX_BEAM_STEPS = 32
     LDA portal_a_enabled
     BEQ cwp_fail
     LDY portal_a_orient
-    CPY #PORTAL_ORIENT_BACK
-    BEQ cwp_fail
     LDA portal_a_x
     STA trace_x
     LDA portal_a_y
@@ -384,12 +373,24 @@ MAX_BEAM_STEPS = 32
     STA trace_y
 
     ; Bounds check (0..15 for both axes, unsigned).
+    ; If the beam leaves the room through an authored edge exit, continue
+    ; tracing in the destination room from the opposite edge.
     LDA trace_x
     CMP #16
-    BCS tdb_exit
+    BCC tdb_x_ok
+    JSR trace_cross_room_edge
+    BCC tdb_exit
+    INC trace_steps
+    JMP tdb_loop
+  .tdb_x_ok
     LDA trace_y
     CMP #16
-    BCS tdb_exit
+    BCC tdb_y_ok
+    JSR trace_cross_room_edge
+    BCC tdb_exit
+    INC trace_steps
+    JMP tdb_loop
+  .tdb_y_ok
 
     ; Set sprite_ptr to traced room's tilemap.
     LDA trace_room
@@ -412,19 +413,75 @@ MAX_BEAM_STEPS = 32
     LDA (sprite_ptr),Y
 
     ; Solid check: bit 5 set = solid tile.
+    ; Special case: zapper-on tiles are solid but we stamp a beam-on-zapper tile.
     AND #&20
-    BNE tdb_exit
+    BEQ tdb_not_solid
+    ; Solid tile — check if it's a zapper we can stamp a beam tile on.
+    LDA (sprite_ptr),Y         ; reload full tile ID
+    CMP #TILE_ZAPPER_LEFT_ON
+    BEQ tdb_zapper_hit
+    CMP #TILE_ZAPPER_MID_ON
+    BEQ tdb_zapper_hit
+    CMP #TILE_ZAPPER_RIGHT_ON
+    BEQ tdb_zapper_hit
+    JMP tdb_done               ; solid non-zapper, stop beam
+  .tdb_zapper_hit
+    ; Only stamp if beam is vertical and in current room.
+    LDA trace_dir
+    AND #2
+    BEQ tdb_exit               ; horizontal beam — just stop (shouldn't happen per design)
+    LDA trace_room
+    CMP current_room
+    BEQ tdb_zapper_room_ok
+    JMP tdb_done               ; different room — stop without stamping
+  .tdb_zapper_room_ok
+    LDX beam_tile_count
+    CPX #MAX_BEAM_TILES
+    BCC tdb_zapper_space_ok
+    JMP tdb_done               ; beam list full
+  .tdb_zapper_space_ok
+    LDY trace_tile_off
+    LDA (tilemap_ptr),Y
+    STA beam_tile_orig,X       ; save original tile
+    TYA
+    STA beam_tile_pos,X
+    ; Choose tile: beam going down → TILE_LASER_ZAPPER_DOWN,
+    ;              beam going up   → TILE_LASER_ZAPPER_UP.
+    LDA trace_dir
+    CMP #BEAM_DIR_DOWN
+    BEQ tdb_zap_down
+    LDA #TILE_LASER_ZAPPER_UP
+    JMP tdb_zap_stamp
+  .tdb_zap_down
+    LDA #TILE_LASER_ZAPPER_DOWN
+  .tdb_zap_stamp
+    LDY trace_tile_off
+    STA (tilemap_ptr),Y
+    INC beam_tile_count
+    LDA beam_do_redraw
+    BEQ tdb_zap_exit
+    LDA trace_x
+    TAX
+    LDA trace_y
+    JSR redraw_tile_xy
+  .tdb_zap_exit
+    JMP tdb_done
 
-    ; Check against all targets.
-    JSR check_trace_target
+  .tdb_exit2
+    JMP tdb_done
+
+  .tdb_not_solid
+    ; Probe for a collector so the rail can show it is connected, but do
+    ; not energise it -- that is the spark's job.
+    JSR find_trace_target
     BCC tdb_no_target
     ; Target hit — stamp active receiver tile if in current room.
     LDA trace_room
     CMP current_room
-    BNE tdb_exit
+    BNE tdb_exit2
     LDX beam_tile_count
     CPX #MAX_BEAM_TILES
-    BCS tdb_exit
+    BCS tdb_exit2
     LDY trace_tile_off
     LDA (tilemap_ptr),Y
     STA beam_tile_orig,X
@@ -435,7 +492,7 @@ MAX_BEAM_STEPS = 32
     STA beam_tile_pos,X
     INC beam_tile_count
     LDA beam_do_redraw
-    BEQ tdb_exit
+    BEQ tdb_exit2
     LDA trace_x
     TAX
     LDA trace_y
@@ -516,11 +573,182 @@ MAX_BEAM_STEPS = 32
     RTS
 
 
+; If the current traced beam just left the room bounds, try to continue it
+; through a matching authored edge exit. Returns C=1 on success with
+; trace_room and the off-screen starting coordinate updated so the next loop
+; iteration advances into the destination room. Returns C=0 if there is no
+; matching exit on that edge.
+; Clobbers: A,X,Y,temp,temp_sprite_ptr,col_counter,exit_dst
+.trace_cross_room_edge
+    LDA trace_dir
+    CMP #BEAM_DIR_LEFT
+    BEQ tcre_left
+    CMP #BEAM_DIR_RIGHT
+    BEQ tcre_right
+    CMP #BEAM_DIR_UP
+    BEQ tcre_up
+    JMP tcre_down
+
+  .tcre_left
+    LDA trace_y
+    STA temp
+    LDX trace_room
+    LDA exit_left_counts,X
+    BNE tcre_left_have_count
+    JMP tcre_fail
+  .tcre_left_have_count
+    STA col_counter
+    TXA
+    ASL A
+    TAX
+    LDA exit_left_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_left_ptrs+1,X
+    STA temp_sprite_ptr+1
+    JSR trace_find_exit_scan
+    BCS tcre_left_found
+    JMP tcre_fail
+  .tcre_left_found
+    STA trace_room
+    LDA #16
+    STA trace_x
+    SEC
+    RTS
+
+  .tcre_right
+    LDA trace_y
+    STA temp
+    LDX trace_room
+    LDA exit_right_counts,X
+    BNE tcre_right_have_count
+    JMP tcre_fail
+  .tcre_right_have_count
+    STA col_counter
+    TXA
+    ASL A
+    TAX
+    LDA exit_right_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_right_ptrs+1,X
+    STA temp_sprite_ptr+1
+    JSR trace_find_exit_scan
+    BCS tcre_right_found
+    JMP tcre_fail
+  .tcre_right_found
+    STA trace_room
+    LDA #&FF
+    STA trace_x
+    SEC
+    RTS
+
+  .tcre_up
+    LDA trace_x
+    STA temp
+    LDX trace_room
+    LDA exit_up_counts,X
+    BNE tcre_up_have_count
+    JMP tcre_fail
+  .tcre_up_have_count
+    STA col_counter
+    TXA
+    ASL A
+    TAX
+    LDA exit_up_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_up_ptrs+1,X
+    STA temp_sprite_ptr+1
+    JSR trace_find_exit_scan
+    BCS tcre_up_found
+    JMP tcre_fail
+  .tcre_up_found
+    STA trace_room
+    LDA #16
+    STA trace_y
+    SEC
+    RTS
+
+  .tcre_down
+    LDA trace_x
+    STA temp
+    LDX trace_room
+    LDA exit_down_counts,X
+    BNE tcre_down_have_count
+    JMP tcre_fail
+  .tcre_down_have_count
+    STA col_counter
+    TXA
+    ASL A
+    TAX
+    LDA exit_down_ptrs,X
+    STA temp_sprite_ptr
+    LDA exit_down_ptrs+1,X
+    STA temp_sprite_ptr+1
+    JSR trace_find_exit_scan
+    BCS tcre_down_found
+    JMP tcre_fail
+  .tcre_down_found
+    STA trace_room
+    LDA #&FF
+    STA trace_y
+    SEC
+    RTS
+
+  .tcre_fail
+    CLC
+    RTS
+
+
+; Scan edge-exit records pointed to by temp_sprite_ptr.
+; Input: temp = orthogonal tile coordinate, col_counter = record count.
+; Each record is [a0, a1, dst_room], inclusive range.
+; Returns A = dst_room, C=1 on match, else C=0.
+; Clobbers: A,Y,exit_dst,temp_mask_ptr
+.trace_find_exit_scan
+    LDY #0
+  .tfes_loop
+    LDA (temp_sprite_ptr),Y
+    STA temp_mask_ptr
+    INY
+    LDA (temp_sprite_ptr),Y
+    STA temp_mask_ptr+1
+    INY
+    LDA (temp_sprite_ptr),Y
+    STA exit_dst
+
+    LDA temp
+    CMP temp_mask_ptr
+    BCC tfes_next
+    LDA temp
+    CMP temp_mask_ptr+1
+    BCC tfes_match
+    BEQ tfes_match
+    JMP tfes_next
+
+  .tfes_match
+    LDA exit_dst
+    SEC
+    RTS
+
+  .tfes_next
+    LDA temp_sprite_ptr
+    CLC
+    ADC #3
+    STA temp_sprite_ptr
+    BCC tfes_next_ok
+    INC temp_sprite_ptr+1
+  .tfes_next_ok
+    LDY #0
+    DEC col_counter
+    BNE tfes_loop
+    CLC
+    RTS
+
+
 ; Check if (trace_x, trace_y, trace_room) matches any target.
 ; If match: set target_lit[i] = 1, return C=1.
 ; Otherwise: return C=0.
 ; Clobbers: A,Y (preserves X)
-.check_trace_target
+.find_trace_target
     STX ctt_save_x
     LDX #0
   .ctt_loop
@@ -535,13 +763,11 @@ MAX_BEAM_STEPS = 32
     LDA target_defs+2,X
     CMP trace_y
     BNE ctt_next
-    ; Hit! Set target_lit.
+    ; Hit -- report the index; lighting is the caller's business.
     TXA
     LSR A
     LSR A
     TAY
-    LDA #1
-    STA target_lit,Y
     LDX ctt_save_x
     SEC
     RTS
@@ -559,6 +785,21 @@ MAX_BEAM_STEPS = 32
     RTS
 
 
+; Latch the collector at the traced position.  Called only on spark arrival:
+; the beam is just the rail, so it uses find_trace_target and leaves the
+; collector cold.
+; Output: C=1 if a collector was latched.
+; Clobbers: A,Y
+.check_trace_target
+    JSR find_trace_target
+    BCC ctt_none
+    LDA #1
+    STA target_lit,Y
+    SEC
+  .ctt_none
+    RTS
+
+
 ; Check if (trace_x, trace_y, trace_room) matches a portal with matching
 ; entry direction. If so, redirect: set trace_x/y/room/dir to paired
 ; portal exit, return C=1. Otherwise return C=0.
@@ -571,8 +812,6 @@ MAX_BEAM_STEPS = 32
     CMP trace_room
     BNE ctp_check_b
     LDY portal_a_orient
-    CPY #PORTAL_ORIENT_BACK
-    BEQ ctp_check_b
     LDA entry_dir_table,Y
     CMP trace_dir
     BNE ctp_check_b
@@ -602,8 +841,6 @@ MAX_BEAM_STEPS = 32
     LDA portal_b_enabled
     BEQ ctp_miss_tramp
     LDY portal_b_orient
-    CPY #PORTAL_ORIENT_BACK
-    BEQ ctp_miss_tramp
     JMP ctp_a_exit_ok
   .ctp_miss_tramp
     JMP ctp_miss
@@ -628,8 +865,6 @@ MAX_BEAM_STEPS = 32
     CMP trace_room
     BNE ctp_miss
     LDY portal_b_orient
-    CPY #PORTAL_ORIENT_BACK
-    BEQ ctp_miss
     LDA entry_dir_table,Y
     CMP trace_dir
     BNE ctp_miss
@@ -659,8 +894,6 @@ MAX_BEAM_STEPS = 32
     LDA portal_a_enabled
     BEQ ctp_miss
     LDY portal_a_orient
-    CPY #PORTAL_ORIENT_BACK
-    BEQ ctp_miss
     LDA portal_a_x
     STA trace_x
     LDA portal_a_y

@@ -51,8 +51,8 @@ def get_label(labels: dict, name: str) -> int:
 SECTION_BUDGETS = [
     # Render-safe zone (below &3000)
     (".entry",                    ".render_start",           "main.asm",              850),
-    (".render_start",             ".render_state_start",     "render",               2000),
-    (".render_state_start",       ".room_runtime_start",     "render_state",          512),
+    (".render_start",             ".render_state_start",     "render",               2260),
+    (".render_state_start",       ".room_runtime_start",     "render_state",          510),
     (".room_runtime_start",       ".debug_start",            "room_runtime",          256),
     (".debug_start",              ".times16_table",           "debug",                 256),
     (".times16_table",            ".character_sprite_table",   "lookup_tables",         128),
@@ -61,24 +61,28 @@ SECTION_BUDGETS = [
     # Update-only zone (above render-safe)
     (".portal_teleport_start",    ".room_exits_start",       "portal_teleport",      1536),
     (".room_exits_start",         ".reticle_start",          "room_exits",            768),
-    (".reticle_start",            ".input_start",            "reticle",              1792),
+    (".reticle_start",            ".input_start",            "reticle",              1536),
     (".input_start",              ".portal_place_start",     "input",                 512),
     (".portal_place_start",       ".frame_update_start",     "portal_place",         1280),
     (".frame_update_start",       ".persistent_objects_start","frame_update",         1536),
-    (".persistent_objects_start", ".ui_start",               "persistent_objects",   3072),
-    (".ui_start",                 ".screens_start",          "ui",                    256),
+    (".persistent_objects_start", ".ui_start",               "persistent_objects",   3488),
+    (".ui_start",                 ".screens_start",          "ui",                    208),
     (".screens_start",            ".loaders_start",          "screens",              2560),
     (".loaders_start",            ".timing_start",           "loaders",              1024),
     (".timing_start",             ".movement_start",         "timing",                 64),
     (".movement_start",           ".laser_start",            "movement",             1024),
-    (".laser_start",              ".tilemap_data_start",     "laser",                1280),
-    (".tilemap_data_start",       ".objects_start",           "tilemap",             5792),
-    (".objects_start",            ".persistent_data_start",   "objects",              512),
-    (".persistent_data_start",    ".end",                     "persistent_obj_data", 1024),
+    (".laser_start",              ".spark_start",            "laser",                1664),
+    (".spark_start",              ".tilemap_data_start",     "spark",                1088),
+    (".tilemap_data_start",       ".objects_start",           "tilemap",             2304),
+    (".objects_start",            ".persistent_data_start",   "objects",              576),
+    (".persistent_data_start",    ".music_start",             "persistent_obj_data", 1024),
+    (".music_start",              ".end",                     "music",                1024),
 ]
 
-# Global code ceiling: runtime buffers start at &7800.
-CODE_CEILING = 0x7800
+# Global main-RAM ceiling. The shadow-screen scratch contract uses
+# LYNNE at &7800..&7FFF; main RAM at the same addresses remains available
+# while X=0 for update-only code and buffers.
+CODE_CEILING = 0x8000
 
 
 def main(argv: list[str]) -> int:

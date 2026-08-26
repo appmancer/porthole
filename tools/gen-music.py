@@ -68,6 +68,7 @@ def parse_spec(s: str):
     trim = False
     pick = "last"
     transpose = 0
+    max_note = 0  # 0 = no cap
     for flag in parts[4:]:
         if flag == "trim":
             trim = True
@@ -78,11 +79,17 @@ def parse_spec(s: str):
             except ValueError:
                 raise SystemExit(f"Bad --spec '{s}'. Bad transpose flag '{flag}'.")
             continue
+        if flag.startswith("m") and len(flag) > 1:
+            try:
+                max_note = int(flag[1:])
+            except ValueError:
+                raise SystemExit(f"Bad --spec '{s}'. Bad max_note flag '{flag}'.")
+            continue
         if flag in ("high", "low", "last"):
             pick = flag
             continue
         raise SystemExit(f"Bad --spec '{s}'. Unknown flag '{flag}'.")
-    return label, track, channel, end_ticks, trim, pick, transpose
+    return label, track, channel, end_ticks, trim, pick, transpose, max_note
 
 
 def _read_varlen(data: bytes, i: int):
@@ -406,7 +413,7 @@ def main() -> None:
 
     grid_ticks = max(1, int(round(ppqn * 4 / args.quant)))
     for spec_s in args.spec:
-        label, track_i, channel, end_ticks, trim, pick, spec_transpose = parse_spec(
+        label, track_i, channel, end_ticks, trim, pick, spec_transpose, max_note = parse_spec(
             spec_s
         )
         if not (0 <= track_i < len(tracks)):
@@ -433,6 +440,17 @@ def main() -> None:
             if en > st:
                 q.append(midi2beeb.NoteEvent(st, en, e.note))
         q = midi2beeb.to_monophonic_pick(q, pick)
+
+        if max_note > 0:
+            # Cap note durations in MIDI ticks. Convert max_note (1/20s ticks)
+            # to MIDI ticks for comparison.
+            # 1/20s tick = ppqn * tempo_us / 50000 MIDI ticks
+            midi_ticks_per_20hz = int(round(ppqn * 50_000 / tempo))
+            max_midi_ticks = max_note * midi_ticks_per_20hz
+            for e in q:
+                dur = e.end_tick - e.start_tick
+                if dur > max_midi_ticks:
+                    e.end_tick = e.start_tick + max_midi_ticks
 
         chunks.append(
             midi2beeb.emit_event_stream(

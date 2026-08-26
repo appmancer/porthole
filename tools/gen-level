@@ -62,10 +62,47 @@ OBJECT_TYPE_TO_ID: dict[str, int] = {
     "spawner": 5,
     "barrier": 6,
     "sentry": 7,
+    "zapper": 8,
 }
 
 
 OBJ_DEF_SIZE = 6
+
+
+def _parse_channel_mask(text: str, *, path: Path, what: str) -> int:
+    """Parse a channel property value into a bitmask.
+
+    Accepts a single channel number (0-7) or a comma-separated list (e.g. "0,2,5").
+    Returns a bitmask with the corresponding bits set.
+    """
+    text = text.strip()
+    if not text:
+        return 1  # default: channel 0 -> bit 0
+    parts = [p.strip() for p in text.split(",")]
+    mask = 0
+    for p in parts:
+        try:
+            ch = int(p)
+        except ValueError:
+            raise ValueError(f"{path}: {what} has non-integer channel={p!r}")
+        if not (0 <= ch <= 7):
+            raise ValueError(f"{path}: {what} channel out of range (0..7), got {ch}")
+        mask |= (1 << ch)
+    return mask
+
+
+def _parse_channel_index(text: str, *, path: Path, what: str) -> int:
+    """Parse a single channel number (0-7). Used by signal drivers (lasers, targets, buttons)."""
+    text = text.strip()
+    if not text:
+        return 0
+    try:
+        ch = int(text)
+    except ValueError:
+        raise ValueError(f"{path}: {what} has non-integer channel={text!r}")
+    if not (0 <= ch <= 7):
+        raise ValueError(f"{path}: {what} channel out of range (0..7), got {ch}")
+    return ch
 
 
 TILED_FLIP_FLAGS = 0xE0000000
@@ -360,15 +397,7 @@ def _parse_exits_and_objects_from_tmx(
                 if not obj_id:
                     raise ValueError(f"{path}: laser missing required property 'id'")
 
-                chan_text = (props.get("channel") or "").strip()
-                channel = 0
-                if chan_text:
-                    try:
-                        channel = int(chan_text)
-                    except ValueError:
-                        raise ValueError(f"{path}: laser has non-integer channel={chan_text!r}")
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: laser channel out of range (0..7), got {channel}")
+                channel = _parse_channel_index(props.get("channel") or "", path=path, what="laser")
 
                 lasers.append((cx, cy, dir_val, channel, obj_id))
                 continue
@@ -388,15 +417,7 @@ def _parse_exits_and_objects_from_tmx(
                 if not obj_id:
                     raise ValueError(f"{path}: target missing required property 'id'")
 
-                chan_text = (props.get("channel") or "").strip()
-                channel = 0
-                if chan_text:
-                    try:
-                        channel = int(chan_text)
-                    except ValueError:
-                        raise ValueError(f"{path}: target has non-integer channel={chan_text!r}")
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: target channel out of range (0..7), got {channel}")
+                channel = _parse_channel_index(props.get("channel") or "", path=path, what="target")
 
                 targets.append((cx, cy, channel, obj_id))
                 continue
@@ -410,14 +431,7 @@ def _parse_exits_and_objects_from_tmx(
                 if w <= 0 or h <= 0:
                     raise ValueError(f"{path}: fizzler must have width and height")
 
-                # Parse optional channel property (default 0).
-                chan_text = (props.get("channel") or "").strip()
-                if not chan_text:
-                    channel = 0
-                else:
-                    channel = int(chan_text)
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: fizzler channel out of range (0..7), got {channel}")
+                channel = _parse_channel_index(props.get("channel") or "", path=path, what="fizzler")
 
                 # Convert Tiled pixel coords to game pixel coords.
                 # Tiled uses tilewidth pixels; game X is half (8px per tile vs 16px).
@@ -467,16 +481,7 @@ def _parse_exits_and_objects_from_tmx(
                 if not obj_id:
                     raise ValueError(f"{path}: button missing required property 'id'")
 
-                chan_text = (props.get("channel") or "").strip()
-                if not chan_text:
-                    channel = 0
-                else:
-                    try:
-                        channel = int(chan_text)
-                    except ValueError:
-                        raise ValueError(f"{path}: button has non-integer channel={chan_text!r}")
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: button channel out of range (0..7), got {channel}")
+                channel = _parse_channel_index(props.get("channel") or "", path=path, what="button")
 
                 x = _parse_float_int(obj.get("x"), path=path, what="object x")
                 y = _parse_float_int(obj.get("y"), path=path, what="object y")
@@ -490,6 +495,47 @@ def _parse_exits_and_objects_from_tmx(
                 objects.append(("button", cx, cy, obj_id, channel, 0))
                 continue
 
+            # --- Zapper rectangles (meta group) ---
+            if is_exit_group(og_name) and obj_type.lower() == "zapper":
+                obj_id = (props.get("id") or "").strip()
+                if not obj_id:
+                    raise ValueError(f"{path}: zapper missing required property 'id'")
+
+                channel = _parse_channel_mask(props.get("channel") or "", path=path, what="zapper")
+
+                x = _parse_float_int(obj.get("x"), path=path, what="object x")
+                y = _parse_float_int(obj.get("y"), path=path, what="object y")
+                w = _parse_float_int(obj.get("width") or "0", path=path, what="object width")
+                h = _parse_float_int(obj.get("height") or "0", path=path, what="object height")
+
+                if x % tile_w != 0 or y % tile_h != 0:
+                    raise ValueError(f"{path}: zapper must be placed on tile grid")
+                if w % tile_w != 0:
+                    raise ValueError(f"{path}: zapper width must be a multiple of tile width")
+                if h != tile_h:
+                    raise ValueError(f"{path}: zapper must be exactly 1 tile tall ({tile_h}px), got {h}px")
+
+                cx = x // tile_w
+                cy = y // tile_h
+                width_tiles = w // tile_w
+
+                if width_tiles < 3:
+                    raise ValueError(f"{path}: zapper must be at least 3 tiles wide (left + middle + right), got {width_tiles}")
+                if not (0 <= cx <= 15 and 0 <= cy <= 15):
+                    raise ValueError(f"{path}: zapper out of bounds at {cx},{cy}")
+                if cx + width_tiles > 16:
+                    raise ValueError(f"{path}: zapper extends past right edge at {cx}+{width_tiles}")
+
+                # Store width_tiles in init_state bits 1-6 (bit 0 = on/off state); bit 7 = invert flag.
+                if width_tiles > 63:
+                    raise ValueError(f"{path}: zapper width {width_tiles} exceeds max 63 tiles")
+                init_state = width_tiles << 1
+                invert_text = (props.get("invert") or "").strip()
+                if invert_text == "1":
+                    init_state |= 0x80
+                objects.append(("zapper", cx, cy, obj_id, channel, init_state))
+                continue
+
             # --- Gameplay objects (planned/optional) ---
             if is_objects_group(og_name) and obj_type:
                 t = obj_type.strip().lower()
@@ -500,16 +546,13 @@ def _parse_exits_and_objects_from_tmx(
                 if not obj_id:
                     raise ValueError(f"{path}: object {obj_type!r} missing required property 'id'")
 
-                chan_text = (props.get("channel") or "").strip()
-                if not chan_text:
-                    channel = 0
+                # Drivers (pad, button) store a channel index; consumers (barrier, exit, zapper)
+                # store a channel bitmask for multi-channel XOR support.
+                _driver_types = {"pad", "button", "spawner", "cube", "sentry"}
+                if t in _driver_types:
+                    channel = _parse_channel_index(props.get("channel") or "", path=path, what=obj_type)
                 else:
-                    try:
-                        channel = int(chan_text)
-                    except ValueError:
-                        raise ValueError(f"{path}: object {obj_type!r} has non-integer channel={chan_text!r}")
-                    if not (0 <= channel <= 7):
-                        raise ValueError(f"{path}: object {obj_type!r} channel out of range (0..7), got {channel}")
+                    channel = _parse_channel_mask(props.get("channel") or "", path=path, what=obj_type)
 
                 x = _parse_float_int(obj.get("x"), path=path, what="object x")
                 y = _parse_float_int(obj.get("y"), path=path, what="object y")
@@ -536,6 +579,13 @@ def _parse_exits_and_objects_from_tmx(
                 else:
                     init_state = 0
 
+                # Invert flag: "invert" property -> init_state bit 7 (used by barriers/zappers).
+                invert_text = (props.get("invert") or "").strip()
+                if invert_text == "1":
+                    if t not in ("barrier", "zapper"):
+                        raise ValueError(f"{path}: invert property only valid on barrier/zapper, not {t!r}")
+                    init_state |= 0x80
+
                 # Sentry direction: "dir" property -> init_state bit 0 (0=right, 1=left).
                 if t == "sentry":
                     dir_text = (props.get("dir") or "").strip().lower()
@@ -545,6 +595,18 @@ def _parse_exits_and_objects_from_tmx(
                         pass  # bit 0 stays 0
                     else:
                         raise ValueError(f"{path}: sentry has invalid dir={dir_text!r} (expected 'left' or 'right')")
+
+                # Barrier height: encode height_tiles in init_state bits 1-6 (like zapper width).
+                if t == "barrier":
+                    h = _parse_float_int(obj.get("height") or "0", path=path, what="object height")
+                    if h == 0 or h % tile_h != 0:
+                        raise ValueError(f"{path}: barrier height must be a positive multiple of tile height ({tile_h}px), got {h}px")
+                    height_tiles = h // tile_h
+                    if height_tiles < 2:
+                        raise ValueError(f"{path}: barrier must be at least 2 tiles tall, got {height_tiles}")
+                    if height_tiles > 63:
+                        raise ValueError(f"{path}: barrier height {height_tiles} exceeds max 63 tiles")
+                    init_state |= (height_tiles << 1)
 
                 objects.append((t, cx, cy, obj_id, channel, init_state))
 

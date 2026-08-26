@@ -56,6 +56,7 @@ ORG &00
 .chell_bank         SKIP 1    ; ROMSEL value for Chell SWRAM bank
 .obj_bank           SKIP 1    ; ROMSEL value for Object SWRAM bank
 .tile_bank          SKIP 1    ; ROMSEL value for tile data SWRAM bank
+.level_bank         SKIP 1    ; ROMSEL value for level pack SWRAM bank
 .saved_romsel       SKIP 1    ; Saved ROMSEL around OS calls
 
   ; Animation.
@@ -185,7 +186,31 @@ CHELLDATA_BUF         = &7B00  ; Temp buffer in screen scratch
 OBJ_SWRAM_BANK_DEFAULT = 5
 
 ; Tile bitmap data lives in sideways RAM bank 6.
+; Music player: only the three voice track pointers need zero page
+; (read via (ptr),Y). &83-&8F is the free ZP window; this takes &83-&88 and
+; leaves &89-&8F. The player's other 11 bytes are absolute (MUSIC_VAR_BASE).
+; Build switch: set FALSE to omit all music and sound-effect calls, for
+; bisecting audio against the rest of the build. The code is still assembled;
+; only the call sites are suppressed.
+ENABLE_AUDIO = TRUE
+ENABLE_MUSIC      = TRUE     ; music init (envelopes + track pointers)
+ENABLE_MUSIC_TICK = TRUE     ; per-frame tick + Q toggle
+ENABLE_SFX   = TRUE      ; sound effects: queue + service
+
+; Sound-effect request slot. MUST be zero page: effects are triggered from
+; rendering code, which runs with ACCCON X=1 (LYNNE mapped over &3000-&7FFF).
+; sound_block lives at &72xx, inside that window, so touching it from a render
+; path would write to screen memory instead of RAM. Zero page is never shadowed,
+; so trigger sites only ever store here and the main loop does the real work.
+SFX_PENDING = &89           ; &FF = nothing queued
+TRACE = &8F                 ; free debug breadcrumb byte (unused; see git log for the envelope/trampoline bug)
+
+MUSIC_ZP_BASE = &83
+
 TILE_SWRAM_BANK_DEFAULT = 6
+
+; Level pack data lives in sideways RAM bank 7.
+LEVEL_SWRAM_BANK_DEFAULT = 7
 
 
 FALL_POSE_VY_THRESHOLD       = 2      ; switch to falling pose after 2+ fall steps (not immediately)
@@ -212,11 +237,6 @@ PORTAL_ORIENT_WALL_L         = 0
 PORTAL_ORIENT_WALL_R         = 1
 PORTAL_ORIENT_FLOOR          = 2
 PORTAL_ORIENT_CEIL           = 3
-PORTAL_ORIENT_BACK           = 4
-
-; Tile id for the special "backwall portal surface".
-; Back-wall portals may only be placed onto 2x2 regions of this tile.
-TILE_BACKWALL_PORTAL         = 29
 
 ; Tile ids for tile-backed objects (from reordered tileset).
 TILE_PAD_UP_L                 = 49
@@ -236,7 +256,8 @@ TILE_EXIT_OPEN_BR             = 10
 TILE_BARRIER_OPEN_T           = 30
 TILE_BARRIER_OPEN_B           = 31
 TILE_BARRIER_CLOSED_T         = 54
-TILE_BARRIER_CLOSED_B         = 55
+TILE_BARRIER_CLOSED_M         = 55
+TILE_BARRIER_CLOSED_B         = 56
 
 ; Overlay sprite indices (overlay_sprite_table).
 CHELL_OVERLAY_CARRY_RIGHT_BASE = 24
@@ -250,10 +271,20 @@ OBJ_TYPE_EXIT                = 4
 OBJ_TYPE_SPAWNER             = 5
 OBJ_TYPE_BARRIER             = 6
 OBJ_TYPE_SENTRY              = 7
+OBJ_TYPE_ZAPPER              = 8
 
 ; Sentry direction flag stored in obj_state bit 0.
 SENTRY_DIR_LEFT              = 1
 SENTRY_STATE_DISABLED        = 2
+
+; Zapper tile IDs.
+TILE_ZAPPER_LEFT_ON          = 57
+TILE_ZAPPER_MID_ON           = 58
+TILE_ZAPPER_RIGHT_ON         = 59
+TILE_ZAPPER_LEFT_OFF         = 60
+TILE_ZAPPER_RIGHT_OFF        = 61
+TILE_LASER_ZAPPER_DOWN       = 62
+TILE_LASER_ZAPPER_UP         = 63
 
 ; Hazard tile IDs. Touching any of these kills Chell.
 TILE_ACID                    = 11
@@ -296,11 +327,9 @@ CHELL_DEAD_BASE              = 48
     ; One-time start screen (before any MODE 5 setup).
     JSR show_start_screen
 
-    ; Initialize level counter and pack cache.
+    ; Initialize level counter.
     LDA #0
     STA current_level
-    LDA #&FF
-    STA loaded_pack_index
 
     ; Fall through to start_level.
 
@@ -341,6 +370,13 @@ CHELL_DEAD_BASE              = 48
     ; 0=black, 1=red, 2=cyan, 3=yellow
     JSR set_palette
 
+    ; Start the music (envelopes + track pointers).
+IF ENABLE_AUDIO AND ENABLE_MUSIC
+    JSR music_start_playing
+ENDIF
+IF ENABLE_AUDIO AND ENABLE_SFX
+    JSR sfx_init
+ENDIF
 
     ; Disable MOS ESCAPE key processing so it doesn't set the escape condition.
     LDA #229
@@ -391,6 +427,7 @@ CHELL_DEAD_BASE              = 48
     ; Initialize level-global object state from generated tables.
     JSR init_persistent_objects
     JSR init_beams
+    JSR spark_level_reset
 
     ; Place Chell at the level-defined start tile (from active buffer).
     LDA level_start_pos_buf
@@ -494,6 +531,7 @@ CHELL_DEAD_BASE              = 48
 
     ; Render background once.
     JSR render_tilemap
+    JSR spark_arm
     JSR render_static_objects
     JSR stamp_portals_for_current_room
     JSR render_persistent_objects_current_room
@@ -527,6 +565,15 @@ CHELL_DEAD_BASE              = 48
         ; Pace the loop (reduces tearing/flicker).
         JSR wait_vsync
 
+        ; Music runs at frame rate; the player itself only does work on
+        ; every 5th frame (50Hz -> 20Hz scheduler).
+IF ENABLE_AUDIO AND ENABLE_MUSIC AND ENABLE_MUSIC_TICK
+        JSR music_frame_tick
+ENDIF
+IF ENABLE_AUDIO AND ENABLE_SFX
+        JSR sfx_service
+ENDIF
+
        ; Render previous frame immediately after VSYNC.
        ; Incremental: redraw only what changed (Chell + reticle).
        ; Force render when sentry bullets are on screen.
@@ -534,6 +581,19 @@ CHELL_DEAD_BASE              = 48
         BEQ main_no_bullet_force
         LDA #1 : STA dirty_flag
    .main_no_bullet_force
+        ; A visible spark moves every frame, so it always needs a redraw.
+        ; A spark off in another room does not -- forcing a render for it
+        ; would put Chell through a needless peel/redraw every frame.
+        LDA spark_has_under
+        BNE main_spark_force
+        LDA spark_active
+        BEQ main_no_spark_force
+        LDA spark_room
+        CMP current_room
+        BNE main_no_spark_force
+   .main_spark_force
+        LDA #1 : STA dirty_flag
+   .main_no_spark_force
         LDA dirty_flag
         BEQ main_skip_render
         JSR render_frame_simple
@@ -597,7 +657,12 @@ CHELL_DEAD_BASE              = 48
         RTS
 
    .prbp_has_work
-        ; Restore reticle under first (LIFO peel — reticle drawn last, restored first).
+        ; Peel the spark first -- it is drawn last, so it sits on top of
+        ; both the reticle and Chell.  This also drops its save-under,
+        ; which the background patch below would otherwise make stale.
+        JSR spark_restore_under
+
+        ; Restore reticle under next (LIFO peel — reticle drawn last, restored first).
         LDA reticle_has_under
         BEQ prbp_skip_restore_reticle
         JSR restore_reticle_under
@@ -637,6 +702,7 @@ CHELL_DEAD_BASE              = 48
         STA beam_do_redraw
         JSR retrace_all_beams
         JSR render_tilemap
+        JSR spark_arm
         JSR render_static_objects
         JSR stamp_portals_for_current_room
         JSR render_persistent_objects_current_room
@@ -644,6 +710,7 @@ CHELL_DEAD_BASE              = 48
         STA room_dirty
         STA chell_has_under
         STA reticle_has_under
+        STA spark_has_under
         STA bullet_count
 
         ; Background redraw wipes sprites; force them to re-save-under and redraw.
@@ -666,6 +733,11 @@ CHELL_DEAD_BASE              = 48
    .render_bullet_erase
         JSR erase_sentry_bullets
    .render_no_bullet_erase
+
+        ; Peel the spark before the reticle and Chell -- it is drawn last,
+        ; so LIFO order restores it first.  Unconditional: it no-ops when
+        ; there is nothing saved.
+        JSR spark_restore_under
 
         ; Portal/object background patches are now handled pre-vsync in
         ; pre_render_bg_patch (called at end of update_chell), so the
@@ -703,6 +775,7 @@ CHELL_DEAD_BASE              = 48
 
   .render_portal_maybe
         ; Portal/object background patches already applied pre-vsync.
+
         ; Fall through to sprite draw.
 
  .render_draw_maybe
@@ -752,6 +825,7 @@ CHELL_DEAD_BASE              = 48
 
  .render_frame_done
        JSR draw_sentry_bullets
+       JSR spark_draw
        RTS
 
 
@@ -813,10 +887,16 @@ CHELL_DEAD_BASE              = 48
         ; (We can later split this into pending + consume phases.)
         JSR maybe_teleport
 
+        ; If SPACE is over a button, suppress pickup/drop on the same edge
+        ; but leave the action latched so the button logic can still see it.
+        JSR consume_button_press_if_overlapping
+        BCS update_after_cube_pickup_drop
+
         ; Cube pickup/drop runs after portal entry so SPACE prioritises
         ; back-wall portal entry over cube drop.  maybe_teleport clears
         ; action_pressed when it fires, preventing an unwanted drop.
         JSR handle_cube_pickup_drop
+  .update_after_cube_pickup_drop
 
         ; Room exits (screen transitions).
         JSR check_room_exits
@@ -838,6 +918,12 @@ CHELL_DEAD_BASE              = 48
          JSR update_cubes_physics
          JSR check_offscreen_cube_portals
          JSR check_sentry_collisions
+
+         ; Spark runs with cube physics rather than under the frozen-time
+         ; branch: if it stopped while the reticle is up, the player could
+         ; freeze time to re-aim mid-flight and the timing puzzle vanishes.
+         JSR spark_update
+         JSR spark_check_chell
 
         ; While in reticle mode we ignore aim-based redraws.
         LDA reticle_active
@@ -912,23 +998,270 @@ INCLUDE "mode5/loaders.asm"
 INCLUDE "shared/timing.asm"
 INCLUDE "shared/movement.asm"
 INCLUDE "shared/laser.asm"
+INCLUDE "shared/spark.asm"
 INCLUDE "shared/tilemap.asm"
 INCLUDE "shared/objects.asm"
 INCLUDE "shared/persistent_objects_data.asm"
 
+; --- Music ---
+; Player code and its absolute state live in main RAM; the song event streams
+; live in SWRAM bank 6 at &A000 (see the TILDAT block below), so the tick must
+; run with bank 6 paged in.
+.music_start
+
+.music_vars     SKIP 11     ; MUSIC_VAR_BASE block (accum, waits, starts, pitch)
+MUSIC_VAR_BASE = music_vars
+
+.sound_block    SKIP 8      ; OSWORD &07 control block -- must be main RAM
+.music_enabled  SKIP 1      ; 1 = playing, 0 = muted (Q toggles)
+.music_q_prev   SKIP 1      ; previous Q state, for edge detection
+
+INCLUDE "music/player.asm"
+
+; Envelope definitions (OSWORD &08 reads these, so keep them in main RAM).
+.setup_envelopes
+    LDA #8
+    LDX #<env_melody
+    LDY #>env_melody
+    JSR OSWORD
+    LDA #8
+    LDX #<env_bass
+    LDY #>env_bass
+    JSR OSWORD
+    LDA #8
+    LDX #<env_chord
+    LDY #>env_chord
+    JSR OSWORD
+    LDA #8
+    LDX #<env_sfx_noise
+    LDY #>env_sfx_noise
+    JSR OSWORD
+    LDA #8
+    LDX #<env_sfx_rise
+    LDY #>env_sfx_rise
+    JSR OSWORD
+    LDA #8
+    LDX #<env_sfx_fall
+    LDY #>env_sfx_fall
+    JSR OSWORD
+    RTS
+
+.env_melody
+    EQUB 1, 4, 0,0,0, 1,20,0, 15, -1, 0, -3, 12, 8
+.env_bass
+    EQUB 2, 6, 0,0,0, 1,30,0, 15, -1, 0, -1, 8, 6
+.env_chord
+    EQUB 3, 6, 0,0,0, 1,30,0, 15, -1, 0, -1, 8, 6
+
+; SFX envelopes. Unlike 1-3 these are new shapes, not ported from the music
+; test, so the numbers are a starting point and want tuning by ear.
+.env_sfx_noise
+    EQUB 4, 1, 0,0,0, 1,1,1, 127, -15, -5, -10, 90, 30
+.env_sfx_rise
+    EQUB 5, 1, 6,0,0, 8,1,1, 127, -10, 0, -12, 100, 50
+.env_sfx_fall
+    EQUB 6, 1, -6,0,0, 8,1,1, 127, -12, 0, -15, 90, 30
+
+; --- Sound effects ---
+;
+; Effects use channel 0 (noise) and channel 3 (tone). Channel 3 is free because
+; the music runs two voices (melody + bass) on channels 1 and 2, so effects can
+; never interrupt the tune.
+;
+; Envelope shapes 4-6 are ours; the music owns 1-3.
+
+SFX_PORTAL_OPEN   = 0
+SFX_PORTAL_FAIL   = 1
+SFX_PORTAL_PASS   = 2
+SFX_SENTRY_FIRE   = 3
+SFX_SPARK_COLLECT = 4
+SFX_SPARK_CRASH   = 5
+
+.sfx_index      SKIP 1
+
+; 8 bytes per effect, copied straight into the OSWORD &07 block:
+;   channel(2), amplitude/envelope(2), pitch(2), duration(2)
+; Channel &0010 = flush + noise channel 0; &0013 = flush + tone channel 3.
+.sfx_table
+    EQUB &13,&00,  5,&00, 140,&00,  4,&00   ; 0 portal open   (rising tone)
+    EQUB &10,&00,  4,&00,   4,&00,  3,&00   ; 1 portal fail   (short noise)
+    EQUB &10,&00,  4,&00,   6,&00,  5,&00   ; 2 portal pass   (noise whoosh)
+    EQUB &10,&00,  4,&00,   3,&00,  2,&00   ; 3 sentry fire   (noise crack)
+    EQUB &13,&00,  5,&00, 200,&00,  8,&00   ; 4 spark collect (bright chime)
+    EQUB &10,&00,  6,&00,   7,&00,  5,&00   ; 5 spark crash   (noise thud)
+
+; Play any queued effect. Called from the main loop, where the shadow screen is
+; paged out, so sound_block is the real main-RAM copy.
+.sfx_init
+    LDA #&FF
+    STA SFX_PENDING
+    JSR setup_envelopes
+    RTS
+
+
+.sfx_service
+    LDA SFX_PENDING
+    BMI sfx_none
+    PHA
+    LDA #&FF
+    STA SFX_PENDING
+    PLA
+    JMP sfx_play
+  .sfx_none
+    RTS
+
+
+; Play sound effect A. Preserves X and Y so it is safe to call from anywhere.
+; Do NOT call this from rendering code -- see SFX_PENDING above.
+.sfx_play
+    STA sfx_index
+    TXA
+    PHA
+    TYA
+    PHA
+    LDA sfx_index
+    ASL A
+    ASL A
+    ASL A                   ; 8 bytes per record
+    TAX
+    LDY #0
+  .sfx_copy
+    LDA sfx_table,X
+    STA sound_block,Y
+    INX
+    INY
+    CPY #8
+    BNE sfx_copy
+    LDA #7
+    LDX #<sound_block
+    LDY #>sound_block
+    JSR OSWORD
+    PLA
+    TAY
+    PLA
+    TAX
+    RTS
+
+
+; One-shot music startup: envelopes, then start the tracks.
+; music_init reads music_track_table, which lives in bank 6 with the song.
+.music_start_playing
+    LDA #1
+    STA music_enabled
+    LDA #0
+    STA music_q_prev
+    LDA #&FF
+    STA SFX_PENDING
+    JSR setup_envelopes
+    JSR tilemap_bank_in
+    JSR music_init
+    JSR tilemap_bank_out
+    RTS
+
+
+; Flush all four channels (0-3), including the noise channel used by effects.
+; Used before disc access, where any active sound disturbs the DFS transfer.
+.sfx_silence_all
+    LDX #0
+  .ssa_loop
+    LDA ssa_chan_lo,X
+    STA sound_block+0
+    LDA #0
+    STA sound_block+1
+    STA sound_block+2
+    STA sound_block+3
+    STA sound_block+4
+    STA sound_block+5
+    LDA #1
+    STA sound_block+6
+    LDA #0
+    STA sound_block+7
+    TXA
+    PHA
+    LDA #7
+    LDX #<sound_block
+    LDY #>sound_block
+    JSR OSWORD
+    PLA
+    TAX
+    INX
+    CPX #4
+    BNE ssa_loop
+    RTS
+  .ssa_chan_lo
+    EQUB &10, &11, &12, &13     ; flush=1, channels 0..3
+
+
+; Stop all three voices immediately.
+; Without the flush, muting would still drain whatever is queued in the MOS
+; sound buffers, so Q would take a second or so to take effect.
+.music_silence
+    LDX #0
+  .msil_loop
+    LDA msil_chan_lo,X
+    STA sound_block+0
+    LDA #0
+    STA sound_block+1
+    STA sound_block+2       ; amplitude 0
+    STA sound_block+3
+    STA sound_block+4       ; pitch 0
+    STA sound_block+5
+    LDA #1
+    STA sound_block+6       ; duration 1
+    LDA #0
+    STA sound_block+7
+    TXA
+    PHA
+    LDA #7
+    LDX #<sound_block
+    LDY #>sound_block
+    JSR OSWORD
+    PLA
+    TAX
+    INX
+    CPX #3
+    BNE msil_loop
+    RTS
+
+  .msil_chan_lo
+    EQUB &11, &12, &13      ; flush=1, channels 1..3
+
+; Per-frame tick, plus the Q mute toggle.
+; Song data is in bank 6, so page it around the player call.
+.music_frame_tick
+    ; Q toggles music. Edge-triggered on press so holding it doesn't flap.
+    LDX #&EF                ; INKEY(-17) = 'Q'
+    JSR is_key_pressed
+    LDA #0
+    BCC mus_q_state
+    LDA #1
+  .mus_q_state
+    CMP music_q_prev
+    BEQ mus_no_toggle
+    STA music_q_prev
+    ; STA leaves flags alone, so re-test A explicitly here -- otherwise this
+    ; branch reads the CMP above (always non-equal) and the toggle fires on
+    ; key release as well as press.
+    CMP #0
+    BEQ mus_no_toggle       ; act on press only, not release
+    LDA music_enabled
+    EOR #1
+    STA music_enabled
+    BNE mus_no_toggle       ; just switched on: resume ticking
+    JSR music_silence       ; just switched off: kill the channels now
+  .mus_no_toggle
+
+    LDA music_enabled
+    BEQ mus_done
+    JSR tilemap_bank_in
+    JSR music_update_50hz
+    JSR tilemap_bank_out
+  .mus_done
+    RTS
+
 .end
 
 SAVE "PORTHLE", entry, end
-
-; Trampoline code for below-&3000 ACCCON X-bit operations.
-; Contains lynne_osfile (OSFILE with X=1) and lynne_stage_level
-; (copy level data from LYNNE to staging buffer).
-; Loaded by boot_loader to &0900 before the game starts.
-ORG &0900
-.trampoline_start
-INCLUDE "shared/trampoline.asm"
-.trampoline_end
-SAVE "TRAMPLN", trampoline_start, trampoline_end
 
 ; Boot loader (PROGRAM) is a small machine-code binary.
 ; !Boot runs: *BASIC then *RUN PROGRAM.
@@ -974,6 +1307,16 @@ ORG &8000
 .tildat_start
 INCLUDE "sprites/generated_tiles.asm"
 
+; RESERVED: &B000..&BB00 in this bank holds the per-room tilemaps at runtime
+; (TILEMAP_BANK_BASE in shared/tilemap.asm, MAX_ROOMS * 256 bytes). Boot loads
+; TILDAT once, zero-filling that region; nothing may be placed there.
+; Themed tile sheets go in &8800..&9FFF.
+;
+; &A000..&AFFF holds the music event streams (song data only -- the player
+; code itself is in main RAM, per the no-executable-code-in-SWRAM rule).
+ORG &A000
+INCLUDE "music/gymnopedie.asm"
+
 ; Pad to full 16KB SWRAM bank (loader expects 16KB).
 ORG &C000
 .tildat_end
@@ -1005,7 +1348,13 @@ PUTFILE "TEMPLATE", "TEMPLTE", &7C00, &7C00
 ; (character row 3 onwards).
 PUTFILE ".tmp/aperture_logo.bin", "APLOGO", &5A00, &5A00
 
-; Level pack 01 — binary level data loaded at runtime to LYNNE &3000.
-PUTFILE ".tmp/LVLS01.dat", "LVLS01", &3000, &3000
+; Level pack — binary level data loaded at boot into SWRAM bank 7.
+CLEAR &8000, &C000
+ORG &8000
+.lvldata_start
+INCBIN ".tmp/LVLS01.dat"
+ORG &C000
+.lvldata_end
+SAVE "LVLS01", lvldata_start, lvldata_end
 
 ; !Boot file added via build.sh post-assembly to work around beebasm PUTFILE issue.

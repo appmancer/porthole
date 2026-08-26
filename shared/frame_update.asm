@@ -51,7 +51,18 @@
     ; Portal placement while in reticle mode.
     ; Use keys_pressed edge; only place when reticle is valid (green).
     LDA reticle_state
+    BNE murm_reticle_valid
+
+    ; Reticle is red. If the player fired anyway, that is a failed placement.
+    LDA keys_pressed
+    AND #&C0
     BEQ murm_reticle_place_done
+IF ENABLE_AUDIO AND ENABLE_SFX
+    LDA #SFX_PORTAL_FAIL
+    STA SFX_PENDING
+ENDIF
+    JMP murm_reticle_place_done
+  .murm_reticle_valid
 
     ; Prefer Portal A if both pressed.
     LDA keys_pressed
@@ -92,8 +103,7 @@
      ; Quick-shot portal firing (outside reticle mode).
     JSR handle_quick_shot
 
-    ; Cube pickup/drop is deferred to the main loop (after portal entry)
-    ; so that SPACE prioritises back-wall portal entry over cube drop.
+    ; Cube pickup/drop is deferred to the main loop (after portal entry).
 
     ; Keep the physics solidity plane up to date (tiles + standable objects).
     ; This lets Chell stand on cubes.
@@ -223,13 +233,13 @@
     ; Top-left tile
     LDY char_tile_pos
     LDA (tilemap_ptr),Y
-    CMP #TILE_ACID
+    JSR is_hazard_tile
     BEQ acid_death
 
     ; Top-right tile (x+1)
     INY
     LDA (tilemap_ptr),Y
-    CMP #TILE_ACID
+    JSR is_hazard_tile
     BEQ acid_death
 
     ; Bottom-left tile (y+1): index + 15 = (x+1) + 15 = next row, same x
@@ -238,13 +248,13 @@
     ADC #15
     TAY
     LDA (tilemap_ptr),Y
-    CMP #TILE_ACID
+    JSR is_hazard_tile
     BEQ acid_death
 
     ; Bottom-right tile (y+1, x+1)
     INY
     LDA (tilemap_ptr),Y
-    CMP #TILE_ACID
+    JSR is_hazard_tile
     BEQ acid_death
 
     ; If y_offset != 0, Chell straddles a third row.
@@ -260,17 +270,36 @@
     CPY #0
     BEQ cad_safe         ; wrapped past 255
     LDA (tilemap_ptr),Y
-    CMP #TILE_ACID
+    JSR is_hazard_tile
     BEQ acid_death
 
     ; Third row right
     INY
     BEQ cad_safe         ; wrapped past 255
     LDA (tilemap_ptr),Y
-    CMP #TILE_ACID
+    JSR is_hazard_tile
     BEQ acid_death
 
   .cad_safe
+    RTS
+
+; Check if tile in A is a hazard (kills Chell on contact).
+; Input: A = tile ID
+; Output: Z=1 if hazard, Z=0 if safe.  Preserves Y.
+.is_hazard_tile
+    CMP #TILE_ACID
+    BEQ iht_yes
+    CMP #TILE_ZAPPER_LEFT_ON
+    BEQ iht_yes
+    CMP #TILE_ZAPPER_MID_ON
+    BEQ iht_yes
+    CMP #TILE_ZAPPER_RIGHT_ON
+    BEQ iht_yes
+    ; Not hazardous — clear Z flag.
+    LDA #1              ; non-zero -> Z=0
+    RTS
+  .iht_yes
+    LDA #0              ; zero -> Z=1
     RTS
 
   .acid_death
@@ -288,9 +317,10 @@
 ; Check if Chell overlaps any active killzone in the current room.
 ; Each killzone record is 5 bytes: x0, y0, x1, y1, sentry_obj_index.
 ; A killzone only kills if its linked sentry is active (not carried/disabled).
+; Cubes in the killzone block it (clip x-range to nearest cube).
 ;
 ; Uses LOS scratch ZP (safe — LOS not active during normal update).
-; Clobbers: A,X,Y,los_x0,los_y0,los_x1,los_y1,los_dx,los_dy,los_err
+; Clobbers: A,X,Y,los_x0,los_y0,los_x1,los_y1,los_dx,los_dy,los_err,los_steps,temp,temp_y
 .check_killzones
     LDA room_killzone_count
     BEQ ckz_none
@@ -303,21 +333,21 @@
 
     ; Compute Chell pixel position.
     JSR calc_char_x           ; A = pixel_x (0..115)
-    STA los_x0                ; chell_left_x
+    STA los_dx                ; chell_left_x
     JSR calc_char_y           ; A = pixel_y (0..248)
-    STA los_y0                ; chell_top_y
+    STA los_dy                ; chell_top_y
 
     LDY #0
     LDX room_killzone_count
 .ckz_loop
     ; Load killzone bounds from (temp_sprite_ptr),Y
     ; Format: x0, y0, x1, y1, sentry_obj_index (5 bytes)
-    LDA (temp_sprite_ptr),Y : INY : STA los_x1   ; kz_x0
-    LDA (temp_sprite_ptr),Y : INY : STA los_y1   ; kz_y0
-    LDA (temp_sprite_ptr),Y : INY : STA los_dx   ; kz_x1
-    LDA (temp_sprite_ptr),Y : INY : STA los_dy   ; kz_y1
+    LDA (temp_sprite_ptr),Y : INY : STA los_x0   ; kz_x0
+    LDA (temp_sprite_ptr),Y : INY : STA los_y0   ; kz_y0
+    LDA (temp_sprite_ptr),Y : INY : STA los_x1   ; kz_x1
+    LDA (temp_sprite_ptr),Y : INY : STA los_y1   ; kz_y1
     LDA (temp_sprite_ptr),Y : INY                 ; sentry_obj_index
-    STY los_err                                      ; save Y
+    STY los_err                                   ; save Y
 
     ; Check if sentry is active: skip if carried or disabled (state != 0
     ; apart from direction bit 0).
@@ -326,31 +356,42 @@
     AND #&FE                  ; mask out direction bit
     BNE ckz_next              ; non-zero = carried/disabled, skip
 
+    ; Clip killzone by any cubes blocking line of fire.
+    STX los_steps             ; save loop counter
+    TYA                       ; A = sentry obj index
+    JSR clip_kz_by_cubes
+    LDX los_steps             ; restore loop counter
+
+    ; Check if killzone is still valid after clipping.
+    LDA los_x0
+    CMP los_x1
+    BCS ckz_next              ; fully blocked by cube(s)
+
     ; AABB: Chell (x, y, x+15, y+31) vs killzone (x0, y0, x1, y1)
     ; x1/y1 are exclusive.
 
     ; Test 1: chell_right (x+15) >= kz_x0
-    LDA los_x0
+    LDA los_dx
     CLC
     ADC #15
-    CMP los_x1
+    CMP los_x0
     BCC ckz_next
 
     ; Test 2: chell_left < kz_x1
-    LDA los_x0
-    CMP los_dx
+    LDA los_dx
+    CMP los_x1
     BCS ckz_next
 
     ; Test 3: chell_bottom (y+31) >= kz_y0
-    LDA los_y0
+    LDA los_dy
     CLC
     ADC #31
-    CMP los_y1
+    CMP los_y0
     BCC ckz_next
 
     ; Test 4: chell_top < kz_y1
-    LDA los_y0
-    CMP los_dy
+    LDA los_dy
+    CMP los_y1
     BCS ckz_next
 
     ; --- OVERLAP: kill Chell ---
@@ -600,7 +641,6 @@
  ;
  ; - On A/S key-down, fire a projected shot (tiles only) and place portal A/B.
  ; - Direction uses aim_held (0=straight, 1=up, 2=down) and anim_dir.
- ; - Disallows back-wall placement.
  ;
  ; Clobbers: A,X,Y,temp,temp_y,row_counter,col_counter
   .handle_quick_shot
@@ -757,7 +797,7 @@
       SBC col_counter
       BCS hqs_angle_x_ok
       LDA #0
-      BNE hqs_angle_x_store
+      JMP hqs_angle_x_store
    .hqs_angle_right
       LDA los_x0
       CLC
@@ -836,16 +876,19 @@
      LSR A
      STA row_counter          ; hit_y
 
-      ; base cell_x = max(hit_x - 1, 0), clamped to 14.
-     ; compute_reticle_state treats reticle_cell_x as the LEFT column of a
-     ; 2-tile span.  Shifting back by 1 ensures a right-wall hit tile lands
-     ; in the right column of that span, matching reticle-mode conventions
-     ; and giving the LOS check a clear target in the open space.
+     ; base cell_x is the LEFT column of the 2-tile wall-portal span.
+     ; For rightward shots the hit tile should be the right column, so bias
+     ; left by 1. For leftward shots the hit tile should be the left column.
+     LDA anim_dir
+     BEQ hqs_wall_x_ok
      LDA col_counter
      BEQ hqs_wall_x_ok
      SEC
      SBC #1
+     JMP hqs_wall_x_clamp
    .hqs_wall_x_ok
+     LDA col_counter
+   .hqs_wall_x_clamp
      CMP #15
      BCC hqs_wall_x_clamp_ok
      LDA #14
@@ -913,7 +956,19 @@
    .hqs_fc_base_x_ok
      STA temp                ; base_x
 
-     ; Try x: base, base-1, base+1
+     ; Try x with direction-aware preference.
+     ; For left-facing angled shots, prefer the span whose right tile is the
+     ; hit tile (base-1). For right-facing shots, prefer the span whose left
+     ; tile is the hit tile (base).
+     LDA anim_dir
+     BNE hqs_fc_try_base_first
+     LDA temp
+     BEQ hqs_fc_try_base_first
+     SEC
+     SBC #1
+     JSR hqs_try_fc_x
+     BCS hqs_fc_placed
+   .hqs_fc_try_base_first
      LDA temp
      JSR hqs_try_fc_x
      BCS hqs_fc_placed
@@ -967,7 +1022,16 @@
    .hqs_floor_base_x_ok
       STA temp                ; base_x
 
-      ; Try x: base, base-1, base+1
+      ; Try x with direction-aware preference.
+      LDA anim_dir
+      BNE hqs_floor_try_base_first
+      LDA temp
+      BEQ hqs_floor_try_base_first
+      SEC
+      SBC #1
+      JSR hqs_try_floor_x
+      BCS hqs_floor_placed
+   .hqs_floor_try_base_first
       LDA temp
       JSR hqs_try_floor_x
       BCS hqs_floor_placed
@@ -1046,12 +1110,10 @@
      JSR compute_reticle_state
      BCC hqs_try_fc_fail
 
-     ; Only floor/ceiling; disallow back-wall.
+     ; Only floor/ceiling.
      LDA reticle_wall_orient
      CMP #PORTAL_ORIENT_FLOOR
      BCC hqs_try_fc_fail
-     CMP #PORTAL_ORIENT_BACK
-     BEQ hqs_try_fc_fail
 
      LDA portal_kind
      JSR place_portal_from_reticle

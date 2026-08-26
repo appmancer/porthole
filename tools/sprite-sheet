@@ -229,8 +229,6 @@ GROUPS: dict[str, list[tuple[str, str, bool, int, int, int]]] = {
     "portals": [
         ("portal_v_red", "sprites/Portal V - Red (Right).csv", False, 1, 8, 0),
         ("portal_v_yel", "sprites/Portal V - Yellow (Right).csv", False, 1, 8, 0),
-        ("portal_b_red", "sprites/Portal B - Red.csv", False, 1, 16, 0),
-        ("portal_b_yel", "sprites/Portal B - Yellow.csv", False, 1, 16, 0),
         ("portal_h_red_floor", "sprites/Portal H - Red (Floor).csv", False, 1, 16, 0),
         ("portal_h_red_ceil", "sprites/Portal H - Red (Ceil).csv", False, 1, 16, 0),
         ("portal_h_yel_floor", "sprites/Portal H - Yellow (Floor).csv", False, 1, 16, 0),

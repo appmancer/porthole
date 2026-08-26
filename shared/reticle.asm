@@ -165,51 +165,6 @@
     JMP reticle_done
 
 
-; Check back-wall portalability (2x2 empty) at current reticle_cell_y.
-; Returns C=1 if tile(y,x0..x1) and tile(y+1,x0..x1) are all TILE_BACKWALL_PORTAL.
-.reticle_backwall_at_y
-    ; Need 2 tiles height.
-    LDA reticle_cell_y
-    CMP #15
-    BEQ backwall_fail
-
-    ; row y
-    LDY reticle_cell_y
-    LDA times16_table,Y
-    CLC
-    ADC col_counter
-    TAY
-    LDA (tilemap_ptr),Y
-    CMP #TILE_BACKWALL_PORTAL
-    BNE backwall_fail
-    INY
-    LDA (tilemap_ptr),Y
-    CMP #TILE_BACKWALL_PORTAL
-    BNE backwall_fail
-
-    ; row y+1
-    LDY reticle_cell_y
-    INY
-    LDA times16_table,Y
-    CLC
-    ADC col_counter
-    TAY
-    LDA (tilemap_ptr),Y
-    CMP #TILE_BACKWALL_PORTAL
-    BNE backwall_fail
-    INY
-    LDA (tilemap_ptr),Y
-    CMP #TILE_BACKWALL_PORTAL
-    BNE backwall_fail
-
-    SEC
-    RTS
-
- .backwall_fail
-    CLC
-    RTS
-
-
  ; Compute reticle_state, orient, and debug_reason for the current cell.
  ;
  ; Inputs:
@@ -319,7 +274,7 @@
     LDA reticle_cell_y
     CMP #15
     BNE crs_wall_height_ok
-    JMP crs_try_backwall
+    JMP crs_blocked
  .crs_wall_height_ok
 
      ; Try left column: (tile_x0, y) and (tile_x0, y+1)
@@ -395,7 +350,7 @@
      BEQ crs_wall_right_ok_type
      CMP #35
      BEQ crs_wall_right_ok_type
-     JMP crs_try_backwall
+     JMP crs_blocked
    .crs_wall_right_ok_type
 
      LDY reticle_cell_y
@@ -406,7 +361,7 @@
      TAY
      LDA (tilemap_ptr),Y
      CMP temp
-     BNE crs_try_backwall
+     BNE crs_blocked
 
      LDA temp
      CMP #5
@@ -423,20 +378,10 @@
      LDA row_counter
      STA temp_y
      JSR crs_check_wall_open_empty
-     BCC crs_try_backwall
+     BCC crs_blocked
 
      LDA #3
      STA reticle_debug_reason
-     JMP crs_surface_los
-
-     ; -------- Back-wall test (2x2 empties) --------
-   .crs_try_backwall
-     JSR reticle_backwall_at_y
-     BCC crs_blocked
-     LDA #4
-     STA reticle_debug_reason
-     LDA #PORTAL_ORIENT_BACK
-     STA reticle_wall_orient
      JMP crs_surface_los
 
  ; Check that the portal opening space next to a wall is empty.
@@ -574,8 +519,6 @@
     BEQ reticle_los_wall_left
     CMP #PORTAL_ORIENT_WALL_R
     BEQ reticle_los_wall_right
-    CMP #PORTAL_ORIENT_BACK
-    BEQ reticle_los_backwall
     CLC
     RTS
 
@@ -660,25 +603,6 @@
     ADC #16
     STA los_y1
     JMP reticle_los_cast
-
-  .reticle_los_backwall
-    ; target_x = reticle_cell_x*8 + 8 (centre)
-    LDA reticle_cell_x
-    ASL A
-    ASL A
-    ASL A
-    CLC
-    ADC #8
-    STA los_x1
-    ; target_y = reticle_cell_y*16 + 16
-    LDA reticle_cell_y
-    ASL A
-    ASL A
-    ASL A
-    ASL A
-    CLC
-    ADC #16
-    STA los_y1
 
   .reticle_los_cast
     JSR los_line_clear

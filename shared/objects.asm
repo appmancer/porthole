@@ -30,6 +30,9 @@ STATIC_OBJ_FLAG_ENABLED = &80
     EQUW static_objects_empty
     EQUW static_objects_empty
     EQUW static_objects_empty
+    EQUW static_objects_empty
+    EQUW static_objects_empty
+    EQUW static_objects_empty
 
 
 ; Room 0 objects
@@ -143,6 +146,17 @@ STATIC_OBJ_FLAG_ENABLED = &80
     AND #&FE              ; mask direction bit
     BNE dsb_kz_next       ; skip if disabled/carried
 
+    ; Clip killzone by cubes blocking line of fire.
+    STX los_steps         ; save loop counter (los_steps restored by draw_one_bullet)
+    TYA                   ; A = sentry obj index
+    JSR clip_kz_by_cubes
+    LDX los_steps         ; restore loop counter
+
+    ; Check if killzone is still valid after clipping.
+    LDA los_x0
+    CMP los_x1
+    BCS dsb_kz_next       ; fully blocked by cube(s)
+
     ; Check if Chell is in the killzone's vertical band.
     ; Chell y range: [chell_y, chell_y+31], killzone: [los_y0, los_y1)
     JSR calc_char_y
@@ -161,6 +175,10 @@ STATIC_OBJ_FLAG_ENABLED = &80
     LDX #0 : JSR draw_one_bullet
     LDX #4 : JSR draw_one_bullet
     LDA #2 : STA bullet_count
+IF ENABLE_AUDIO AND ENABLE_SFX
+    LDA #SFX_SENTRY_FIRE
+    STA SFX_PENDING
+ENDIF
     RTS                   ; done after first active killzone
 
 .dsb_kz_next
@@ -220,4 +238,109 @@ STATIC_OBJ_FLAG_ENABLED = &80
     ; Draw the line
     LDA los_dy : STA col_counter
     JSR xor_hline
+    RTS
+
+
+; Clip killzone x-range by cubes or closed barriers blocking line of fire.
+;
+; Input:  los_x0 = kz_x0, los_y0 = kz_y0, los_x1 = kz_x1, los_y1 = kz_y1
+;         A = sentry obj index
+; Output: los_x0 or los_x1 clipped to nearest blocking object.
+;         If killzone is fully blocked, los_x0 >= los_x1 on return.
+; Clobbers: A, X, temp, temp_y
+.clip_kz_by_cubes
+    TAX
+    LDA obj_state,X
+    AND #SENTRY_DIR_LEFT
+    STA temp                  ; 0 = right-facing, 1 = left-facing
+
+    LDX #0
+.ckbc_loop
+    LDA obj_type,X
+    CMP #OBJ_TYPE_CUBE
+    BEQ ckbc_cube
+    CMP #OBJ_TYPE_BARRIER
+    BEQ ckbc_barrier
+    JMP ckbc_next
+
+.ckbc_cube
+    ; Cube: must be in current room and not carried.
+    LDA obj_room,X
+    CMP current_room
+    BNE ckbc_next
+    LDA obj_state,X
+    AND #OBJ_STATE_CARRIED
+    BNE ckbc_next
+    ; Cube is 16 game px wide, 16 tall.
+    LDA #16
+    STA los_sx                ; obj_height
+    LDA #16
+    STA los_sy                ; obj_width
+    JMP ckbc_overlap
+
+.ckbc_barrier
+    ; Barrier: must be in current room and closed (state bit 0 = 0).
+    LDA obj_room,X
+    CMP current_room
+    BNE ckbc_next
+    LDA obj_state,X
+    AND #1
+    BNE ckbc_next             ; bit 0 set = open, skip
+    ; Barrier is 8 game px wide, height_tiles * 16 tall.
+    LDA obj_state,X
+    AND #&7E             ; bits 1-6, still shifted left by 1
+    ASL A : ASL A : ASL A  ; × 8 → height_tiles × 16
+    STA los_sx                ; obj_height
+    LDA #8
+    STA los_sy                ; obj_width
+    ; fall through
+
+.ckbc_overlap
+    ; Vertical overlap: obj [obj_y*16, obj_y*16+height) vs kz [y0, y1)
+    LDA obj_y,X
+    ASL A : ASL A : ASL A : ASL A  ; * 16 = game pixel y
+    CMP los_y1
+    BCS ckbc_next             ; obj_y0 >= kz_y1: no overlap
+    CLC : ADC los_sx          ; obj_y0 + height
+    CMP los_y0
+    BCC ckbc_next             ; obj_y1 <= kz_y0: no overlap
+    BEQ ckbc_next
+
+    ; Horizontal: obj [obj_x*8, obj_x*8+width) must overlap kz [x0, x1)
+    LDA obj_x,X
+    ASL A : ASL A : ASL A    ; * 8 = game pixel x
+    STA temp_y                ; obj_x0
+    CMP los_x1
+    BCS ckbc_next             ; obj_x0 >= kz_x1: outside
+    CLC : ADC los_sy          ; obj_x0 + width
+    CMP los_x0
+    BCC ckbc_next             ; obj_x1 <= kz_x0: outside
+    BEQ ckbc_next
+
+    ; Object overlaps killzone — clip based on sentry direction.
+    LDA temp
+    BNE ckbc_clip_left
+
+    ; Right-facing: clip kz_x1 = min(kz_x1, obj_x0)
+    LDA temp_y
+    CMP los_x1
+    BCS ckbc_next
+    STA los_x1
+    JMP ckbc_next
+
+.ckbc_clip_left
+    ; Left-facing: clip kz_x0 = max(kz_x0, obj_x1)
+    LDA temp_y
+    CLC : ADC los_sy
+    CMP los_x0
+    BCC ckbc_next
+    BEQ ckbc_next
+    STA los_x0
+
+.ckbc_next
+    INX
+    CPX #OBJ_COUNT
+    BEQ ckbc_done
+    JMP ckbc_loop
+.ckbc_done
     RTS

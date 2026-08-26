@@ -12,7 +12,7 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
 ; Detect Chell walking into a portal.
 ;
 ; Rule: trigger when Chell overlaps the portal rect and is moving into the face
-; (dot(v, n_enter) < 0). Back-wall portals require SPACE intent.
+; (dot(v, n_enter) < 0).
 ;
 ; Output:
 ; - teleport_pending=1
@@ -32,9 +32,7 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         DEC teleport_cooldown
  .cpei_cd_done
 
-        ; Fast reject:
-        ; - normal portals require motion intent
-        ; - back-wall portals require SPACE intent (may be stationary)
+        ; Fast reject: portals require motion intent.
         LDA char_vx
         ORA char_vy
         ORA char_prev_vy
@@ -123,6 +121,11 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         RTS
 
 .mt_go
+IF ENABLE_AUDIO AND ENABLE_SFX
+        LDA #SFX_PORTAL_PASS
+        STA SFX_PENDING
+ENDIF
+
         ; Determine exit portal kind (other portal).
         LDA teleport_entry_kind
         EOR #1
@@ -173,6 +176,13 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         LDA teleport_exit_room
         CMP current_room
         BEQ mt_room_ok
+
+        ; Restore any dynamic beam tiles to the old room's tilemap before
+        ; switching. Otherwise the next room redraw will unstamp them into
+        ; the new room buffer.
+        LDA #0
+        STA beam_do_redraw
+        JSR unstamp_beam_tiles
 
         LDA teleport_exit_room
         STA current_room
@@ -247,20 +257,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
  .mt_entry_orient_ok
         STA temp_y
 
-        ; Back-wall portals are entered deliberately via SPACE.
-        ; We don't have a Z axis, so if either end is back-wall, keep vx/vy unchanged
-        ; and only reposition Chell.
-        LDA temp_y
-        CMP #PORTAL_ORIENT_BACK
-        BNE mt_back_chk_exit
-        JMP mt_place_from_orient
- .mt_back_chk_exit
-        LDA row_counter
-        CMP #PORTAL_ORIENT_BACK
-        BNE mt_back_ok
-        JMP mt_place_from_orient
- .mt_back_ok
-
         ; Compute (v_t, v_n) in the entry portal frame.
         ; See project plan for definitions.
         LDA temp_y
@@ -269,8 +265,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         CMP #PORTAL_ORIENT_WALL_R
         BEQ mt_vtn_wall_r
         CMP #PORTAL_ORIENT_FLOOR
-        BEQ mt_vtn_floor
-        CMP #PORTAL_ORIENT_BACK
         BEQ mt_vtn_floor
         ; ceiling
         JMP mt_vtn_ceil
@@ -332,8 +326,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         CMP #PORTAL_ORIENT_WALL_R
         BEQ mt_vout_wall_r
         CMP #PORTAL_ORIENT_FLOOR
-        BEQ mt_vout_floor
-        CMP #PORTAL_ORIENT_BACK
         BEQ mt_vout_floor
         ; ceiling
         JMP mt_vout_ceil
@@ -418,8 +410,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         BEQ mt_place_wall_r
         CMP #PORTAL_ORIENT_FLOOR
         BEQ mt_place_floor
-        CMP #PORTAL_ORIENT_BACK
-        BEQ mt_place_back
         ; ceiling
         JMP mt_place_ceil
 
@@ -478,14 +468,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         ADC #PORTAL_FC_H_PX
         CLC
         ADC #PORTAL_EXIT_NUDGE
-        JMP mt_y_store
-
- .mt_place_back
-        ; Back wall: portal is a 16x32 zone in empty space.
-        ; Place Chell's top-left at the portal top-left.
-        LDA screen_ptr
-        STA temp                 ; new_x
-        LDA col_counter
         JMP mt_y_store
 
   .mt_x_store
@@ -749,8 +731,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         BEQ cpei_a_need_vx_pos
         CMP #PORTAL_ORIENT_FLOOR
         BEQ cpei_a_need_vy_pos
-        CMP #PORTAL_ORIENT_BACK
-        BEQ cpei_a_intent_ok
         ; ceiling
         JMP cpei_a_need_vy_neg
 
@@ -793,14 +773,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         BMI cpei_a_intent_ok
         JMP cpei_a_no
  .cpei_a_intent_ok
-
-        ; Back wall portals require SPACE.
-        LDA portal_a_orient
-        CMP #PORTAL_ORIENT_BACK
-        BNE cpei_a_intent_done
-        LDA action_held
-        BEQ cpei_a_no
- .cpei_a_intent_done
 
         ; Overlap test against portal rect.
         LDA portal_a_orient
@@ -853,8 +825,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         BEQ cpei_b_need_vx_pos
         CMP #PORTAL_ORIENT_FLOOR
         BEQ cpei_b_need_vy_pos
-        CMP #PORTAL_ORIENT_BACK
-        BEQ cpei_b_intent_ok
         ; ceiling
         JMP cpei_b_need_vy_neg
 
@@ -897,14 +867,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         BMI cpei_b_intent_ok
         JMP cpei_b_no
  .cpei_b_intent_ok
-
-        ; Back wall portals require SPACE.
-        LDA portal_b_orient
-        CMP #PORTAL_ORIENT_BACK
-        BNE cpei_b_intent_done
-        LDA action_held
-        BEQ cpei_b_no
- .cpei_b_intent_done
 
         ; Overlap test against portal rect.
         LDA portal_b_orient
@@ -968,10 +930,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
         RTS
 
 .cpei_overlap_fc
-        ; Back-wall portals: 16x32 (2 tiles wide x 2 tiles tall)
-        CMP #PORTAL_ORIENT_BACK
-        BEQ cpei_overlap_back
-
         ; Floor/ceiling portals: 16x16 (2 tiles wide x 1 tile tall)
         ; AABB overlap, plus an X-center alignment guard.
 
@@ -1035,52 +993,6 @@ PORTAL_VY_TO_PX_SHIFT = 1      ; 2px per vy stripe (vs 8px physical step)
  .cpei_fc_no
         CLC
         RTS
-
- .cpei_overlap_back
-        ; portal_left_x = tile_x*8
-        TXA
-        ASL A
-        ASL A
-        ASL A
-        STA screen_ptr
-
-        ; If chell_right_x < portal_left_x => no overlap
-        LDA temp_y
-        CMP screen_ptr
-        BCC cpei_fc_no
-
-        ; portal_right_x = portal_left_x + 15
-        LDA screen_ptr
-        CLC
-        ADC #15
-        ; If portal_right_x < chell_left_x => no overlap
-        CMP temp
-        BCC cpei_fc_no
-
-        ; portal_top_y = tile_y*16
-        TYA
-        ASL A
-        ASL A
-        ASL A
-        ASL A
-        STA screen_ptr+1
-
-        ; If chell_bottom_y < portal_top_y => no overlap
-        LDA col_counter
-        CMP screen_ptr+1
-        BCC cpei_fc_no
-
-        ; portal_bottom_y = portal_top_y + 31
-        LDA screen_ptr+1
-        CLC
-        ADC #31
-        ; If portal_bottom_y < chell_top_y => no overlap
-        CMP row_counter
-        BCC cpei_fc_no
-
-        SEC
-        RTS
-
 
 ; Overlap test: Chell rect (temp..temp_y, row_counter..col_counter)
 ; vs portal tile rect at (X=tile_x,Y=tile_y) sized 8x32 pixels.

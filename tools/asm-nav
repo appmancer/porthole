@@ -37,7 +37,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LABELS_FILE = REPO_ROOT / ".tmp" / "beebasm.labels"
-MAIN_ASM = REPO_ROOT / "main.asm"
+MAIN_ASM = REPO_ROOT / "mode5" / "main.asm"
 
 
 @dataclass(frozen=True)

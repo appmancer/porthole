@@ -72,6 +72,9 @@ ORG &0E00
     JSR loader_load_tildat_bank
     LDA #6
     STA LOADER_STAGE_ADDR
+    JSR loader_load_lvls_bank
+    LDA #7
+    STA LOADER_STAGE_ADDR
 
     ; Switch to MODE 5 BEFORE loading the game binary.
     ; The VDU MODE call clears screen RAM at &5800-&7FFF in MAIN RAM.
@@ -92,11 +95,10 @@ ORG &0E00
     CPX #10
     BNE loader_cur2_loop
 
-    ; Load ACCCON trampolines to &0900 (must be below &3000).
-    ; Tiny file (~150 bytes), loads to &0900 which is post-boot scratch.
-    JSR loader_osfile_load_trampln
-
     ; Load and run the game.
+    ; (The ACCCON X-bit trampoline is part of PORTHLE now -- it lives in the
+    ;  main binary's below-&3000 zone, not at &0900, because the OS stores
+    ;  ENVELOPE definitions at &08C0..&09BF and would overwrite it.)
     JSR loader_osfile_load_game
     LDA #4
     STA LOADER_STAGE_ADDR
@@ -109,6 +111,8 @@ ORG &0E00
     STA chell_bank
     LDA loader_tile_bank_sel
     STA tile_bank
+    LDA loader_lvls_bank_sel
+    STA level_bank
 
     LDA #5
     STA LOADER_STAGE_ADDR
@@ -144,14 +148,6 @@ ORG &0E00
     STA loader_game_exec_ptr
     LDA loader_osfile_blk_game+7
     STA loader_game_exec_ptr+1
-    RTS
-
-.loader_osfile_load_trampln
-    ; Load trampoline code to &0900 (uses supplied load address).
-    LDA #&FF
-    LDX #<loader_osfile_blk_trampln
-    LDY #>loader_osfile_blk_trampln
-    JSR OSFILE
     RTS
 
 
@@ -440,6 +436,15 @@ ORG &0E00
     STA loader_tile_bank_sel
     RTS
 
+.loader_load_lvls_bank
+    LDA #LEVEL_SWRAM_BANK_DEFAULT
+    LDX #<loader_fname_lvls01
+    LDY #>loader_fname_lvls01
+    JSR loader_load_file_to_swr
+    LDA loader_active_bank
+    STA loader_lvls_bank_sel
+    RTS
+
 
 ; --- Data ---
 
@@ -456,8 +461,8 @@ ORG &0E00
     EQUS "TILDAT",13
 .loader_fname_game
     EQUS "PORTHLE",13
-.loader_fname_trampln
-    EQUS "TRAMPLN",13
+.loader_fname_lvls01
+    EQUS "LVLS01",13
 
 .loader_osfile_blk_loadscr
     EQUW loader_fname_loadscr
@@ -470,13 +475,6 @@ ORG &0E00
     EQUW loader_fname_game
     EQUB 0,0,0,0            ; load (ignored)
     EQUB 1,0,0,0            ; exec low!=0 => use file's own load address
-    EQUB 0,0,0,0
-    EQUB 0,0,0,0
-
-.loader_osfile_blk_trampln
-    EQUW loader_fname_trampln
-    EQUB &00,&09,0,0        ; load &0900
-    EQUB 0,0,0,0            ; exec low=0 => use supplied load address
     EQUB 0,0,0,0
     EQUB 0,0,0,0
 
@@ -500,6 +498,9 @@ ORG &0E00
     EQUB 0
 
 .loader_tile_bank_sel
+    EQUB 0
+
+.loader_lvls_bank_sel
     EQUB 0
 
 .loader_cksum_file

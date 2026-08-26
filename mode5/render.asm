@@ -38,9 +38,13 @@
     JSR shadow_screen_off
     RTS
 
+; ACCCON X-bit trampoline. Must live below &3000 (see shared/trampoline.asm).
+INCLUDE "shared/trampoline.asm"
+ASSERT P% < &3000
+
 .render_tilemap
-    ; Clear playfield to cyan so tile id 0 can be skipped.
-    JSR clear_playfield_cyan
+    ; Clear playfield to the background accent colour so tile id 0 can be skipped.
+    JSR clear_playfield_bg
 
     ; Set up initial pointers
     LDA #<(&5800)           ; Screen starts at &5800 in MODE 5
@@ -393,11 +397,13 @@
     PLP
     RTS
 
-; Fill the visible playfield (32 bytes x 256 scanlines = 8192 bytes) with cyan.
+; Fill the visible playfield (32 bytes x 256 scanlines = 8192 bytes) with the
+; background accent colour (colour index 2).
 ;
-; With our palette mapping, colour index 2 is cyan. In MODE 5 (2bpp), a byte of
-; four cyan pixels encodes as &F0.
-.clear_playfield_cyan
+; In MODE 5 (2bpp), a byte of four colour-2 pixels encodes as &F0. Solid
+; black (&00) was tried here but made black-outlined sprites (Chell
+; included) disappear against the void.
+.clear_playfield_bg
     ; temp_mask_ptr := &5800
     LDA #<(&5800)
     STA temp_mask_ptr
@@ -1256,6 +1262,105 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
 ; - 1 = solid
 ;
 ; Portalability is handled separately via a tile-layer (portalmap_ptr).
+; --- Save under ---------------------------------------------------------
+; Copies the 16x16 under screen_ptr into SPARK_SAVE_UNDER_BASE.
+; 2 stripes of 32 bytes; consecutive bands are +256 apart.
+; Clobbers: A,Y,temp,temp_mask_ptr,sprite_ptr
+.spark_save_under
+    PHP
+    SEI
+    ; Stripe count into ZP first: spark_stripes lives at &69xx, which X=1
+    ; replaces with screen memory.
+    LDA spark_stripes
+    STA temp_y
+    JSR shadow_screen_on
+    LDA screen_ptr   : STA temp_mask_ptr
+    LDA screen_ptr+1 : STA temp_mask_ptr+1
+    LDA #<(SPARK_SAVE_UNDER_BASE) : STA sprite_ptr
+    LDA #>(SPARK_SAVE_UNDER_BASE) : STA sprite_ptr+1
+    LDA #0
+    STA temp
+  .ssu_stripe
+    LDY #0
+  .ssu_bytes
+    LDA (temp_mask_ptr),Y
+    STA (sprite_ptr),Y
+    INY
+    CPY #32
+    BNE ssu_bytes
+    INC temp_mask_ptr+1
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC ssu_next
+    INC sprite_ptr+1
+  .ssu_next
+    INC temp
+    LDA temp
+    CMP temp_y
+    BNE ssu_stripe
+    JSR shadow_screen_off
+    PLP
+    RTS
+
+
+; --- Restore under ------------------------------------------------------
+; Puts the saved pixels back at spark_prev_ptr and drops the buffer.
+; Safe to call unconditionally: does nothing if there is nothing saved.
+; Clobbers: A,Y,temp,temp_mask_ptr,sprite_ptr
+.spark_restore_under
+    LDA spark_has_under
+    BNE sru_go
+    RTS
+  .sru_go
+    LDA #0
+    STA spark_has_under
+    PHP
+    SEI
+    ; Read the destination BEFORE mapping LYNNE in.  spark_prev_ptr lives in
+    ; the spark section at &68xx, which ACCCON X=1 replaces with screen
+    ; memory -- reading it after shadow_screen_on returns screen bytes and
+    ; the restore then splatters 64 bytes at a random address.
+    LDA spark_prev_ptr   : STA temp_mask_ptr
+    LDA spark_prev_ptr+1 : STA temp_mask_ptr+1
+    LDA spark_stripes
+    STA temp_y
+    JSR shadow_screen_on
+    LDA #<(SPARK_SAVE_UNDER_BASE) : STA sprite_ptr
+    LDA #>(SPARK_SAVE_UNDER_BASE) : STA sprite_ptr+1
+    LDA #0
+    STA temp
+  .sru_stripe
+    LDY #0
+  .sru_bytes
+    LDA (sprite_ptr),Y
+    STA (temp_mask_ptr),Y
+    INY
+    CPY #32
+    BNE sru_bytes
+    INC temp_mask_ptr+1
+    LDA sprite_ptr
+    CLC
+    ADC #32
+    STA sprite_ptr
+    BCC sru_next
+    INC sprite_ptr+1
+  .sru_next
+    INC temp
+    LDA temp
+    CMP temp_y
+    BNE sru_stripe
+    JSR shadow_screen_off
+    PLP
+    RTS
+
+
+
+; Everything above that touches ACCCON X=1 must execute from below &3000,
+; otherwise LYNNE is mapped over the code as it runs.
+ASSERT P% < &3000
+
 .build_material_planes_from_tilemap
     LDY #0
 .build_solid_tile_plane_loop
@@ -1338,6 +1443,107 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
     DEX
     BNE mft_outer
 .mft_done
+    ; Fall through to fix up zapper solidity.
+
+; Patch solid_tile_plane for any zapper objects in the current room.
+; Zapper off tiles have bit 5 set (tile IDs >= 32) but should NOT be solid.
+; Runs once per room entry after build_material_planes_from_tilemap.
+; Clobbers: A,X,Y,temp,col_counter
+.fixup_zapper_solidity
+    LDY #0
+  .fzs_loop
+    CPY #OBJ_COUNT
+    BCS fzs_done
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_ZAPPER
+    BNE fzs_next
+    LDA obj_room,Y
+    CMP current_room
+    BNE fzs_next
+
+    ; Compute solidity: on (bit0=0) → solid=1; off (bit0=1) → solid=0.
+    LDA obj_state,Y
+    AND #1
+    EOR #1
+    STA temp            ; solidity value
+
+    ; Get width in tiles from obj_state bits 1-6.
+    LDA obj_state,Y
+    AND #&7E
+    LSR A
+    STA col_counter     ; width_tiles
+
+    ; Compute starting tile index.
+    STY temp_y
+    LDX obj_y,Y
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX                 ; X = leftmost tile index
+
+  .fzs_patch_loop
+    LDA temp
+    STA solid_tile_plane,X
+    INX
+    DEC col_counter
+    BNE fzs_patch_loop
+
+    LDY temp_y          ; restore object index
+
+  .fzs_next
+    INY
+    JMP fzs_loop
+  .fzs_done
+    RTS
+
+
+; Clear zapper tiles from physics solidity plane.
+; Zappers kill on contact, so they must not block Chell's movement.
+; Called each frame during rebuild_solid_phys_plane.
+; Clobbers: A,X,Y,temp,col_counter,temp_y
+.rsp_clear_zappers
+    LDY #0
+  .rcz_loop
+    CPY #OBJ_COUNT
+    BCS rcz_done
+    LDA obj_type,Y
+    CMP #OBJ_TYPE_ZAPPER
+    BNE rcz_next
+    LDA obj_room,Y
+    CMP current_room
+    BNE rcz_next
+
+    ; Only clear when zapper is ON (bit0=0). When off, tiles are already non-solid.
+    LDA obj_state,Y
+    AND #1
+    BNE rcz_next
+
+    ; Get width in tiles from obj_state bits 1-6.
+    LDA obj_state,Y
+    AND #&7E
+    LSR A
+    STA col_counter
+
+    ; Compute starting tile index.
+    STY temp_y
+    LDX obj_y,Y
+    LDA times16_table,X
+    CLC
+    ADC obj_x,Y
+    TAX
+
+  .rcz_clear_loop
+    LDA #0
+    STA solid_phys_plane,X
+    INX
+    DEC col_counter
+    BNE rcz_clear_loop
+
+    LDY temp_y
+  .rcz_next
+    INY
+    JMP rcz_loop
+  .rcz_done
     RTS
 
 
@@ -1362,16 +1568,28 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
     INY
     BNE rsp_copy
 
+    ; Clear zapper tiles from physics plane so Chell can enter and die.
+    ; Zappers should block LOS (solid_tile_plane) but not movement.
+    JSR rsp_clear_zappers
+
     ; Stamp standable objects into the physics plane.
     ; Note: pads are triggers on the floor and should not raise Chell, so only
     ; cubes contribute to physics solidity.
-    ; Precompute Chell tile coords for overlap skip.
+    ; Precompute Chell tile span for overlap skip.
     LDA char_tile_pos
     AND #15
-    STA col_counter            ; chell_x
+    STA col_counter            ; chell_left_tile
+    CLC
+    ADC #2
+    STA row_counter            ; chell_right_excl (aligned case)
+    LDA char_byte_offset
+    ORA char_pixel_offset
+    BEQ rsp_have_chell_x_span
+    INC row_counter            ; unaligned Chell can span a 3rd tile
+  .rsp_have_chell_x_span
     LDA char_tile_pos
     LSR A : LSR A : LSR A : LSR A
-    STA row_counter            ; chell_y
+    STA temp_y                 ; chell_y
     LDY #0
   .rsp_obj_loop
     LDA obj_room,Y
@@ -1388,28 +1606,31 @@ RETICLE_SAVE_UNDER_BASE   = &7880   ; 16x16 = 64 bytes
     BNE rsp_obj_next
 
     ; Skip solidity stamp if cube overlaps Chell (prevents trapping).
-    ; Chell is 2 wide x 2 tall at (chell_x, chell_y)..(chell_x+1, chell_y+1).
+    ; Use Chell's occupied horizontal tile span so the overlap test stays
+    ; symmetric when she is straddling tile boundaries.
     ; Cube is 2 wide x 1 tall at (obj_x, obj_y)..(obj_x+1, obj_y).
     ; Y overlap: cube_y == chell_y OR cube_y == chell_y+1
     LDA obj_y,Y
-    CMP row_counter            ; chell_y
+    CMP temp_y                 ; chell_y
     BEQ rsp_chk_x_overlap
     SEC
-    SBC row_counter
+    SBC temp_y
     CMP #1                     ; cube_y == chell_y+1?
     BNE rsp_obj_stamp          ; no Y overlap — stamp normally
   .rsp_chk_x_overlap
-    ; X overlap: |cube_x - chell_x| < 2
+    ; No overlap if cube is entirely to the right of Chell.
     LDA obj_x,Y
-    SEC
-    SBC col_counter            ; cube_x - chell_x (signed)
-    BPL rsp_x_pos
-    EOR #&FF
+    CMP row_counter            ; cube_left >= chell_right_excl
+    BCS rsp_obj_stamp
+
+    ; No overlap if cube is entirely to the left of Chell.
     CLC
-    ADC #1                     ; abs(cube_x - chell_x)
-  .rsp_x_pos
-    CMP #2
-    BCC rsp_obj_next           ; overlap — skip stamp
+    ADC #2                     ; cube_right_excl
+    CMP col_counter            ; cube_right_excl <= chell_left_tile
+    BCC rsp_obj_stamp
+    BEQ rsp_obj_stamp
+
+    JMP rsp_obj_next           ; overlap — skip stamp
 
   .rsp_obj_stamp
     ; idx = obj_y*16 + obj_x

@@ -16,6 +16,15 @@ Supported block sizes:
 - 16 rows: 16x16 sprite (2 stripes)
 - 32 rows: 16x32 sprite (4 stripes)
 
+Variants:
+- '@N' on a spec prefix requests N output variants (x0..xN-1).
+- '@N/S' spaces those variants S pixels apart, e.g. '@2/2' emits x0 and x2 only.
+- '%N/S' does the same vertically, e.g. '%4/2' emits y0,y2,y4,y6 (3 stripes each).
+  (for sprites that only ever sit on even pixel columns).
+- A single 16x32 block auto-synthesizes x0..x3 by shifting right 0..3 pixels.
+- If N exceeds the number of authored blocks, the blocks are cycled across the
+  shift positions: out[i] = blocks[i % len(blocks)] shifted right by i.
+
 Output format:
 - Emits Spycat/MODE5 "screen byte order": stripes x (4 columns x 8 rows).
 - Emits both sprite pixels and mask bytes (dst = (dst & mask) | pix).
@@ -51,6 +60,14 @@ class InputSpec:
     # Useful to suppress auto-synthesized x1..x3 variants for sprites that don't
     # need subpixel shifts.
     variants: int | None = None
+    # Pixel distance between consecutive subpixel variants. Default 1 (x0..x3).
+    # Use 2 when the sprite only ever sits on even pixel columns, so only
+    # offsets 0 and 2 are ever needed.
+    step: int = 1
+    # Shift vertically instead of horizontally. Variants are labelled _yN and
+    # each block is padded to the next multiple of 8 rows, so a 16-row sprite
+    # drawn at a non-zero row offset spans three 8-row stripes instead of two.
+    vertical: bool = False
 
 
 def derive_prefix(path: Path) -> str:
@@ -159,6 +176,27 @@ def shift_block(block: list[list[str]], shift: int) -> list[list[str]]:
     return out
 
 
+def vshift_block(block: list[list[str]], shift: int) -> list[list[str]]:
+    """Push a block down by `shift` rows, padding to a multiple of 8 rows.
+
+    BBC screen memory is organised in 8-row stripes, so a sprite drawn at a
+    row offset that is not a multiple of 8 straddles one more stripe than it
+    otherwise would. Padding here means the runtime blitter just asks for one
+    extra stripe rather than doing any shifting itself.
+    """
+    if shift < 0:
+        raise ValueError(f"vertical shift out of range: {shift}")
+    width = len(block[0]) if block else 16
+    blank = ["."] * width
+    if shift == 0:
+        out = [row[:] for row in block]
+    else:
+        out = [blank[:] for _ in range(shift)] + [row[:] for row in block]
+    total = ((len(out) + 7) // 8) * 8
+    out += [blank[:] for _ in range(total - len(out))]
+    return out
+
+
 def read_blocks(path: Path) -> list[list[list[str]]]:
     blocks: list[list[list[str]]] = []
     current: list[list[str]] = []
@@ -194,7 +232,7 @@ def read_blocks(path: Path) -> list[list[list[str]]]:
     return blocks
 
 
-def limit_or_synthesize_blocks(blocks: list[list[list[str]]], *, variants: int | None) -> list[list[list[str]]]:
+def limit_or_synthesize_blocks(blocks: list[list[list[str]]], *, variants: int | None, step: int = 1, vertical: bool = False) -> list[list[list[str]]]:
     # Convenience: if a 16x32 sprite only provides a single reference block,
     # synthesize x0..x3 variants by shifting right by 0..3 pixels.
     # This keeps the movement pipeline (subpixel_offset 0..3) working without
@@ -205,12 +243,23 @@ def limit_or_synthesize_blocks(blocks: list[list[list[str]]], *, variants: int |
             raise ValueError(f"variants must be >= 1, got {n}")
         if n == 1:
             return blocks
-        return [shift_block(blocks[0], shift) for shift in range(n)]
+        shifter = vshift_block if vertical else shift_block
+        return [shifter(blocks[0], i * step) for i in range(n)]
 
     if variants is None:
         return blocks
     if variants < 1:
         raise ValueError(f"variants must be >= 1, got {variants}")
+
+    # Cycle the authored blocks across the subpixel positions, so e.g. two spark
+    # shapes alternate over the emitted offsets. This keeps one sprite per offset
+    # (not shapes x offsets) while making the shape change as the sprite moves.
+    # Only engaged when more variants are asked for than authored, or when a
+    # non-default step is requested -- otherwise blocks are passed through as-is.
+    if variants > len(blocks) or step != 1 or vertical:
+        shifter = vshift_block if vertical else shift_block
+        return [shifter(blocks[i % len(blocks)], i * step) for i in range(variants)]
+
     return blocks[:variants]
 
     return blocks
@@ -218,7 +267,7 @@ def limit_or_synthesize_blocks(blocks: list[list[list[str]]], *, variants: int |
 
 def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], list[tuple[str, list[int]]]]:
     blocks = read_blocks(spec.path)
-    blocks = limit_or_synthesize_blocks(blocks, variants=spec.variants)
+    blocks = limit_or_synthesize_blocks(blocks, variants=spec.variants, step=spec.step, vertical=spec.vertical)
 
     sprites_out: list[tuple[str, list[int]]] = []
     masks_out: list[tuple[str, list[int]]] = []
@@ -250,7 +299,9 @@ def generate_for_input(spec: InputSpec) -> tuple[list[tuple[str, list[int]]], li
             # Reversing block order matches subpixel phase when mirroring.
             out_index = (len(blocks) - 1) - block_index
 
-        label = f"{spec.prefix}_x{out_index}"
+        # Label by true pixel offset so runtime indexing matches the shift.
+        axis = "y" if spec.vertical else "x"
+        label = f"{spec.prefix}_{axis}{out_index * spec.step}"
         sprites_out.append((label, sprite_bytes))
         masks_out.append((label, mask_bytes))
 
@@ -301,28 +352,43 @@ def main() -> int:
 
     specs: list[InputSpec] = []
 
-    def parse_prefix_modifiers(prefix_text: str) -> tuple[str, bool, int | None]:
+    def parse_prefix_modifiers(prefix_text: str) -> tuple[str, bool, int | None, int, bool]:
         # Supported modifiers (order-independent):
-        # - '^' : flip horizontally
-        # - '@N': limit variants/blocks emitted
+        # - '^'   : flip horizontally
+        # - '@N'  : limit variants/blocks emitted
+        # - '@N/S': N variants spaced S pixels apart (default S=1)
+        # - '%N/S': as @N/S but shifting vertically, labelled _yN
         flip_x = "^" in prefix_text
         prefix_text = prefix_text.replace("^", "")
 
+        vertical = "%" in prefix_text
+        if vertical:
+            if "@" in prefix_text:
+                raise SystemExit(f"invalid prefix '{prefix_text}' (use either @ or %, not both)")
+            prefix_text = prefix_text.replace("%", "@", 1)
+
         variants: int | None = None
+        step = 1
         if "@" in prefix_text:
             base, n_text = prefix_text.rsplit("@", 1)
             if not n_text:
-                raise SystemExit(f"invalid prefix '{prefix_text}' (expected @N)")
+                raise SystemExit(f"invalid prefix '{prefix_text}' (expected @N or @N/S)")
+            step_text = "1"
+            if "/" in n_text:
+                n_text, step_text = n_text.split("/", 1)
             try:
                 variants = int(n_text)
+                step = int(step_text)
             except ValueError:
-                raise SystemExit(f"invalid prefix '{prefix_text}' (expected @N with integer N)")
+                raise SystemExit(f"invalid prefix '{prefix_text}' (expected @N or @N/S, integers)")
+            if step < 1:
+                raise SystemExit(f"invalid step in '{prefix_text}' (must be >= 1)")
             prefix_text = base
 
         prefix_text = prefix_text.strip()
         if not prefix_text:
             raise SystemExit("empty prefix")
-        return prefix_text, flip_x, variants
+        return prefix_text, flip_x, variants, step, vertical
 
     if args.spec:
         if args.inputs:
@@ -335,8 +401,8 @@ def main() -> int:
                 raise SystemExit(f"invalid --spec '{spec_text}' (expected PREFIX:PATH)")
             prefix, path_text = spec_text.split(":", 1)
 
-            prefix, flip_x, variants = parse_prefix_modifiers(prefix)
-            specs.append(InputSpec(path=Path(path_text), prefix=prefix, flip_x=flip_x, variants=variants))
+            prefix, flip_x, variants, step, vertical = parse_prefix_modifiers(prefix)
+            specs.append(InputSpec(path=Path(path_text), prefix=prefix, flip_x=flip_x, variants=variants, step=step, vertical=vertical))
     else:
         if not args.inputs:
             raise SystemExit("no inputs provided")
@@ -348,8 +414,8 @@ def main() -> int:
         for i, path in enumerate(input_paths):
             prefix = args.prefix[i] if args.prefix else derive_prefix(path)
 
-            prefix, flip_x, variants = parse_prefix_modifiers(prefix)
-            specs.append(InputSpec(path=path, prefix=prefix, flip_x=flip_x, variants=variants))
+            prefix, flip_x, variants, step, vertical = parse_prefix_modifiers(prefix)
+            specs.append(InputSpec(path=path, prefix=prefix, flip_x=flip_x, variants=variants, step=step, vertical=vertical))
 
     all_sprite_blocks: list[tuple[str, list[int]]] = []
     all_mask_blocks: list[tuple[str, list[int]]] = []
